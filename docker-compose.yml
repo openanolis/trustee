@@ -1,10 +1,10 @@
 version: '3.2'
 services:
   kbs:
-    build:
-      context: .
-      dockerfile: kbs/docker/coco-as-grpc/Dockerfile
-    #image: ghcr.io/confidential-containers/key-broker-service:latest
+    # build:
+    #   context: .
+    #   dockerfile: kbs/docker/coco-as-grpc/Dockerfile
+    image: ghcr.io/confidential-containers/staged-images/kbs-grpc-as:162c620fd9bcd8d6db4bb5b0a5944932a160e89f
     command: [
         "/usr/local/bin/kbs",
         "--config-file",
@@ -21,13 +21,15 @@ services:
     - as
 
   as:
-    build:
-      context: .
-      dockerfile: attestation-service/docker/as-grpc/Dockerfile
-    #image: ghcr.io/confidential-containers/attestation-service:latest
+    # build:
+    #   context: .
+    #   dockerfile: attestation-service/docker/as-grpc/Dockerfile
+    image: xinjian1326/as:gpu-attest
     ports:
     - "50004:50004"
     restart: always
+    environment:
+      RUST_LOG: debug
     volumes:
     - ./kbs/data/attestation-service:/opt/confidential-containers/attestation-service:rw
     - ./kbs/config/as-config.json:/etc/as-config.json:rw
@@ -43,10 +45,10 @@ services:
     - rvps
 
   rvps:
-    #image: ghcr.io/confidential-containers/reference-value-provider-service:latest
-    build:
-      context: .
-      dockerfile: rvps/docker/Dockerfile
+    image: ghcr.io/confidential-containers/reference-value-provider-service:latest
+    # build:
+    #   context: .
+    #   dockerfile: rvps/docker/Dockerfile
     restart: always # keep the server running
     ports:
       - "50003:50003"
