@@ -19,7 +19,7 @@ pub(crate) mod claims;
 pub mod eventlog;
 pub(crate) mod quote;
 
-const GPU_POLICY_FILE_PATH: &str = "/opt/confidential-containers/attestation-service/NVGPULocalPolicyDefault.json";
+const GPU_POLICY_FILE_PATH: &str = "/usr/NVGPULocalPolicyDefault.json";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TdxEvidence {

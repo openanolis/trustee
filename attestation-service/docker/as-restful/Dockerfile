@@ -39,7 +39,7 @@ RUN python3.11 -m pip install /usr/verifier-1.3.0-py3-none-any.whl
 RUN python3.11 -m pip install /usr/nv_attestation_sdk-1.3.0-py3-none-any.whl
 
 # Install NV Attestation Default Token validation policy
-COPY --from=builder /usr/src/attestation-service/deps/verifier/test_data/NVGPULocalPolicyDefault.json /opt/confidential-containers/attestation-service
+COPY --from=builder /usr/src/attestation-service/deps/verifier/test_data/NVGPULocalPolicyDefault.json /usr/
 
 RUN if [ "${ARCH}" = "x86_64" ]; then curl -L https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | tee intel-sgx-deb.key | apt-key add - && \
     echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
