@@ -8,7 +8,7 @@ fn real_main() -> Result<(), String> {
 
     println!("cargo:rustc-link-lib=python3.11");
     println!("cargo:rustc-link-search=native=/usr/lib");
-    
+
     Ok(())
 }
 
