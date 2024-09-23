@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = [ "all-verifier" ]
-all-verifier = [ "tdx-verifier", "sgx-verifier", "snp-verifier", "cca-verifier", "se-verifier" ]
+all-verifier = [ "tdx-verifier", "sgx-verifier", "snp-verifier", "cca-verifier", "se-verifier", "system-verifier" ]
 tdx-verifier = [ "scroll", "intel-tee-quote-verification-rs" ]
 sgx-verifier = [ "scroll", "intel-tee-quote-verification-rs" ]
 az-snp-vtpm-verifier = [ "az-snp-vtpm", "sev", "snp-verifier" ]
@@ -14,6 +14,7 @@ snp-verifier = [ "asn1-rs", "openssl", "sev", "x509-parser" ]
 csv-verifier = [ "openssl", "csv-rs", "codicon" ]
 cca-verifier = [ "ear", "jsonwebtoken", "veraison-apiclient" ]
 se-verifier = [ "openssl", "pv", "serde_with", "tokio/sync" ]
+system-verifier = []
 
 [dependencies]
 anyhow.workspace = true

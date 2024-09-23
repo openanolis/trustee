@@ -14,6 +14,7 @@ snp-verifier = [ "verifier/snp-verifier" ]
 csv-verifier = [ "verifier/csv-verifier" ]
 cca-verifier = [ "verifier/cca-verifier" ]
 se-verifier  = [ "verifier/se-verifier" ]
+system-verifier = [ "verifier/system-verifier" ]
 
 # Only for testing and CI
 rvps-builtin = [ "reference-value-provider-service" ]

@@ -4,7 +4,7 @@ services:
     # build:
     #   context: .
     #   dockerfile: kbs/docker/coco-as-grpc/Dockerfile
-    image: ghcr.io/confidential-containers/staged-images/kbs-grpc-as:162c620fd9bcd8d6db4bb5b0a5944932a160e89f
+    image: xinjian1326/kbs:grpc-as-2024-09-23
     command: [
         "/usr/local/bin/kbs",
         "--config-file",
@@ -24,7 +24,7 @@ services:
     # build:
     #   context: .
     #   dockerfile: attestation-service/docker/as-grpc/Dockerfile
-    image: xinjian1326/as:gpu-attest
+    image: xinjian1326/as-grpc:2024-09-23
     ports:
     - "50004:50004"
     restart: always

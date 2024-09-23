@@ -532,7 +532,7 @@ dependencies = [
  "env_logger 0.10.2",
  "futures",
  "hex",
- "kbs-types",
+ "kbs-types 0.6.0 (git+https://github.com/jialez0/kbs-types?branch=system-attester)",
  "lazy_static",
  "log",
  "openssl",
@@ -574,7 +574,7 @@ dependencies = [
  "hex",
  "hyper 0.14.28",
  "hyper-tls 0.5.0",
- "kbs-types",
+ "kbs-types 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log",
  "nix",
  "occlum_dcap",
@@ -1374,7 +1374,7 @@ dependencies = [
  "anyhow",
  "base64 0.21.7",
  "ctr",
- "kbs-types",
+ "kbs-types 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand",
  "rsa 0.9.6",
  "serde",
@@ -2758,7 +2758,7 @@ dependencies = [
  "env_logger 0.10.2",
  "jsonwebtoken",
  "jwt-simple 0.11.9",
- "kbs-types",
+ "kbs-types 0.6.0 (git+https://github.com/jialez0/kbs-types?branch=system-attester)",
  "kms",
  "lazy_static",
  "log",
@@ -2814,6 +2814,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kbs-types"
+version = "0.6.0"
+source = "git+https://github.com/jialez0/kbs-types?branch=system-attester#8e3400c436c47b405e381a6de4db871ea480e47f"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "kbs_protocol"
 version = "0.1.0"
 source = "git+https://github.com/confidential-containers/guest-components.git?rev=9bd6f06a9704e01808e91abde130dffb20e632a5#9bd6f06a9704e01808e91abde130dffb20e632a5"
@@ -2824,7 +2833,7 @@ dependencies = [
  "base64 0.21.7",
  "crypto",
  "jwt-simple 0.12.9",
- "kbs-types",
+ "kbs-types 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log",
  "reqwest 0.12.4",
  "resource_uri",
@@ -6033,7 +6042,7 @@ dependencies = [
  "intel-tee-quote-verification-rs",
  "jsonwebkey",
  "jsonwebtoken",
- "kbs-types",
+ "kbs-types 0.6.0 (git+https://github.com/jialez0/kbs-types?branch=system-attester)",
  "log",
  "openssl",
  "pyo3",

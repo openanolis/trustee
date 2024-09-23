@@ -33,6 +33,9 @@ pub mod cca;
 #[cfg(feature = "se-verifier")]
 pub mod se;
 
+#[cfg(feature = "system-verifier")]
+pub mod system;
+
 pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
     match tee {
         Tee::Sev => todo!(),
@@ -111,6 +114,15 @@ pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
                     Ok(Box::<se::SeVerifier>::default() as Box<dyn Verifier + Send + Sync>)
                 } else {
                     bail!("feature `se-verifier` is not enabled for `verifier` crate.")
+                }
+            }
+        }
+        Tee::System => {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "system-verifier")] {
+                    Ok(Box::<system::SystemVerifier>::default() as Box<dyn Verifier + Send + Sync>)
+                } else {
+                    bail!("feature `system-verifier` is not enabled for `verifier` crate.")
                 }
             }
         }
