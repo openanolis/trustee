@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kbs
+  labels:
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.kbs.replicaCount }}
+  serviceName: kbs
+  selector:
+    matchLabels:
+      app: kbs
+      {{- include "coco-kbs.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        rollme: {{ randAlphaNum 5 | quote }}
+      {{- with .Values.kbs.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        app: kbs
+        {{- include "coco-kbs.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.kbs.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: true
+      serviceAccountName: kbs-sa
+      securityContext:
+        {{- toYaml .Values.kbs.podSecurityContext | nindent 8 }}
+      containers:
+        - name: kbs
+          securityContext:
+            {{- toYaml .Values.kbs.securityContext | nindent 12 }}
+          image: "{{ .Values.kbs.image.repository }}:{{ .Values.kbs.image.tag }}"
+          imagePullPolicy: {{ .Values.kbs.image.pullPolicy }}
+          command:
+            - "/usr/local/bin/kbs"
+            - "--config-file"
+            - "/etc/kbs/kbs-config.toml"
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.log_level }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.kbs.service.port }}
+              protocol: TCP
+#          livenessProbe:
+#            httpGet:
+#              path: /
+#              port: http
+#          readinessProbe:
+#            httpGet:
+#              path: /
+#              port: http
+          resources:
+            {{- toYaml .Values.kbs.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/kbs
+            - name: user-keys
+              mountPath: /opt/confidential-containers/kbs/user-keys
+            - name: data
+              mountPath: /opt/confidential-containers/kbs/repository
+            {{- range .Values.kbs.resourceRepository }}
+            - name: "{{ .repoName }}-{{ .type }}"
+              mountPath: "/opt/confidential-containers/kbs/repository/{{ .repoName }}/{{ .type }}"
+            {{- end }}
+        - name: kbs-secret-watcher
+          securityContext:
+            {{- toYaml .Values.kbs.securityContext | nindent 12 }}
+          image: "{{ .Values.kbs.image.repository }}:{{ .Values.kbs.image.tag }}"
+          imagePullPolicy: {{ .Values.kbs.image.pullPolicy }}
+          command:
+            - "/usr/local/bin/coco-kbs-secret-watcher"
+            - "--namespace"
+            - "{{ .Release.Namespace }}"
+            - "--secret-label"
+            - "coco-kbs-resource=true"
+          env:
+            - name: DEBUG_WATCH
+              value: 'false'
+          volumeMounts:
+            - name: data
+              mountPath: /opt/confidential-containers/kbs/repository
+      initContainers:
+        - name: init
+          securityContext:
+            {{- toYaml .Values.kbs.securityContext | nindent 12 }}
+          image: "{{ .Values.kbs.image.repository }}:{{ .Values.kbs.image.tag }}"
+          imagePullPolicy: {{ .Values.kbs.image.pullPolicy }}
+          command:
+            - "/usr/local/bin/coco-kbs-init"
+            - "--namespace"
+            - "{{ .Release.Namespace }}"
+            - "--secret-name-keys"
+            - "kbs-auth-publickey"
+            - "--secret-name-auth"
+            - "kbs-auth-keypair"
+            - "--mount-path"
+            - "/opt/confidential-containers/kbs/user-keys/public.pub"
+            - "--mount-wait"
+            - "6m"
+          volumeMounts:
+            - name: user-keys
+              mountPath: /opt/confidential-containers/kbs/user-keys
+      volumes:
+        - name: config
+          configMap:
+            name: kbs-config
+        - name: user-keys
+          secret:
+            optional: true
+            secretName: {{ .Values.kbs.userKeysSecretName }}
+  {{- if .Values.kbs.storage.enabled }}
+  {{- else }}
+        - name: data
+          emptyDir: {}
+  {{- end }}
+        {{- range .Values.kbs.resourceRepository }}
+        - name: "{{ .repoName }}-{{ .type }}"
+          secret:
+            secretName: {{ .secretName }}
+        {{- end }}
+      {{- with .Values.kbs.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kbs.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kbs.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+{{- if .Values.kbs.storage.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ {{ .Values.kbs.storage.accessMode }} ]
+      storageClassName: {{ .Values.kbs.storage.storageClass }}
+      resources:
+        requests:
+          storage: {{ .Values.kbs.storage.size }}
+{{ end }}

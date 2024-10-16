@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reference-value-provider-service
+  labels:
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.rvps.replicaCount }}
+  selector:
+    matchLabels:
+      app: reference-value-provider-service
+      {{- include "coco-kbs.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.rvps.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        app: reference-value-provider-service
+        {{- include "coco-kbs.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.rvps.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.rvps.podSecurityContext | nindent 8 }}
+      containers:
+        - name: rvps
+          securityContext:
+            {{- toYaml .Values.rvps.securityContext | nindent 12 }}
+          image: "{{ .Values.rvps.image.repository }}:{{ .Values.rvps.image.tag }}"
+          imagePullPolicy: {{ .Values.rvps.image.pullPolicy }}
+          command:
+            - "/bin/bash"
+            - "-c"
+            - "rvps --config /etc/rvps-config/rvps.json"
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.log_level }}
+          ports:
+            - name: tcp
+              containerPort: {{ .Values.rvps.service.port }}
+              protocol: TCP
+#          livenessProbe:
+#            httpGet:
+#              path: /
+#              port: http
+#          readinessProbe:
+#            httpGet:
+#              path: /
+#              port: http
+          resources:
+            {{- toYaml .Values.rvps.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/rvps-config
+            - mountPath: /opt/confidential-containers/attestation-service/reference_values
+              name: reference-values
+      volumes:
+        - name: config
+          configMap:
+            name: rvps-config
+        - name: reference-values
+          emptyDir: {}
+      {{- with .Values.rvps.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.rvps.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.rvps.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

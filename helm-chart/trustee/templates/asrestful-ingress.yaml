@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: asrestful-ingress
+  labels:
+    ingress-controller: alb
+    # {{- include "coco-kbs.labels" . | nindent 4 }}
+  annotations:
+    alb.ingress.kubernetes.io/use-regex: "true" 
+    alb.ingress.kubernetes.io/rewrite-target: /${2}
+spec:
+  ingressClassName: alb
+  rules:
+    # {{- if .Values.domainName }}
+    # - host: {{ .Values.domainName }}
+    # {{- end }}
+    - http:
+        paths:
+          - backend:
+              service:
+                name: asrestful-slb-intranet
+                port:
+                  number: {{ .Values.asrestful.service.port }}
+            path: /{{ .Release.Name }}/as(/|$)(.*)
+            pathType: Prefix

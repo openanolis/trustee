@@ -1,0 +1,61 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kbs
+  labels:
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.kbs.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: kbs
+    {{- include "coco-kbs.selectorLabels" . | nindent 4 }}
+
+---
+{{- if eq .Values.kbs.service.type "LoadBalancer" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: kbs-slb-intranet
+  labels:
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+  annotations:
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-address-type: "intranet"
+spec:
+  type: {{ .Values.kbs.service.type }}
+  ports:
+    - port: {{ .Values.kbs.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: kbs
+    {{- include "coco-kbs.selectorLabels" . | nindent 4 }}
+{{- end }}
+
+# ---
+# {{- if eq .Values.kbs.service.type "LoadBalancer" }}
+#   {{- if eq .Values.kbs.service.loadBalancerType "public" }}
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: kbs-slb-public
+#   labels:
+#     {{- include "coco-kbs.labels" . | nindent 4 }}
+# spec:
+#   type: {{ .Values.kbs.service.type }}
+#   ports:
+#     - port: {{ .Values.kbs.service.port }}
+#       targetPort: http
+#       protocol: TCP
+#       name: http
+#   selector:
+#     app: kbs
+#     {{- include "coco-kbs.selectorLabels" . | nindent 4 }}
+#   {{- end }}
+# {{- end }}

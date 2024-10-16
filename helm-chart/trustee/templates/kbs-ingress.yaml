@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kbs-ingress
+  labels:
+    ingress-controller: alb
+    # {{- include "coco-kbs.labels" . | nindent 4 }}
+  annotations:
+    alb.ingress.kubernetes.io/use-regex: "true"
+    alb.ingress.kubernetes.io/sticky-session: "true"
+    alb.ingress.kubernetes.io/rewrite-target: /kbs/${2}
+spec:
+  ingressClassName: alb
+  rules:
+    # {{- if .Values.domainName }}
+    # - host: {{ .Values.domainName }}
+    # {{- end }}
+    - http:
+        paths:
+          - backend:
+              service:
+                name: kbs-slb-intranet
+                port:
+                  number: {{ .Values.kbs.service.port }}
+            path: /{{ .Release.Name }}/kbs(/|$)(.*)
+            pathType: Prefix

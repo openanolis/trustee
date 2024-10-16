@@ -1,0 +1,54 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: attestation-service-config
+  annotations:
+    "helm.sh/resource-policy": "keep"
+  labels:
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {
+        "work_dir": "/opt/confidential-containers/attestation-service",
+        "policy_engine": "opa",
+        "rvps_config": {
+          {{- if .Values.rvps_ip }}
+	        "remote_addr":"http://{{ .Values.rvps_ip }}:{{ .Values.rvps.service.port }}"
+          {{- else }}
+          "remote_addr":"http://rvps:{{ .Values.rvps.service.port }}"
+          {{- end }}
+        },
+        "attestation_token_broker": "Simple",
+        "attestation_token_config": {
+            "duration_min": 5
+        }
+    }
+
+{{ $regionId := .Values.regionId }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sgx-config
+  annotations:
+    "helm.sh/resource-policy": "keep"
+  labels:
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+data:
+  sgx_default_qcnl.conf: |
+    # PCCS server address
+    {{- if .Values.as.pccsURL }}
+    PCCS_URL={{ .Values.as.pccsURL }}
+    {{- else }}
+      {{- if $regionId }}
+    PCCS_URL=https://sgx-dcap-server-vpc.{{ $regionId }}.aliyuncs.com/sgx/certification/v4/
+      {{- else }}
+    PCCS_URL=https://sgx-dcap-server.cn-hangzhou.aliyuncs.com/sgx/certification/v4/
+      {{- end }}
+    {{- end }}
+    USE_SECURE_CERT=TRUE
+    RETRY_TIMES=6
+    RETRY_DELAY=10
+    PCK_CACHE_EXPIRE_HOURS=168
+    VERIFY_COLLATERAL_CACHE_EXPIRE_HOURS=168

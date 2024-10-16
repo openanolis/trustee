@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: attestation-service-restful
+  labels:
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.asrestful.replicaCount }}
+  selector:
+    matchLabels:
+      app: attestation-service-restful
+      {{- include "coco-kbs.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        rollme: {{ randAlphaNum 5 | quote }}
+      {{- with .Values.asrestful.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        app: attestation-service-restful
+        {{- include "coco-kbs.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.asrestful.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.asrestful.podSecurityContext | nindent 8 }}
+      containers:
+        - name: as
+          securityContext:
+            {{- toYaml .Values.asrestful.securityContext | nindent 12 }}
+          image: "{{ .Values.asrestful.image.repository }}:{{ .Values.asrestful.image.tag }}"
+          imagePullPolicy: {{ .Values.asrestful.image.pullPolicy }}
+          command:
+            - "/bin/bash"
+            - "-c"
+            - "ln -sf /etc/sgx-config/sgx_default_qcnl.conf /etc/sgx_default_qcnl.conf && restful-as --socket 0.0.0.0:{{ .Values.asrestful.service.port }} --config-file /etc/attestation-service/config.json"
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.log_level }}
+          ports:
+            - name: tcp
+              containerPort: {{ .Values.asrestful.service.port }}
+              protocol: TCP
+#          livenessProbe:
+#            httpGet:
+#              path: /
+#              port: http
+#          readinessProbe:
+#            httpGet:
+#              path: /
+#              port: http
+          resources:
+            {{- toYaml .Values.asrestful.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/attestation-service
+            - name: sgx-config
+              mountPath: /etc/sgx-config
+            - name: policy
+              mountPath: /opt/confidential-containers/attestation-service/opa
+      dnsConfig:
+        nameservers:
+          - 100.100.2.136
+          - 100.100.2.138
+          # - 169.254.20.10
+        options:
+          - name: ndots
+            value: "3"
+          - name: attempts
+            value: "2"
+          - name: timeout
+            value: "1"
+        searches:
+        {{- if .Values.regionId }}
+          - {{ .Values.regionId }}.aliyuncs.com
+        {{- else }}
+          - cn-hangzhou.aliyuncs.com
+        {{- end }}
+          - aliyuncs.com
+          - default.svc.cluster.local
+          - svc.cluster.local
+          - cluster.local
+      volumes:
+        - name: config
+          configMap:
+            name: attestation-service-config
+        - name: sgx-config
+          configMap:
+            name: sgx-config
+        - name: policy
+          emptyDir: {}
+      {{- with .Values.asrestful.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.asrestful.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.asrestful.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
