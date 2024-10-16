@@ -14,6 +14,6 @@ RUN cd kbs && make AS_FEATURE=coco-as-grpc HTTPS_CRYPTO=${HTTPS_CRYPTO} POLICY_E
 
 FROM ubuntu:22.04
 
-LABEL org.opencontainers.image.source="https://github.com/confidential-containers/trustee/kbs"
-
 COPY --from=builder /usr/local/bin/kbs /usr/local/bin/kbs
+COPY --from=builder /usr/src/kbs/kbs/kbs-init/kbs-init /usr/local/bin/coco-kbs-init
+COPY --from=builder /usr/src/kbs/kbs/kbs-init/kbs-watcher /usr/local/bin/coco-kbs-secret-watcher
