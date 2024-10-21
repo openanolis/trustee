@@ -6,7 +6,7 @@ fn real_main() -> Result<(), String> {
 
     tonic_build::compile_protos("../protos/reference.proto").map_err(|e| format!("{e}"))?;
 
-    println!("cargo:rustc-link-lib=python3.11");
+    println!("cargo:rustc-link-lib=python3.12");
     println!("cargo:rustc-link-search=native=/usr/lib");
 
     Ok(())
