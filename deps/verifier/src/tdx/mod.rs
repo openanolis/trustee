@@ -160,7 +160,7 @@ async fn verify_evidence(
 #[allow(unused_assignments)]
 fn verify_gpu_evidence(token: &str, policy_file: &str) -> Result<serde_json::Value> {
     Python::with_gil(|py| {
-        let attestation_module = py.import("nv_attestation_sdk.attestation")?;
+        let attestation_module = py.import_bound("nv_attestation_sdk.attestation")?;
         let attestation_class = attestation_module.getattr("Attestation")?;
         let attestation_instance = attestation_class.call0()?;
 
