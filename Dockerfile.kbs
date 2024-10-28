@@ -1,4 +1,4 @@
-FROM rust:latest as builder
+FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/rust:latest as builder
 ARG ARCH=x86_64
 ARG HTTPS_CRYPTO=rustls
 ARG ALIYUN=false
@@ -12,7 +12,7 @@ RUN apt-get update && apt install -y protobuf-compiler git
 RUN cd kbs && make AS_FEATURE=coco-as-grpc HTTPS_CRYPTO=${HTTPS_CRYPTO} POLICY_ENGINE=opa ALIYUN=${ALIYUN} && \
     make install-kbs
 
-FROM ubuntu:22.04
+FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/ubuntu:24.04
 
 COPY --from=builder /usr/local/bin/kbs /usr/local/bin/kbs
 COPY --from=builder /usr/src/kbs/kbs/kbs-init/kbs-init /usr/local/bin/coco-kbs-init

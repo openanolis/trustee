@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-FROM rust:latest as builder
+FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/rust:latest as builder
 
 WORKDIR /usr/src/rvps
 
@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install protobuf-compiler -y
 
 RUN cargo install --bin rvps --path rvps
 
-FROM debian
+FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/debian:latest
 
 LABEL org.opencontainers.image.source="https://github.com/confidential-containers/trustee/rvps"
 

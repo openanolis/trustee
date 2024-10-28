@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-FROM openanolis/anolisos:latest as builder
+FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/anolisos:latest as builder
 
 WORKDIR /tmp
 RUN yum -y install epel-release && \
@@ -20,7 +20,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN cargo build -p kbs-client --locked --release --no-default-features --features sample_only
 
-FROM openanolis/anolisos:latest
+FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/anolisos:latest
 
 WORKDIR /tmp
 
