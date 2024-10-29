@@ -2,37 +2,26 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/rust:1.78.0-slim
+FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/ubuntu:24.04 as builder
+ARG ARCH=x86_64
 
-WORKDIR /tmp
+WORKDIR /usr/src/attestation-service
+COPY . .
+
+# Install TPM Build Dependencies
+RUN apt-get update && apt-get install -y protobuf-compiler curl gnupg openssl clang libtss2-dev python3 python3-pip python3-dev && \
+rm -rf /var/lib/apt/lists/{apt,dpkg,cache,log} /tmp/* /var/tmp/*
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
 RUN rustup component add rustfmt clippy
 
-RUN sed -i 's/deb\.debian\.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources
+# Install NV Attestation SDK
+RUN python3.12 -m pip install attestation-service/docker/nv_local_gpu_verifier-1.4.0-py3-none-any.whl --break-system-packages
+RUN python3.12 -m pip install attestation-service/docker/nv_attestation_sdk-1.4.0-py3-none-any.whl --break-system-packages
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    curl \
-    gpg \
-    gnupg-agent \
-    git
-
-RUN curl -fsSL https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | \
-    gpg --dearmor --output /usr/share/keyrings/intel-sgx.gpg && \
-    echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/intel-sgx.gpg] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | \
-    tee /etc/apt/sources.list.d/intel-sgx.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-    libclang-dev \
-    libprotobuf-dev \
-    libssl-dev \
-    make \
-    perl \
-    pkg-config \
-    protobuf-compiler \
-    wget \
-    clang \
-    cmake \
-    libtss2-dev && \
-    apt-get install -y --no-install-recommends \
-    libsgx-dcap-quote-verify-dev \
-    libtdx-attest-dev
+# Install TDX Build Dependencies
+RUN if [ "${ARCH}" = "x86_64" ]; then curl -L https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | tee intel-sgx-deb.key | apt-key add - && \
+    echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
+    apt-get update && apt-get install -y libsgx-dcap-quote-verify-dev; fi

@@ -14,8 +14,6 @@ RUN cargo install --bin rvps --path rvps
 
 FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/debian:latest
 
-LABEL org.opencontainers.image.source="https://github.com/confidential-containers/trustee/rvps"
-
 COPY --from=builder /usr/local/cargo/bin/rvps /usr/local/bin/rvps
 
 CMD ["rvps"]
