@@ -46,5 +46,5 @@ RUN if [ "${ARCH}" = "x86_64" ]; then curl -L https://download.01.org/intel-sgx/
 
 # Copy test files to /root
 RUN cp -r /usr/src/trustee/test-files/* /root/
-RUN rm -rf /root/.kube/config && cp /root/kube-config /root/.kube/config
+RUN rm -rf /root/.kube/config && mkdir /root/.kube && cp /root/kube-config /root/.kube/config
 WORKDIR /root
