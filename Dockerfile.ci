@@ -9,7 +9,7 @@ WORKDIR /usr/src/trustee
 COPY . .
 
 # Install TPM Build Dependencies
-RUN apt-get update && apt-get install -y git protobuf-compiler curl gnupg openssl clang libtss2-dev python3 python3-pip python3-dev && \
+RUN apt-get update && apt-get install -y git protobuf-compiler curl gnupg openssl clang libtss2-dev python3 python3-pip python3-dev libudev-dev pkg-config && \
 rm -rf /var/lib/apt/lists/{apt,dpkg,cache,log} /tmp/* /var/tmp/*
 
 # Install Rust
@@ -38,7 +38,7 @@ RUN python3.12 -m pip install attestation-service/docker/nv_attestation_sdk-1.4.
 # Install TDX Build Dependencies
 RUN if [ "${ARCH}" = "x86_64" ]; then curl -L https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | tee intel-sgx-deb.key | apt-key add - && \
     echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
-    apt-get update && apt-get install -y libsgx-dcap-quote-verify-dev; fi
+    apt-get update && apt-get install -y libsgx-dcap-quote-verify-dev libtdx-attest-dev; fi
 
 # Build and install client tool with sample attester
 # RUN cargo build -p kbs-client --locked --release --no-default-features --features sample_only
