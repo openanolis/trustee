@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.3
+
 FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/rust:latest as builder
 ARG ARCH=x86_64
 ARG HTTPS_CRYPTO=rustls
@@ -6,10 +8,12 @@ ARG ALIYUN=true
 WORKDIR /usr/src/kbs
 COPY . .
 
-RUN apt-get update && apt install -y protobuf-compiler git
+RUN apt-get update && apt install -y openssh-client protobuf-compiler git
 
+# 访问内网源仓库配置
+RUN mkdir -p -m 0600 ~/.ssh && ssh-keyscan gitlab.alibaba-inc.com >> ~/.ssh/known_hosts
 # Build and Install KBS
-RUN cd kbs && make AS_FEATURE=coco-as-grpc HTTPS_CRYPTO=${HTTPS_CRYPTO} POLICY_ENGINE=opa ALIYUN=${ALIYUN} && \
+RUN --mount=type=ssh cd kbs && make AS_FEATURE=coco-as-grpc HTTPS_CRYPTO=${HTTPS_CRYPTO} POLICY_ENGINE=opa ALIYUN=${ALIYUN} && \
     make install-kbs
 
 FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/ubuntu:24.04

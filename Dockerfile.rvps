@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.3
+
 # Copyright (c) 2023 by Alibaba.
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
@@ -8,9 +10,11 @@ WORKDIR /usr/src/rvps
 
 COPY . .
 
-RUN apt-get update && apt-get install protobuf-compiler -y
+RUN apt-get update && apt-get install git openssh-client protobuf-compiler -y
 
-RUN cargo install --bin rvps --path rvps
+# 访问内网源仓库配置
+RUN mkdir -p -m 0600 ~/.ssh && ssh-keyscan gitlab.alibaba-inc.com >> ~/.ssh/known_hosts
+RUN --mount=type=ssh cargo install --bin rvps --path rvps
 
 FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/debian:latest
 
