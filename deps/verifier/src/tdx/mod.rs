@@ -171,7 +171,7 @@ fn verify_gpu_evidence(token: &str, policy_file: &str) -> Result<serde_json::Val
             .extract()?;
 
         if result {
-            let parsed: Vec<serde_json::Value> = serde_json::from_str(&token)?;
+            let parsed: Vec<serde_json::Value> = serde_json::from_str(token)?;
             let mut claim_token = String::new();
             if let Some(claims) = parsed[1].get("LOCAL_GPU_CLAIMS") {
                 claim_token = claims.to_string();

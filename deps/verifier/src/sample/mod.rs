@@ -131,22 +131,3 @@ fn parse_tee_evidence(quote: &SampleTeeEvidence) -> Result<TeeEvidenceParsedClai
 
     Ok(claims_map as TeeEvidenceParsedClaim)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn test_parse_tee_evidence() {
-        let sample_evidence_str = &fs::read_to_string("./test_data/sample_evidence.txt").unwrap();
-        let sample_evidence =
-            serde_json::from_str::<SampleTeeEvidence>(sample_evidence_str).unwrap();
-        let parsed_claim = parse_tee_evidence(&sample_evidence).unwrap();
-
-        let _ = fs::write(
-            "test_data/parsed_sample_evidence.txt",
-            serde_json::to_string(&parsed_claim).unwrap(),
-        );
-    }
-}

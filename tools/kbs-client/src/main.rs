@@ -81,6 +81,7 @@ struct Config {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::enum_variant_names)]
 enum ConfigCommands {
     /// Set attestation verification policy
     SetAttestationPolicy {
