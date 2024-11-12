@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.3
+
 # Copyright (c) 2024 by Alibaba.
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
@@ -40,9 +42,12 @@ RUN if [ "${ARCH}" = "x86_64" ]; then curl -L https://download.01.org/intel-sgx/
     echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
     apt-get update && apt-get install -y libsgx-dcap-quote-verify-dev libtdx-attest-dev; fi
 
+# 访问内网源仓库配置
+RUN mkdir -p -m 0600 ~/.ssh && ssh-keyscan gitlab.alibaba-inc.com >> ~/.ssh/known_hosts
+
 # Build and install client tool with sample attester
-# RUN cargo build -p kbs-client --locked --release --no-default-features --features sample_only
-# RUN cp /usr/src/trustee/target/release/kbs-client /usr/local/bin/trustee-client
+RUN --mount=type=ssh cargo build -p kbs-client --locked --release --no-default-features --features sample_only
+RUN cp /usr/src/trustee/target/release/kbs-client /usr/local/bin/trustee-client
 
 # Copy test files to /root
 RUN cp -r /usr/src/trustee/test-files/* /root/
