@@ -503,7 +503,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "attestation-agent"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git?branch=master#7f2113ee0c9145ceb5184f8d6d804487b9dfc987"
+source = "git+ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git?branch=master#d54eb7fe473e4ebcbb238ce39607ec077a204363"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -511,7 +511,7 @@ dependencies = [
  "base64 0.21.7",
  "config",
  "const_format",
- "kbs-types 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "kbs-types",
  "log",
  "serde",
  "serde_json",
@@ -537,7 +537,7 @@ dependencies = [
  "env_logger 0.10.2",
  "futures",
  "hex",
- "kbs-types 0.6.0 (git+ssh://git@gitlab.alibaba-inc.com/trustee/kbs-types.git?branch=master)",
+ "kbs-types",
  "lazy_static",
  "log",
  "openssl",
@@ -567,7 +567,7 @@ dependencies = [
 [[package]]
 name = "attester"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git?branch=master#7f2113ee0c9145ceb5184f8d6d804487b9dfc987"
+source = "git+ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git?branch=master#d54eb7fe473e4ebcbb238ce39607ec077a204363"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -577,10 +577,11 @@ dependencies = [
  "hex",
  "hyper 0.14.31",
  "hyper-tls 0.5.0",
- "kbs-types 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "kbs-types",
  "log",
  "nix",
  "occlum_dcap",
+ "pnet",
  "s390_pv",
  "scroll 0.12.0",
  "serde",
@@ -593,6 +594,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "udev",
 ]
 
 [[package]]
@@ -1323,13 +1325,13 @@ checksum = "7a81dae078cea95a014a339291cec439d2f232ebe854a9d672b796c6afafa9b7"
 [[package]]
 name = "crypto"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git?branch=master#7f2113ee0c9145ceb5184f8d6d804487b9dfc987"
+source = "git+ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git?branch=master#d54eb7fe473e4ebcbb238ce39607ec077a204363"
 dependencies = [
  "aes-gcm",
  "anyhow",
  "base64 0.21.7",
  "ctr",
- "kbs-types 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "kbs-types",
  "rand",
  "rsa 0.9.6",
  "serde",
@@ -1765,6 +1767,17 @@ dependencies = [
  "lazy_static",
  "log",
  "sha2",
+]
+
+[[package]]
+name = "evidence-dump"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "attester",
+ "base64 0.21.7",
+ "clap 4.5.20",
+ "tokio",
 ]
 
 [[package]]
@@ -2645,6 +2658,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-lifetimes"
+version = "1.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eae7b9aee968036d54dce06cebaefd919e4472e753296daccd6d344e3e2df0c2"
+dependencies = [
+ "hermit-abi 0.3.9",
+ "libc",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
 name = "iocuddle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2655,6 +2679,15 @@ name = "ipnet"
 version = "2.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddc24109865250148c2e0f3d25d4f0f479571723792d3802153c60922a4fb708"
+
+[[package]]
+name = "ipnetwork"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf466541e9d546596ee94f9f69590f89473455f88372423e0008fc1a7daf100e"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "is-terminal"
@@ -2847,7 +2880,7 @@ dependencies = [
  "env_logger 0.10.2",
  "jsonwebtoken",
  "jwt-simple 0.11.9",
- "kbs-types 0.6.0 (git+ssh://git@gitlab.alibaba-inc.com/trustee/kbs-types.git?branch=master)",
+ "kbs-types",
  "kms",
  "lazy_static",
  "log",
@@ -2895,16 +2928,6 @@ dependencies = [
 [[package]]
 name = "kbs-types"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "febd73b2b1df274ea454d81ddf76f596af9754410b7ed6f988f2e1782a175da3"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "kbs-types"
-version = "0.6.0"
 source = "git+ssh://git@gitlab.alibaba-inc.com/trustee/kbs-types.git?branch=master#8e3400c436c47b405e381a6de4db871ea480e47f"
 dependencies = [
  "serde",
@@ -2914,7 +2937,7 @@ dependencies = [
 [[package]]
 name = "kbs_protocol"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git?branch=master#7f2113ee0c9145ceb5184f8d6d804487b9dfc987"
+source = "git+ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git?branch=master#d54eb7fe473e4ebcbb238ce39607ec077a204363"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2922,7 +2945,7 @@ dependencies = [
  "base64 0.21.7",
  "crypto",
  "jwt-simple 0.12.10",
- "kbs-types 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "kbs-types",
  "log",
  "reqwest 0.12.9",
  "resource_uri",
@@ -2938,7 +2961,7 @@ dependencies = [
 [[package]]
 name = "kms"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git?branch=master#7f2113ee0c9145ceb5184f8d6d804487b9dfc987"
+source = "git+ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git?branch=master#d54eb7fe473e4ebcbb238ce39607ec077a204363"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3031,6 +3054,16 @@ checksum = "c0ff37bd590ca25063e35af745c343cb7a0271906fb7b37e4813e8f79f00268d"
 dependencies = [
  "bitflags 2.6.0",
  "libc",
+]
+
+[[package]]
+name = "libudev-sys"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c8469b4a23b962c1396b9b451dda50ef5b283e8dd309d69033475fa9b334324"
+dependencies = [
+ "libc",
+ "pkg-config",
 ]
 
 [[package]]
@@ -3230,6 +3263,12 @@ dependencies = [
  "cfg_aliases 0.1.1",
  "libc",
 ]
+
+[[package]]
+name = "no-std-net"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43794a0ace135be66a25d3ae77d41b91615fb68ae937f904090203e81f755b65"
 
 [[package]]
 name = "nom"
@@ -3901,6 +3940,97 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953ec861398dccce10c670dfeaf3ec4911ca479e9c02154b3a215178c5f566f2"
 
 [[package]]
+name = "pnet"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "682396b533413cc2e009fbb48aadf93619a149d3e57defba19ff50ce0201bd0d"
+dependencies = [
+ "ipnetwork",
+ "pnet_base",
+ "pnet_datalink",
+ "pnet_packet",
+ "pnet_sys",
+ "pnet_transport",
+]
+
+[[package]]
+name = "pnet_base"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffc190d4067df16af3aba49b3b74c469e611cad6314676eaf1157f31aa0fb2f7"
+dependencies = [
+ "no-std-net",
+]
+
+[[package]]
+name = "pnet_datalink"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e79e70ec0be163102a332e1d2d5586d362ad76b01cec86f830241f2b6452a7b7"
+dependencies = [
+ "ipnetwork",
+ "libc",
+ "pnet_base",
+ "pnet_sys",
+ "winapi",
+]
+
+[[package]]
+name = "pnet_macros"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13325ac86ee1a80a480b0bc8e3d30c25d133616112bb16e86f712dcf8a71c863"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "pnet_macros_support"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eed67a952585d509dd0003049b1fc56b982ac665c8299b124b90ea2bdb3134ab"
+dependencies = [
+ "pnet_base",
+]
+
+[[package]]
+name = "pnet_packet"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c96ebadfab635fcc23036ba30a7d33a80c39e8461b8bd7dc7bb186acb96560f"
+dependencies = [
+ "glob",
+ "pnet_base",
+ "pnet_macros",
+ "pnet_macros_support",
+]
+
+[[package]]
+name = "pnet_sys"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d4643d3d4db6b08741050c2f3afa9a892c4244c085a72fcda93c9c2c9a00f4b"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
+name = "pnet_transport"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f604d98bc2a6591cf719b58d3203fd882bdd6bf1db696c4ac97978e9f4776bf"
+dependencies = [
+ "libc",
+ "pnet_base",
+ "pnet_packet",
+ "pnet_sys",
+]
+
+[[package]]
 name = "polyval"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4496,7 +4626,7 @@ dependencies = [
 [[package]]
 name = "resource_uri"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git?branch=master#7f2113ee0c9145ceb5184f8d6d804487b9dfc987"
+source = "git+ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git?branch=master#d54eb7fe473e4ebcbb238ce39607ec077a204363"
 dependencies = [
  "anyhow",
  "serde",
@@ -6061,6 +6191,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2896d95c02a80c6d6a5d6e953d479f5ddf2dfdb6a244441010e373ac0fb88971"
 
 [[package]]
+name = "udev"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3d5c197b95f1769931c89f85c33c407801d1fb7a311113bc0b39ad036f1bd81"
+dependencies = [
+ "io-lifetimes",
+ "libc",
+ "libudev-sys",
+ "pkg-config",
+]
+
+[[package]]
 name = "unicode-bidi"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6233,7 +6375,7 @@ dependencies = [
  "intel-tee-quote-verification-rs",
  "jsonwebkey",
  "jsonwebtoken",
- "kbs-types 0.6.0 (git+ssh://git@gitlab.alibaba-inc.com/trustee/kbs-types.git?branch=master)",
+ "kbs-types",
  "log",
  "openssl",
  "pyo3",

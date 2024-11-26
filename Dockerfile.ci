@@ -45,9 +45,13 @@ RUN if [ "${ARCH}" = "x86_64" ]; then curl -L https://download.01.org/intel-sgx/
 # 访问内网源仓库配置
 RUN mkdir -p -m 0600 ~/.ssh && ssh-keyscan gitlab.alibaba-inc.com >> ~/.ssh/known_hosts
 
-# Build and install client tool with sample attester
-RUN --mount=type=ssh cargo build -p kbs-client --locked --release --no-default-features --features sample_only
+# Build and install client tool
+RUN --mount=type=ssh cargo build -p kbs-client --locked --release --no-default-features --features ci_test
 RUN cp /usr/src/trustee/target/release/kbs-client /usr/local/bin/trustee-client
+
+# Build and install evidence dump tool
+RUN --mount=type=ssh cargo build -p evidence-dump --locked --release
+RUN cp /usr/src/trustee/target/release/evidence-dump /usr/local/bin/evidence-dump
 
 # Copy test files to /root
 RUN cp -r /usr/src/trustee/test-files/* /root/

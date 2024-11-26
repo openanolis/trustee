@@ -4,6 +4,7 @@ members = [
     "attestation-service",
     "rvps",
     "tools/kbs-client",
+    "tools/evidence-dump",
     "deps/verifier",
 ]
 resolver = "2"
