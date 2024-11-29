@@ -18,7 +18,7 @@ kbs:
   image:
     repository: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/kbs
     pullPolicy: IfNotPresent
-    tag: "0.0.1"
+    tag: "0.0.4"
 
   imagePullSecrets: []
 
@@ -82,7 +82,7 @@ as:
   image:
     repository: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/as
     pullPolicy: IfNotPresent
-    tag: "0.0.1"
+    tag: "0.0.4"
 
   imagePullSecrets: []
 
@@ -130,7 +130,7 @@ asrestful:
   image:
     repository: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/as-restful
     pullPolicy: IfNotPresent
-    tag: "0.0.1"
+    tag: "0.0.4"
 
   imagePullSecrets: []
 
@@ -177,7 +177,7 @@ rvps:
   image:
     repository: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/rvps
     pullPolicy: IfNotPresent
-    tag: "0.0.1"
+    tag: "0.0.4"
 
   imagePullSecrets: []
 
@@ -218,7 +218,7 @@ rvps:
 
   tolerations: []
 
-log_level: debug
+log_level: info
 as_ip:
 kbs_ip:
 rvps_ip:

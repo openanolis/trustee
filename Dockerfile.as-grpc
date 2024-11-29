@@ -46,6 +46,9 @@ COPY --from=builder /usr/src/attestation-service/attestation-service/docker/nv_a
 RUN python3.12 -m pip install /usr/nv_local_gpu_verifier-1.4.0-py3-none-any.whl --break-system-packages
 RUN python3.12 -m pip install /usr/nv_attestation_sdk-1.4.0-py3-none-any.whl --break-system-packages
 
+RUN pip3 install --upgrade setuptools==70.0.0 --break-system-packages
+RUN pip3 install --upgrade requests==2.32.0 --break-system-packages
+
 # Install NV Attestation Default Token validation policy
 COPY --from=builder /usr/src/attestation-service/deps/verifier/test_data/NVGPULocalPolicyDefault.json /usr/
 
