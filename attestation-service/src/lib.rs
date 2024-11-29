@@ -203,7 +203,7 @@ impl AttestationService {
         info!("{:?} Verifier/endorsement check passed.", tee);
 
         let flattened_claims = flatten_claims(tee, &claims_from_tee_evidence)?;
-        debug!("flattened_claims: {:#?}", flattened_claims);
+        info!("Attestation Claims: {:#?}", flattened_claims);
 
         let tcb_json = serde_json::to_string(&flattened_claims)?;
 

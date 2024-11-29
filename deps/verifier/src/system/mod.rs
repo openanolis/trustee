@@ -13,6 +13,7 @@ struct SystemEvidence {
     system_report: String,
     measurements: String,
     mr_register: String,
+    environment: HashMap<String, String>,
     report_data: String,
 }
 
@@ -101,6 +102,7 @@ fn parse_evidence(quote: &SystemEvidence) -> Result<TeeEvidenceParsedClaim> {
         "system_report": system_report,
         "measurements": measurements_map,
         "mr_register": quote.mr_register,
+        "environment": quote.environment,
         "report_data": quote.report_data,
     });
 

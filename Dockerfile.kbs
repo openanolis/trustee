@@ -8,7 +8,7 @@ ARG ALIYUN=true
 WORKDIR /usr/src/kbs
 COPY . .
 
-RUN apt-get update && apt install -y openssh-client protobuf-compiler git
+RUN apt-get update && apt install -y openssh-client protobuf-compiler git libudev-dev
 
 # 访问内网源仓库配置
 RUN mkdir -p -m 0600 ~/.ssh && ssh-keyscan gitlab.alibaba-inc.com >> ~/.ssh/known_hosts
