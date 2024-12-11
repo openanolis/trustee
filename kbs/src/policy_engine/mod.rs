@@ -35,6 +35,9 @@ pub enum ResourcePolicyError {
     #[error("Failed to load input for resource policy")]
     InputError,
 
+    #[error("Failed to set policy, illegal policy: {0}")]
+    InvalidPolicy(#[source] anyhow::Error),
+
     #[error("Failed to load resource policy")]
     PolicyLoadError,
 }

@@ -43,6 +43,8 @@ pub enum RegoError {
     Base64DecodeFailed(#[source] base64::DecodeError),
     #[error("Illegal policy id. Only support alphabet, numeric, `-` or `_`")]
     InvalidPolicyId,
+    #[error("Illegal policy: {0}")]
+    InvalidPolicy(#[source] anyhow::Error),
     #[error("Failed to load reference data: {0}")]
     LoadReferenceDataFailed(#[source] anyhow::Error),
     #[error("Failed to set input data: {0}")]
@@ -154,6 +156,16 @@ impl PolicyEngine for OPA {
         let policy_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(policy)
             .map_err(RegoError::Base64DecodeFailed)?;
+
+        // Check if the policy is valid
+        {
+            let policy_content = String::from_utf8(policy_bytes.clone())
+                .map_err(|e| RegoError::InvalidPolicy(e.into()))?;
+            let mut engine = regorus::Engine::new();
+            engine
+                .add_policy(policy_id.clone(), policy_content)
+                .map_err(RegoError::InvalidPolicy)?;
+        }
 
         if !Self::is_valid_policy_id(&policy_id) {
             return Err(RegoError::InvalidPolicyId);
