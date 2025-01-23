@@ -27,10 +27,8 @@ RUN if [ "${ARCH}" = "x86_64" ]; then curl -L https://download.01.org/intel-sgx/
     echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
     apt-get update && apt-get install -y libsgx-dcap-quote-verify-dev; fi
 
-# 访问内网源仓库配置
-RUN mkdir -p -m 0600 ~/.ssh && ssh-keyscan gitlab.alibaba-inc.com >> ~/.ssh/known_hosts
 # Build and Install RESTful attestation-service
-RUN --mount=type=ssh cargo install --path attestation-service --bin restful-as --features restful-bin --locked
+RUN cargo install --path attestation-service --bin restful-as --features restful-bin --locked
 
 FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/ubuntu:24.04
 ARG ARCH=x86_64

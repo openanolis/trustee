@@ -30,9 +30,9 @@ config = "0.13.3"
 env_logger = "0.10.0"
 hex = "0.4.3"
 jwt-simple = "0.11"
-kbs_protocol = { git = "ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git", branch = "master", default-features = false }
-kbs-types = { git = "ssh://git@gitlab.alibaba-inc.com/trustee/kbs-types.git", branch = "master" }
-kms = { git = "ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git", branch = "master", default-features = false }
+kbs_protocol = { git = "https://github.com/inclavare-containers/guest-components.git", branch = "main", default-features = false }
+kbs-types = { git = "https://github.com/jialez0/kbs-types.git", branch = "system-attester" }
+kms = { git = "https://github.com/confidential-containers/guest-components.git", rev = "e6999a3c0fd877dae9e68ea78b8b483062db32b8", default-features = false }
 jsonwebtoken = { version = "9", default-features = false }
 log = "0.4.17"
 prost = "0.12"

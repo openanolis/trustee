@@ -20,9 +20,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# 访问内网源仓库配置
-RUN mkdir -p -m 0600 ~/.ssh && ssh-keyscan gitlab.alibaba-inc.com >> ~/.ssh/known_hosts
-RUN --mount=type=ssh cargo build -p kbs-client --locked --release --no-default-features --features sample_only
+RUN cargo build -p kbs-client --locked --release --no-default-features --features sample_only
 
 FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/anolisos:latest
 
