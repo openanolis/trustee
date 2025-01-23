@@ -12,9 +12,7 @@ COPY . .
 
 RUN apt-get update && apt-get install git openssh-client protobuf-compiler -y
 
-# 访问内网源仓库配置
-RUN mkdir -p -m 0600 ~/.ssh && ssh-keyscan gitlab.alibaba-inc.com >> ~/.ssh/known_hosts
-RUN --mount=type=ssh cargo install --bin rvps --path rvps
+RUN cargo install --bin rvps --path rvps
 
 FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/debian:latest
 

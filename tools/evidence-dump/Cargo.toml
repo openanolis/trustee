@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
-attester = { git = "ssh://git@gitlab.alibaba-inc.com/Trustiflux/guest-components.git", branch = "master", default-features = false }
+attester = { git = "https://github.com/inclavare-containers/guest-components.git", branch = "main", default-features = false }
 base64 = "0.21.0"
 clap = { version = "4.0.29", features = ["derive"] }
 tokio = { version = "1.23.0", features = ["full"] }
