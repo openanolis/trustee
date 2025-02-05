@@ -8,7 +8,7 @@ on:
         required: true
       runs-on:
         type: string
-        default: '["ubuntu-22.04"]'
+        default: '["ubuntu-24.04"]'
         description: JSON representation of runner labels
       tarball:
         type: string
@@ -22,7 +22,7 @@ defaults:
 
 jobs:
   build-binaries:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     env:
       RUSTC_VERSION: 1.84.1
     steps:
@@ -37,6 +37,11 @@ jobs:
         rustup update --no-self-update ${{ env.RUSTC_VERSION }}
         rustup component add --toolchain ${{ env.RUSTC_VERSION }} rustc
         rustup default ${{ env.RUSTC_VERSION }}
+
+    - name: Install Python 3.12 and development libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3.12 python3.12-dev libudev-dev
 
     - name: Set up rust build cache
       uses: actions/cache@v4
