@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
     env:
       RUSTC_VERSION: 1.84.1
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
     - name: Code checkout
@@ -52,6 +52,11 @@ jobs:
         sudo echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | sudo tee /etc/apt/sources.list.d/intel-sgx.list
         sudo apt-get update
         sudo apt-get install -y libtdx-attest-dev libsgx-dcap-quote-verify-dev
+    
+    - name: Install Python 3.12 and development libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3.12 python3.12-dev libudev-dev
 
     - name: KBS Build [Default]
       working-directory: kbs

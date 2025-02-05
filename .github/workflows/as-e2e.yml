@@ -21,7 +21,7 @@ jobs:
           #   generate_evidence: true
           #   grpc_tee_enum: 3
           #   restful_tee_enum: tdx
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             generate_evidence: false
             grpc_tee_enum: 2
             restful_tee_enum: snp
@@ -39,6 +39,11 @@ jobs:
         rustup update --no-self-update ${{ env.RUSTC_VERSION }}
         rustup component add --toolchain ${{ env.RUSTC_VERSION }} rustc
         rustup default ${{ env.RUSTC_VERSION }}
+    
+    - name: Install Python 3.12 and development libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3.12 python3.12-dev libudev-dev
 
     - uses: actions/setup-go@v5
       with:
@@ -55,7 +60,7 @@ jobs:
         key: rust-${{ hashFiles('./Cargo.lock') }}
 
     - name: Install dependencies
-      if: ${{ matrix.runner == 'ubuntu-22.04' }}
+      if: ${{ matrix.runner == 'ubuntu-24.04' }}
       working-directory: attestation-service/tests/e2e
       run: |
         make install-dependencies
