@@ -4,7 +4,7 @@ services:
     # build:
     #   context: .
     #   dockerfile: kbs/docker/coco-as-grpc/Dockerfile
-    image: xinjian1326/kbs:grpc-as-2024-09-23
+    image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/kbs:latest
     command: [
         "/usr/local/bin/kbs",
         "--config-file",
@@ -24,7 +24,7 @@ services:
     # build:
     #   context: .
     #   dockerfile: attestation-service/docker/as-grpc/Dockerfile
-    image: xinjian1326/as-grpc:2024-09-23
+    image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/as:latest
     ports:
     - "50004:50004"
     restart: always
@@ -44,8 +44,32 @@ services:
     depends_on:
     - rvps
 
+  as-restful:
+    # build:
+    #   context: .
+    #   dockerfile: attestation-service/docker/as-grpc/Dockerfile
+    image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/as-restful:latest
+    ports:
+    - "50005:50005"
+    restart: always
+    environment:
+      RUST_LOG: debug
+    volumes:
+    - ./kbs/data/attestation-service:/opt/confidential-containers/attestation-service:rw
+    - ./kbs/config/as-config.json:/etc/as-config.json:rw
+    - ./kbs/config/sgx_default_qcnl.conf:/etc/sgx_default_qcnl.conf:rw
+    command: [
+      "restful-as",
+      "--socket",
+      "0.0.0.0:50005",
+      "--config-file",
+      "/etc/as-config.json"
+    ]
+    depends_on:
+    - rvps
+
   rvps:
-    image: ghcr.io/confidential-containers/reference-value-provider-service:latest
+    image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/rvps:latest
     # build:
     #   context: .
     #   dockerfile: rvps/docker/Dockerfile
@@ -55,22 +79,3 @@ services:
     volumes:
       - ./kbs/data/reference-values:/opt/confidential-containers/attestation-service/reference_values:rw
       - ./kbs/config/rvps.json:/etc/rvps.json:rw
-
-  keyprovider:
-    image: ghcr.io/confidential-containers/coco-keyprovider:latest
-    restart: always
-    ports:
-      - "50000:50000"
-    volumes:
-      - ./kbs/config/private.key:/etc/private.key
-    command: [
-      "coco_keyprovider",
-      "--socket",
-      "0.0.0.0:50000",
-      "--kbs",
-      "http://kbs:8080",
-      "--auth-private-key",
-      "/etc/private.key"
-    ]
-    depends_on:
-    - kbs
