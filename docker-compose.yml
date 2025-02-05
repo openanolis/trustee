@@ -3,7 +3,7 @@ services:
   kbs:
     # build:
     #   context: .
-    #   dockerfile: kbs/docker/coco-as-grpc/Dockerfile
+    #   dockerfile: Dockerfile.kbs
     image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/kbs:latest
     command: [
         "/usr/local/bin/kbs",
@@ -23,7 +23,7 @@ services:
   as:
     # build:
     #   context: .
-    #   dockerfile: attestation-service/docker/as-grpc/Dockerfile
+    #   dockerfile: Dockerfile.as-grpc
     image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/as:latest
     ports:
     - "50004:50004"
@@ -47,7 +47,7 @@ services:
   as-restful:
     # build:
     #   context: .
-    #   dockerfile: attestation-service/docker/as-grpc/Dockerfile
+    #   dockerfile: Dockerfile.as-restful
     image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/as-restful:latest
     ports:
     - "50005:50005"
@@ -72,7 +72,7 @@ services:
     image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/rvps:latest
     # build:
     #   context: .
-    #   dockerfile: rvps/docker/Dockerfile
+    #   dockerfile: Dockerfile.rvps
     restart: always # keep the server running
     ports:
       - "50003:50003"

@@ -45,6 +45,12 @@ jobs:
         echo "$TEST_SECRET_CONTENT" > test-secret
         ./kbs-client --url http://127.0.0.1:8080 config --auth-private-key ../../kbs/config/private.key  set-resource --path "$TEST_SECRET_PATH" --resource-file test-secret
 
+    - name: Update policy (negative)
+      working-directory: target/release/
+      run: ./kbs-client --url http://127.0.0.1:8080 config --auth-private-key ../../kbs/config/private.key  set-resource-policy --policy-file "$policy_path"
+      env:
+        policy_path: ../../kbs/test/data/policy_3.rego
+  
     - name: Get Resource (negative)
       working-directory: target/release/
       run: |
