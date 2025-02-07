@@ -49,25 +49,57 @@ flowchart LR
     end
     client-tool -- configures --> KBS
 ```
-## Deployment
 
-There are two main ways to deploy Trustee.
+## Build
+
+Use the following commands to build the container images for the Trustee components locally:
+
+```shell
+DOCKER_BUILDKIT=1 docker build -t kbs:latest . -f Dockerfile.kbs
+DOCKER_BUILDKIT=1 docker build -t as-grpc:latest . -f Dockerfile.as-grpc
+DOCKER_BUILDKIT=1 docker build -t as-restful:latest . -f Dockerfile.as-restful
+DOCKER_BUILDKIT=1 docker build -t rvps:latest . -f Dockerfile.rvps
+```
+
+If needed, use the following command to build the KBS Client (Trustee Client):
+
+```shell
+DOCKER_BUILDKIT=1 docker build -t trustee-client:latest . -f Dockerfile.trustee-client
+```
+
+## Deployment
 
 ### Docker Compose
 
-One simple way to get started with Trustee is with Docker compose, which can be used
-to quickly setup a cluster matching the diagram above.
+This repository provides a Docker Compose script to start a Trustee service locally with a single command.
 
-Please refer to the [cluster setup guide](kbs/docs/cluster.md).
+The script uses the container images we published in the Alibaba Cloud ACR image repository by default. If you want to use your own container images, please modify the `image` field of each container in the Docker Compose script to your own container image address.
 
-This cluster could be run inside a VM or as part of a managed service.
+Before starting the Trustee service, you need to create an asymmetric key pair to represent the identity of the Trustee service owner. This key pair will be used to configure and modify some key policies and confidential data after the service starts:
 
-### Kubernetes
+```shell
+openssl genpkey -algorithm ed25519 > kbs/config/private.key
+openssl pkey -in kbs/config/private.key -pubout -out kbs/config/public.pub
+```
 
-There are two supported ways of deploying Trustee on Kubernetes.
-One is via the [KBS Operator](https://github.com/confidential-containers/kbs-operator),
-which deploys the KBS components. The second option is to use the KBS'
-provided Kubernetes tooling [here](kbs/config/kubernetes).
+Then, use the following command to start the service locally with a single command:
+
+```shell
+docker-compose up -d
+```
+
+After deployment, Trustee will listen on ports `8080` and `50005` locally to accept and process requests for the KBS Restful API and AS Restful API.
+
+## Logs
+
+You can use the following four commands to view the runtime logs of KBS, AS (gRPC service), AS (RESTful service), and RVPS, and check the remote attestation verification results from the logs:
+
+```shell
+docker logs openanolis-trustee-kbs-1
+docker logs openanolis-trustee-as-1
+docker logs openanolis-trustee-as-restful-1
+docker logs openanolis-trustee-rvps-1
+```
 
 ## License
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fconfidential-containers%2Fkbs.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fconfidential-containers%2Fkbs?ref=badge_large)
