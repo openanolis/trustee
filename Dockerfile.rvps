@@ -4,19 +4,26 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/rust:latest as builder
+FROM openanolis/anolisos:latest as builder
 
 WORKDIR /usr/src/rvps
 
 COPY . .
 
-RUN apt-get update && apt-get install git openssh-client protobuf-compiler -y
+RUN yum update -y && yum install -y curl git openssh protobuf-compiler make gcc openssl openssl-devel clang
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup component add rustfmt clippy
 
 RUN cargo install --bin rvps --path rvps
 
-FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/debian:latest
+FROM openanolis/anolisos:latest
 
-COPY --from=builder /usr/local/cargo/bin/rvps /usr/local/bin/rvps
+RUN yum install -y openssl curl
+
+COPY --from=builder /root/.cargo/bin/rvps /usr/local/bin/rvps
 
 CMD ["rvps"]
 
