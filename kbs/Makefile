@@ -24,7 +24,11 @@ else
 endif
 
 ifeq ($(ALIYUN), true)
-  FEATURES += aliyun
+  ifeq ($(FEATURES),)
+    FEATURES := aliyun
+  else
+    FEATURES += aliyun
+  endif
 endif
 
 ifndef CLI_FEATURES
