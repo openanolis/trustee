@@ -4,15 +4,25 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/ubuntu:24.04 as builder
+FROM openanolis/anolisos:latest as builder
 ARG ARCH=x86_64
 
 WORKDIR /usr/src/trustee
 COPY . .
 
-# Install TPM Build Dependencies
-RUN apt-get update && apt-get install -y git protobuf-compiler curl gnupg openssl clang libtss2-dev python3 python3-pip python3-dev libudev-dev pkg-config && \
-rm -rf /var/lib/apt/lists/{apt,dpkg,cache,log} /tmp/* /var/tmp/*
+RUN cd /tmp && \
+    curl https://download.01.org/intel-sgx/sgx-dcap/1.21/linux/distro/Anolis86/sgx_rpm_local_repo.tgz --output /tmp/sgx_rpm_local_repo.tgz && \
+    tar zxvf /tmp/sgx_rpm_local_repo.tgz && \
+    yum -y install yum-utils && yum-config-manager --add-repo file:///tmp/sgx_rpm_local_repo && \
+    yum -y install epel-release && \
+    yum install -y --setopt=install_weak_deps=False --nogpgcheck pkg-config libsgx-dcap-quote-verify-devel libtdx-attest-devel \
+        perl wget git protobuf-compiler curl gnupg \
+        openssl openssl-devel clang \
+        tpm2-tss tpm2-tss-devel \
+        python38 python38-pip python38-devel \
+        libudev-devel && \
+    yum clean all && \
+    rm -rf /tmp/*
 
 # Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -34,22 +44,19 @@ RUN curl -fsSL -o helm.tar.gz https://get.helm.sh/helm-${HELM_VERSION}-linux-amd
 RUN helm plugin install https://github.com/AliyunContainerService/helm-acr
 
 # Install NV Attestation SDK
-RUN python3.12 -m pip install attestation-service/docker/nv_local_gpu_verifier-1.4.0-py3-none-any.whl --break-system-packages
-RUN python3.12 -m pip install attestation-service/docker/nv_attestation_sdk-1.4.0-py3-none-any.whl --break-system-packages
+RUN python3.8 -m pip install attestation-service/docker/nv_local_gpu_verifier-1.4.0-py3-none-any.whl
+RUN python3.8 -m pip install attestation-service/docker/nv_attestation_sdk-1.4.0-py3-none-any.whl
 
-RUN pip3 install --upgrade setuptools==70.0.0 --break-system-packages
-RUN pip3 install --upgrade requests==2.32.0 --break-system-packages
-
-# Install TDX Build Dependencies
-RUN if [ "${ARCH}" = "x86_64" ]; then curl -L https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | tee intel-sgx-deb.key | apt-key add - && \
-    echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
-    apt-get update && apt-get install -y libsgx-dcap-quote-verify-dev libtdx-attest-dev; fi
+RUN pip3 install --upgrade setuptools==70.0.0
+RUN pip3 install --upgrade requests==2.32.0
 
 # Build and install client tool
+ENV PYTHON_VERSION=3.8
 RUN cargo build -p kbs-client --locked --release --no-default-features --features ci_test
 RUN cp /usr/src/trustee/target/release/kbs-client /usr/local/bin/trustee-client
 
 # Build and install evidence dump tool
+ENV PYTHON_VERSION=3.8
 RUN cargo build -p evidence-dump --locked --release
 RUN cp /usr/src/trustee/target/release/evidence-dump /usr/local/bin/evidence-dump
 
