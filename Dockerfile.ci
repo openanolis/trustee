@@ -37,6 +37,9 @@ RUN helm plugin install https://github.com/AliyunContainerService/helm-acr
 RUN python3.12 -m pip install attestation-service/docker/nv_local_gpu_verifier-1.4.0-py3-none-any.whl --break-system-packages
 RUN python3.12 -m pip install attestation-service/docker/nv_attestation_sdk-1.4.0-py3-none-any.whl --break-system-packages
 
+RUN pip3 install --upgrade setuptools==70.0.0 --break-system-packages
+RUN pip3 install --upgrade requests==2.32.0 --break-system-packages
+
 # Install TDX Build Dependencies
 RUN if [ "${ARCH}" = "x86_64" ]; then curl -L https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | tee intel-sgx-deb.key | apt-key add - && \
     echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
