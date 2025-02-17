@@ -5,7 +5,7 @@ baseos_version: &BASEOS_VERSION
 
 # 定义镜像仓库信息
 repository_info:
-  acr: &ACR_PROD trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/as-restful
+  acr: &ACR_PROD trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance
 
 # 定义镜像测试信息
 t-one:
