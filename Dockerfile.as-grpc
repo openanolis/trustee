@@ -15,7 +15,7 @@ RUN cd /tmp && \
     tar zxvf /tmp/sgx_rpm_local_repo.tgz && \
     yum -y install yum-utils && yum-config-manager --add-repo file:///tmp/sgx_rpm_local_repo && \
     yum -y install epel-release && \
-    yum install -y --setopt=install_weak_deps=False --nogpgcheck libsgx-dcap-quote-verify-devel perl wget curl clang openssl-devel protobuf-devel git tpm2-tss tpm2-tss-devel python38 python38-pip python38-devel libudev-devel && \
+    yum install -y --setopt=install_weak_deps=False --nogpgcheck libsgx-dcap-quote-verify-devel perl wget curl clang openssl-devel protobuf-devel git tpm2-tss tpm2-tss-devel libudev-devel && \
     yum clean all && \
     rm -rf /tmp/*
 
@@ -23,12 +23,7 @@ RUN cd /tmp && \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Install NV Attestation SDK
-RUN python3.8 -m pip install attestation-service/docker/nv_local_gpu_verifier-1.4.0-py3-none-any.whl
-RUN python3.8 -m pip install attestation-service/docker/nv_attestation_sdk-1.4.0-py3-none-any.whl
-
 # Build and Install gRPC attestation-service
-ENV PYTHON_VERSION=3.8
 RUN cargo install --path attestation-service --bin grpc-as --features grpc-bin --locked
 
 
@@ -41,21 +36,9 @@ RUN cd /tmp && \
     yum -y install yum-utils && yum-config-manager --add-repo file:///tmp/sgx_rpm_local_repo && \
     yum -y install epel-release && \
     yum install -y --setopt=install_weak_deps=False --nogpgcheck libsgx-dcap-default-qpl libsgx-dcap-quote-verify tpm2-tss tpm2-tss-devel \
-        curl gnupg openssl python38 python38-pip python38-devel && \
+        curl gnupg openssl && \
     yum clean all && \
     rm -rf /tmp/*
-
-# Install NV Attestation SDK
-COPY --from=builder /usr/src/attestation-service/attestation-service/docker/nv_local_gpu_verifier-1.4.0-py3-none-any.whl /usr
-COPY --from=builder /usr/src/attestation-service/attestation-service/docker/nv_attestation_sdk-1.4.0-py3-none-any.whl /usr
-RUN python3.8 -m pip install /usr/nv_local_gpu_verifier-1.4.0-py3-none-any.whl
-RUN python3.8 -m pip install /usr/nv_attestation_sdk-1.4.0-py3-none-any.whl
-
-RUN pip3 install --upgrade setuptools==70.0.0
-RUN pip3 install --upgrade requests==2.32.0
-
-# Install NV Attestation Default Token validation policy
-COPY --from=builder /usr/src/attestation-service/deps/verifier/test_data/NVGPULocalPolicyDefault.json /usr/
 
 COPY --from=builder /root/.cargo/bin/grpc-as /usr/local/bin/grpc-as
 
