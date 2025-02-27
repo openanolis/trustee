@@ -4,20 +4,19 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-FROM openanolis/anolisos:latest as builder
+ARG BASE_IMAGE=debian:stable-slim
+
+FROM ${BASE_IMAGE} AS builder
 ARG ARCH=x86_64
+
+WORKDIR /tmp
+RUN apt update && apt install -y gcc perl wget make gnupg openssl curl protobuf-compiler git clang libtss2-dev libudev-dev pkg-config && \
+    curl -L https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | tee intel-sgx-deb.key | apt-key add - && \
+    echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
+    apt-get update && apt-get install -y libsgx-dcap-quote-verify-dev
 
 WORKDIR /usr/src/attestation-service
 COPY . .
-
-RUN cd /tmp && \
-    curl https://download.01.org/intel-sgx/sgx-dcap/1.21/linux/distro/Anolis86/sgx_rpm_local_repo.tgz --output /tmp/sgx_rpm_local_repo.tgz && \
-    tar zxvf /tmp/sgx_rpm_local_repo.tgz && \
-    yum -y install yum-utils && yum-config-manager --add-repo file:///tmp/sgx_rpm_local_repo && \
-    yum -y install epel-release && \
-    yum install -y --setopt=install_weak_deps=False --nogpgcheck libsgx-dcap-quote-verify-devel perl wget curl clang openssl-devel protobuf-devel git tpm2-tss tpm2-tss-devel libudev-devel && \
-    yum clean all && \
-    rm -rf /tmp/*
 
 # Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -26,18 +25,14 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 # Build and Install RESTful attestation-service
 RUN cargo install --path attestation-service --bin restful-as --features restful-bin --locked
 
-FROM openanolis/anolisos:latest
+FROM ${BASE_IMAGE}
 ARG ARCH=x86_64
 
-RUN cd /tmp && \
-    curl https://download.01.org/intel-sgx/sgx-dcap/1.21/linux/distro/Anolis86/sgx_rpm_local_repo.tgz --output /tmp/sgx_rpm_local_repo.tgz && \
-    tar zxvf /tmp/sgx_rpm_local_repo.tgz && \
-    yum -y install yum-utils && yum-config-manager --add-repo file:///tmp/sgx_rpm_local_repo && \
-    yum -y install epel-release && \
-    yum install -y --setopt=install_weak_deps=False --nogpgcheck libsgx-dcap-default-qpl libsgx-dcap-quote-verify tpm2-tss tpm2-tss-devel \
-        curl gnupg openssl && \
-    yum clean all && \
-    rm -rf /tmp/*
+WORKDIR /tmp
+RUN apt update && apt install -y libtss2-dev curl gnupg openssl && \
+    curl -L https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | tee intel-sgx-deb.key | apt-key add - && \
+    echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
+    apt-get update && apt-get install -y libsgx-dcap-default-qpl libsgx-dcap-quote-verify
 
 COPY --from=builder /root/.cargo/bin/restful-as /usr/local/bin/restful-as
 

@@ -1,8 +1,6 @@
 # syntax=docker/dockerfile:1.3
 
-ARG BASE_IMAGE=debian:stable-slim
-
-FROM ${BASE_IMAGE} AS builder
+FROM openanolis/anolisos:latest as builder
 ARG ARCH=x86_64
 ARG HTTPS_CRYPTO=rustls
 ARG ALIYUN=true
@@ -10,7 +8,7 @@ ARG ALIYUN=true
 WORKDIR /usr/src/kbs
 COPY . .
 
-RUN apt update && apt install -y protobuf-compiler git libudev-dev curl make gcc openssl libssl-dev clang openssh-client pkg-config
+RUN yum install -y openssh protobuf-compiler protobuf-devel git libudev-devel curl make gcc openssl openssl-devel clang 
 
 # Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -21,9 +19,9 @@ RUN rustup component add rustfmt clippy
 RUN cd kbs && make AS_FEATURE=coco-as-grpc HTTPS_CRYPTO=${HTTPS_CRYPTO} POLICY_ENGINE=opa ALIYUN=${ALIYUN} && \
     make install-kbs
 
-FROM ${BASE_IMAGE}
+FROM openanolis/anolisos:latest
 
-RUN apt update && apt install -y openssl curl pkg-config
+RUN yum install -y openssl curl
 
 COPY --from=builder /usr/local/bin/kbs /usr/local/bin/kbs
 COPY --from=builder /usr/src/kbs/kbs/kbs-init/kbs-init /usr/local/bin/coco-kbs-init
