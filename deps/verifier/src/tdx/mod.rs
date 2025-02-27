@@ -12,14 +12,11 @@ use eventlog::{CcEventLog, Rtmr};
 use quote::{ecdsa_quote_verification, parse_tdx_quote};
 use serde::{Deserialize, Serialize};
 
-use pyo3::prelude::*;
 use serde_json::Value;
 
 pub(crate) mod claims;
 pub mod eventlog;
 pub(crate) mod quote;
-
-const GPU_POLICY_FILE_PATH: &str = "/usr/NVGPULocalPolicyDefault.json";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TdxEvidence {
@@ -30,8 +27,10 @@ struct TdxEvidence {
     quote: String,
     // Eventlog of Attestation Agent
     aa_eventlog: Option<String>,
-    // GPU Attestation JWT
+    // GPU Attestation Claims
     gpu_attestation_token: Option<String>,
+    // GPU Switch Attestation Claims
+    gpu_switch_attestation_token: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -140,10 +139,10 @@ async fn verify_evidence(
     let tdx_attestation_claims: serde_json::Value =
         generate_parsed_claim(quote, ccel_option, aael)? as serde_json::Value;
 
-    if let Some(gpu_token) = evidence.gpu_attestation_token {
-        pyo3::prepare_freethreaded_python();
-        let gpu_attestation_claims = verify_gpu_evidence(&gpu_token, GPU_POLICY_FILE_PATH)?;
-        let merged_claims = match (tdx_attestation_claims.clone(), gpu_attestation_claims) {
+    if let Some(gpu_attestation_token) = evidence.gpu_attestation_token {
+        let gpu_attestation_claims: serde_json::Value =
+            serde_json::from_str(&gpu_attestation_token)?;
+        let mut merged_claims = match (tdx_attestation_claims.clone(), gpu_attestation_claims) {
             (Value::Object(mut tdx), Value::Object(gpu)) => {
                 tdx.extend(gpu);
                 Value::Object(tdx)
@@ -154,57 +153,28 @@ async fn verify_evidence(
             }
         };
 
+        if let Some(gpu_switch_attestation_token) = evidence.gpu_switch_attestation_token {
+            let gpu_switch_attestation_claims: serde_json::Value =
+                serde_json::from_str(&gpu_switch_attestation_token)?;
+            merged_claims = match (merged_claims.clone(), gpu_switch_attestation_claims) {
+                (Value::Object(mut merged), Value::Object(nvswitch)) => {
+                    merged.extend(nvswitch);
+                    Value::Object(merged)
+                }
+                _ => {
+                    warn!("Merge GPU Switch evidence claim failed");
+                    merged_claims
+                }
+            };
+        } else {
+            warn!("GPU Switch Attestation Token is null.");
+        }
+
         Ok(merged_claims as TeeEvidenceParsedClaim)
     } else {
         warn!("GPU Attestation Token is null, skipping GPU CC validation.");
         Ok(tdx_attestation_claims as TeeEvidenceParsedClaim)
     }
-}
-
-#[allow(unused_assignments)]
-fn verify_gpu_evidence(token: &str, policy_file: &str) -> Result<serde_json::Value> {
-    Python::with_gil(|py| {
-        let attestation_module = py.import_bound("nv_attestation_sdk.attestation")?;
-        let attestation_class = attestation_module.getattr("Attestation")?;
-        let attestation_instance = attestation_class.call0()?;
-
-        let policy_content =
-            std::fs::read_to_string(policy_file).context("Failed to read policy file")?;
-        let result: bool = attestation_instance
-            .call_method1("validate_token", (policy_content, token))?
-            .extract()?;
-
-        if result {
-            let parsed: Vec<serde_json::Value> = serde_json::from_str(token)?;
-            let mut claim_token = String::new();
-            if let Some(claims) = parsed[1].get("LOCAL_GPU_CLAIMS") {
-                claim_token = claims.to_string();
-            } else {
-                bail!("Invalid GPU token format, only support LOCAL_GPU_CLAIMS now");
-            }
-            let claims = decode_gpu_attestation_token(&claim_token)?;
-            Ok(claims)
-        } else {
-            Err(anyhow::anyhow!("GPU Attestation Token validation failed"))
-        }
-    })
-}
-
-fn decode_gpu_attestation_token(token: &str) -> Result<serde_json::Value> {
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return Err(anyhow::anyhow!("Invalid GPU token format"));
-    }
-
-    let payload = parts[1];
-    let decoded_payload = base64::engine::general_purpose::STANDARD
-        .decode(payload)
-        .context("GPU token: Failed to decode Base64 payload")?;
-
-    let claims: serde_json::Value = serde_json::from_slice(&decoded_payload)
-        .context("GPU token: Failed to parse JSON from payload")?;
-
-    Ok(claims)
 }
 
 #[cfg(test)]
@@ -225,23 +195,6 @@ mod tests {
 
         let _ = fs::write(
             "./test_data/evidence_claim_output.txt",
-            format!("{:?}", parsed_claim.unwrap()),
-        );
-    }
-
-    #[ignore]
-    #[test]
-    fn test_verify_gpu_token() {
-        pyo3::prepare_freethreaded_python();
-
-        let gpu_token = fs::read_to_string("./test_data/gpu_attestation_token").unwrap();
-        let policy_file = "./test_data/NVGPULocalPolicyDefault.json";
-
-        let parsed_claim = verify_gpu_evidence(&gpu_token, policy_file);
-        assert!(parsed_claim.is_ok());
-
-        let _ = fs::write(
-            "./test_data/verify_gpu_token_output.txt",
             format!("{:?}", parsed_claim.unwrap()),
         );
     }

@@ -4,15 +4,13 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-ARG BASE_IMAGE=debian:stable-slim
-
-FROM ${BASE_IMAGE} AS builder
+FROM openanolis/anolisos:latest as builder
 
 WORKDIR /usr/src/rvps
 
 COPY . .
 
-RUN apt update && apt install -y protobuf-compiler git libudev-dev curl make gcc openssl libssl-dev clang openssh-client pkg-config
+RUN yum update -y && yum install -y curl git openssh protobuf-compiler make gcc openssl openssl-devel clang
 
 # Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -21,9 +19,9 @@ RUN rustup component add rustfmt clippy
 
 RUN cargo install --bin rvps --path rvps
 
-FROM ${BASE_IMAGE}
+FROM openanolis/anolisos:latest
 
-RUN apt update && apt install -y openssl curl pkg-config
+RUN yum install -y openssl curl
 
 COPY --from=builder /root/.cargo/bin/rvps /usr/local/bin/rvps
 
