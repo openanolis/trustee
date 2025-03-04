@@ -28,7 +28,7 @@ jobs:
     name: TEE=${{ matrix.restful_tee_enum }} Generate Evidence Dynamically=${{ matrix.generate_evidence }}
     runs-on: ${{ matrix.runner }}
     env:
-      RUSTC_VERSION: 1.84.1
+      RUSTC_VERSION: 1.85.0
       GRPC_TEE_ENUM: ${{ matrix.grpc_tee_enum }}
       RESTFUL_TEE_ENUM: ${{ matrix.restful_tee_enum }}
     steps:
@@ -39,11 +39,6 @@ jobs:
         rustup update --no-self-update ${{ env.RUSTC_VERSION }}
         rustup component add --toolchain ${{ env.RUSTC_VERSION }} rustc
         rustup default ${{ env.RUSTC_VERSION }}
-    
-    - name: Install Python 3.12 and development libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3.12 python3.12-dev libudev-dev
 
     - uses: actions/setup-go@v5
       with:
