@@ -43,6 +43,7 @@ fn to_kbs_tee(tee: &str) -> anyhow::Result<Tee> {
         "aztdxvtpm" => Tee::AzTdxVtpm,
         "se" => Tee::Se,
         "system" => Tee::System,
+        "tpm" => Tee::Tpm,
         other => bail!("Unsupported TEE type: {other}"),
     };
 

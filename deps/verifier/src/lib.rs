@@ -36,10 +36,12 @@ pub mod se;
 #[cfg(feature = "system-verifier")]
 pub mod system;
 
+#[cfg(feature = "tpm-verifier")]
+pub mod tpm;
+
 pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
     match tee {
         Tee::Sev => todo!(),
-        Tee::Tpm => todo!(),
         Tee::AzSnpVtpm => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "az-snp-vtpm-verifier")] {
@@ -124,6 +126,15 @@ pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
                     Ok(Box::<system::SystemVerifier>::default() as Box<dyn Verifier + Send + Sync>)
                 } else {
                     bail!("feature `system-verifier` is not enabled for `verifier` crate.")
+                }
+            }
+        }
+        Tee::Tpm => {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "tpm-verifier")] {
+                    Ok(Box::<tpm::TpmVerifier>::default() as Box<dyn Verifier + Send + Sync>)
+                } else {
+                    bail!("feature `tpm-verifier` is not enabled for `verifier` crate.")
                 }
             }
         }
