@@ -4,10 +4,10 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/anolisos:latest as builder
+FROM openanolis/anolisos:8.8 as builder
 
 WORKDIR /tmp
-RUN yum -y install epel-release && \
+RUN find /etc/yum.repos.d/ -type f -exec sed -i 's/http:\/\/mirrors.openanolis.cn\/anolis/https:\/\/mirrors.aliyun.com\/anolis/g' {} + && \
     yum install -y perl wget curl clang openssh-clients openssl-devel protobuf-devel git && \
     yum clean all && \
     rm -rf /tmp/*
@@ -22,7 +22,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN cargo build -p kbs-client --locked --release --no-default-features --features sample_only
 
-FROM trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/anolisos:latest
+FROM openanolis/anolisos:8.8
 
 WORKDIR /tmp
 
