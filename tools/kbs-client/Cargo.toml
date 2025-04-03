@@ -31,7 +31,7 @@ sample_only = ["kbs_protocol/background_check", "kbs_protocol/passport", "kbs_pr
 
 ci_test = ["kbs_protocol/background_check", "kbs_protocol/passport", "kbs_protocol/rust-crypto", "kbs_protocol/tdx-attester", "kbs_protocol/system-attester"]
 
-all-attesters = ["kbs_protocol/all-attesters"]
+all-attesters = ["tdx-attester", "sgx-attester", "snp-attester", "csv-attester", "cca-attester", "system-attester"]
 tdx-attester = ["kbs_protocol/tdx-attester"]
 sgx-attester = ["kbs_protocol/sgx-attester"]
 snp-attester = ["kbs_protocol/snp-attester"]

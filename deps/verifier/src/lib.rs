@@ -39,6 +39,7 @@ pub mod system;
 pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
     match tee {
         Tee::Sev => todo!(),
+        Tee::Tpm => todo!(),
         Tee::AzSnpVtpm => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "az-snp-vtpm-verifier")] {

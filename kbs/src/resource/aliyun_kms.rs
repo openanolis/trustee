@@ -4,7 +4,7 @@
 
 use super::{Repository, ResourceDesc};
 use anyhow::{Context, Result};
-use kms::{plugins::aliyun::AliyunKmsClient, Annotations, Getter};
+use confidential_data_hub::kms::{plugins::aliyun::AliyunKmsClient, Annotations, Getter};
 use log::info;
 use serde::Deserialize;
 
