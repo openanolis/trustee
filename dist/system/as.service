@@ -1,0 +1,20 @@
+[Unit]
+Description=Attestation-Service
+Documentation=https://confidentialcontainers.org
+After=network.target
+Requires=rvps.service
+
+[Service]
+ExecStart=/usr/local/bin/grpc-as --socket 0.0.0.0:50004 --config-file /etc/trustee/as-config.json
+Environment=RUST_LOG=info
+Restart=always
+RestartSec=5
+Delegate=yes
+KillMode=process
+OOMScoreAdjust=-999
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+
+[Install]
+WantedBy=multi-user.target

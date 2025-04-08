@@ -1,0 +1,14 @@
+[Unit]
+Description=Trustee
+After=network.target
+Wants=kbs.service as.service as-restful.service rvps.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/systemctl start kbs as as-restful rvps
+ExecStop=/usr/bin/systemctl stop kbs as as-restful rvps
+ExecReload=/usr/bin/systemctl restart kbs as as-restful rvps
+
+[Install]
+WantedBy=multi-user.target

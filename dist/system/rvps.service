@@ -1,0 +1,19 @@
+[Unit]
+Description=Reference-Value-Provider-Service
+Documentation=https://confidentialcontainers.org
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/rvps --config /etc/trustee/rvps.json
+Environment=RUST_LOG=info
+Restart=always
+RestartSec=5
+Delegate=yes
+KillMode=process
+OOMScoreAdjust=-999
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+
+[Install]
+WantedBy=multi-user.target
