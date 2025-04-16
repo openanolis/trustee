@@ -64,6 +64,8 @@ Then a response will be returned
 
 The value is a base64 encoded JWT. The body of the JWT is showed in the [example.token.json](./example.token.json).
 
+More configuration items please refer to the [document](./config.md).
+
 ## Advanced Topic
 
 ### Building from Source
@@ -77,7 +79,9 @@ Build and install binary
 git clone https://github.com/confidential-containers/trustee
 cd trustee/attestation-service
 WORKDIR=$(pwd)
-make && make install
+make VERIFIER=all-verifier && make install
+
+# You can use different verifier by changing the value of VERIFIER
 ```
 
 - For help information, run:
@@ -100,13 +104,33 @@ If you want to see the runtime log, run:
 RUST_LOG=debug grpc-as --socket 127.0.0.1:50004
 ```
 
+Or you can run the binary in a podman container:
+```shell
+# Build the grpc-as container image
+podman build \
+    -t grpc-as \
+    -f attestation-service/podman/as-grpc/Containerfile \
+    .
+
+# Run the grpc-as container
+podman run \
+    -d \
+    -p 50004:50004 \
+    --net host \
+    grpc-as
+```
+
 #### Image Build
 
 Build and run container image
 ```shell
 git clone https://github.com/confidential-containers/trustee
 cd trustee
-docker build -t coco-as:grpc -f attestation-service/docker/as-grpc/Dockerfile .
+docker build \
+  -t coco-as:grpc \
+  -f attestation-service/docker/as-grpc/Dockerfile \
+  --build-arg VERIFIER=all-verifier \
+  . 
 ```
 
 ### API

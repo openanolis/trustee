@@ -2,13 +2,11 @@
 //!
 //! # Features
 //! - `rvps-grpc`: The AS will connect a remote RVPS.
-//! - `rvps-builtin`: The AS will integrate RVPS functionalities itself.
 
 pub mod config;
 pub mod policy_engine;
-mod rvps;
-mod token;
-mod utils;
+pub mod rvps;
+pub mod token;
 
 use crate::token::AttestationTokenBroker;
 
@@ -16,21 +14,17 @@ use anyhow::{anyhow, Context, Result};
 use config::Config;
 pub use kbs_types::{Attestation, Tee};
 use log::{debug, info};
-use policy_engine::{PolicyEngine, PolicyEngineType};
 use rvps::{RvpsApi, RvpsError};
-use serde_json::{json, Value};
-use serde_variant::to_variant_name;
+use serde_json::Value;
 use sha2::{Digest, Sha256, Sha384, Sha512};
-use std::{collections::HashMap, str::FromStr};
-use strum::{AsRefStr, EnumString};
+use std::collections::HashMap;
+use strum::{AsRefStr, Display, EnumString};
 use thiserror::Error;
 use tokio::fs;
 use verifier::{InitDataHash, ReportData};
 
-use crate::utils::flatten_claims;
-
 /// Hash algorithms used to calculate runtime/init data binding
-#[derive(EnumString, AsRefStr)]
+#[derive(Debug, Display, EnumString, AsRefStr)]
 pub enum HashAlgorithm {
     #[strum(ascii_case_insensitive)]
     Sha256,
@@ -66,6 +60,7 @@ impl HashAlgorithm {
 
 /// Runtime/Init Data used to check the binding relationship with report data
 /// in Evidence
+#[derive(Debug)]
 pub enum Data {
     /// This will be used as the expected runtime/init data to check against
     /// the one inside evidence.
@@ -94,7 +89,6 @@ pub enum ServiceError {
 
 pub struct AttestationService {
     _config: Config,
-    policy_engine: Box<dyn PolicyEngine + Send + Sync>,
     rvps: Box<dyn RvpsApi + Send + Sync>,
     token_broker: Box<dyn AttestationTokenBroker + Send + Sync>,
 }
@@ -108,21 +102,14 @@ impl AttestationService {
                 .map_err(ServiceError::CreateDir)?;
         }
 
-        let policy_engine = PolicyEngineType::from_str(&config.policy_engine)
-            .map_err(ServiceError::UnsupportedPolicy)?
-            .to_policy_engine(config.work_dir.as_path())?;
-
         let rvps = rvps::initialize_rvps_client(&config.rvps_config)
             .await
             .map_err(ServiceError::Rvps)?;
 
-        let token_broker = config
-            .attestation_token_broker
-            .to_token_broker(config.attestation_token_config.clone())?;
+        let token_broker = config.attestation_token_broker.to_token_broker()?;
 
         Ok(Self {
             _config: config,
-            policy_engine,
             rvps,
             token_broker,
         })
@@ -130,14 +117,14 @@ impl AttestationService {
 
     /// Set Attestation Verification Policy.
     pub async fn set_policy(&mut self, policy_id: String, policy: String) -> Result<()> {
-        self.policy_engine.set_policy(policy_id, policy).await?;
+        self.token_broker.set_policy(policy_id, policy).await?;
         Ok(())
     }
 
     /// Get Attestation Verification Policy List.
     /// The result is a `policy-id` -> `policy hash` map.
     pub async fn list_policies(&self) -> Result<HashMap<String, String>> {
-        self.policy_engine
+        self.token_broker
             .list_policies()
             .await
             .context("Cannot List Policy")
@@ -145,7 +132,7 @@ impl AttestationService {
 
     /// Get a single Policy content.
     pub async fn get_policy(&self, policy_id: String) -> Result<String> {
-        self.policy_engine
+        self.token_broker
             .get_policy(policy_id)
             .await
             .context("Cannot Get Policy")
@@ -164,9 +151,9 @@ impl AttestationService {
     ///   will not be performed.
     /// - `hash_algorithm`: The hash algorithm that is used to calculate the digest of `runtime_data` and
     ///   `init_data`.
-    /// - `policy_ids`: The policy ids that used to check this evidence. Any check fails against a policy will
-    ///   not cause this function to return error. The result check against every policy will be included inside
-    ///   the finally Token returned by CoCo-AS.
+    /// - `policy_ids`: The ids of the policies that will be used to evaluate the claims.
+    ///    For EAR tokens, only the first policy will be evaluated.
+    ///    The hash of the policy will be returned as part of the attestation token.
     #[allow(clippy::too_many_arguments)]
     pub async fn evaluate(
         &self,
@@ -202,77 +189,33 @@ impl AttestationService {
             .map_err(|e| anyhow!("Verifier evaluate failed: {e:?}"))?;
         info!("{:?} Verifier/endorsement check passed.", tee);
 
-        let flattened_claims = flatten_claims(tee, &claims_from_tee_evidence)?;
-        info!("Attestation Claims: {:#?}", flattened_claims);
-
-        let tcb_json = serde_json::to_string(&flattened_claims)?;
-
         let reference_data_map = self
-            .get_reference_data(flattened_claims.keys())
+            .rvps
+            .get_digests()
             .await
             .map_err(|e| anyhow!("Generate reference data failed: {:?}", e))?;
         debug!("reference_data_map: {:#?}", reference_data_map);
 
-        let evaluation_report = self
-            .policy_engine
-            .evaluate(reference_data_map.clone(), tcb_json, policy_ids.clone())
-            .await
-            .map_err(|e| anyhow!("Policy Engine evaluation failed: {e}"))?;
-
-        info!("Policy check passed.");
-        let policies: Vec<_> = evaluation_report
-            .into_iter()
-            .map(|(k, v)| {
-                json!({
-                    "policy-id": k,
-                    "policy-hash": v,
-                })
-            })
-            .collect();
-
-        let reference_data_map: HashMap<String, Vec<String>> = reference_data_map
-            .into_iter()
-            .filter(|it| !it.1.is_empty())
-            .collect();
-
-        let token_claims = json!({
-            "tee": to_variant_name(&tee)?,
-            "evaluation-reports": policies,
-            "tcb-status": flattened_claims,
-            "reference-data": reference_data_map,
-            "customized_claims": {
-                "init_data": init_data_claims,
-                "runtime_data": runtime_data_claims,
-            },
-        });
-
-        let attestation_results_token = self.token_broker.issue(token_claims)?;
-        info!(
-            "Attestation Token ({}) generated.",
-            self._config.attestation_token_broker
-        );
-
+        let attestation_results_token = self
+            .token_broker
+            .issue(
+                claims_from_tee_evidence,
+                policy_ids,
+                init_data_claims,
+                runtime_data_claims,
+                reference_data_map,
+                tee,
+            )
+            .await?;
         Ok(attestation_results_token)
-    }
-
-    async fn get_reference_data<'a, I>(&self, tcb_claims: I) -> Result<HashMap<String, Vec<String>>>
-    where
-        I: Iterator<Item = &'a String>,
-    {
-        let mut data = HashMap::new();
-        for key in tcb_claims {
-            let reference_value = self.rvps.get_digests(key).await?;
-            if !reference_value.is_empty() {
-                debug!("Successfully get reference values of {key} from RVPS.");
-            }
-            data.insert(key.to_string(), reference_value);
-        }
-        Ok(data)
     }
 
     /// Registry a new reference value
     pub async fn register_reference_value(&mut self, message: &str) -> Result<()> {
-        self.rvps.verify_and_extract(message).await
+        self.rvps
+            .verify_and_extract(message)
+            .await
+            .context("register reference value")
     }
 
     pub async fn generate_supplemental_challenge(

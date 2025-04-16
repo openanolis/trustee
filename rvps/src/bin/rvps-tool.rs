@@ -5,14 +5,7 @@ use clap::{Args, Parser};
 use log::info;
 use shadow_rs::shadow;
 
-pub mod rvps_api {
-    tonic::include_proto!("reference");
-}
-
-use crate::rvps_api::{
-    reference_value_provider_service_client::ReferenceValueProviderServiceClient,
-    ReferenceValueQueryRequest, ReferenceValueRegisterRequest,
-};
+use reference_value_provider_service::client;
 
 shadow!(build);
 
@@ -21,27 +14,15 @@ const DEFAULT_ADDR: &str = "http://127.0.0.1:50003";
 
 async fn register(addr: &str, provenance_path: &str) -> Result<()> {
     let message = std::fs::read_to_string(provenance_path).context("read provenance")?;
-    let mut client = ReferenceValueProviderServiceClient::connect(addr.to_string()).await?;
-    let req = tonic::Request::new(ReferenceValueRegisterRequest { message });
 
-    client.register_reference_value(req).await?;
-
+    client::register(addr.to_string(), message).await?;
     info!("Register provenance succeeded.");
 
     Ok(())
 }
 
-async fn query(addr: &str, name: &str) -> Result<()> {
-    let mut client = ReferenceValueProviderServiceClient::connect(addr.to_string()).await?;
-    let req = tonic::Request::new(ReferenceValueQueryRequest {
-        name: name.to_string(),
-    });
-
-    let rvs = client
-        .query_reference_value(req)
-        .await?
-        .into_inner()
-        .reference_value_results;
+async fn query(addr: &str) -> Result<()> {
+    let rvs = client::query(addr.to_string()).await?;
     info!("Get reference values succeeded:\n {rvs}");
     Ok(())
 }
@@ -77,10 +58,6 @@ struct QueryArgs {
     /// The address of target RVPS
     #[arg(short, long, default_value = DEFAULT_ADDR)]
     addr: String,
-
-    /// The name to query reference value
-    #[arg(short, long)]
-    name: String,
 }
 
 #[tokio::main]
@@ -100,6 +77,6 @@ async fn main() -> Result<()> {
 
     match cli {
         Cli::Register(para) => register(&para.addr, &para.path).await,
-        Cli::Query(para) => query(&para.addr, &para.name).await,
+        Cli::Query(para) => query(&para.addr).await,
     }
 }

@@ -57,17 +57,9 @@ jobs:
       working-directory: kbs
       run: make
 
-    - name: KBS Build [Built-in CoCo AS, OpenSSL]
+    - name: KBS Build [gRPC CoCo AS]
       working-directory: kbs
-      run: make HTTPS_CRYPTO=openssl
-
-    - name: KBS Build [gRPC CoCo AS, RustTLS]
-      working-directory: kbs
-      run: make COCO_AS_INTEGRATE_TYPE=grpc
-
-    - name: build KBS for Intel Trust Authority
-      working-directory: kbs
-      run: make AS_TYPE=intel-trust-authority-as
+      run: make AS_FEATURE=coco-as-grpc ALIYUN=true
 
     - name: Lint
       working-directory: kbs

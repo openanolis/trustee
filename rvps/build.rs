@@ -10,7 +10,7 @@ fn real_main() -> Result<(), String> {
         println!("cargo:rustc-link-lib=static=cgo");
 
         let cgo_dir = "./cgo".to_string();
-        let cgo = Command::new("go")
+        let cgo = std::process::Command::new("go")
             .args([
                 "build",
                 "-o",
@@ -27,7 +27,12 @@ fn real_main() -> Result<(), String> {
                 .to_string());
         }
     }
-    tonic_build::compile_protos("../protos/reference.proto").map_err(|e| format!("{e}"))?;
+
+    #[cfg(feature = "rebuild-grpc-protos")]
+    tonic_build::configure()
+        .out_dir("src/rvps_api")
+        .compile_protos(&["../protos/reference.proto"], &["../protos"])
+        .map_err(|e| format!("Failed to build gRPC protos: {e}"))?;
 
     Ok(())
 }

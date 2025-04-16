@@ -1,16 +1,19 @@
-FROM rust:slim as builder
+FROM --platform=$BUILDPLATFORM docker.io/library/rust:slim AS builder
+ARG BUILDPLATFORM=linux/amd64
 ARG ARCH=x86_64
-ARG HTTPS_CRYPTO=rustls
 ARG ALIYUN=false
 
-ENV DEBIAN_FRONTEND noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
     gpg \
     gnupg-agent \
-    git
+    git \
+    sudo
+
+RUN if ["${ARCH}" = "aarch64" ]; then apt-get install -y libc-bin; fi
 
 RUN if [ "${ARCH}" = "x86_64" ]; then curl -fsSL https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | \
     gpg --dearmor --output /usr/share/keyrings/intel-sgx.gpg && \
@@ -30,15 +33,14 @@ RUN if [ "${ARCH}" = "x86_64" ]; then curl -fsSL https://download.01.org/intel-s
     cmake \
     libtss2-dev && \
     if [ "${ARCH}" = "x86_64" ]; then apt-get install -y --no-install-recommends \
-    libsgx-dcap-quote-verify-dev \
-    libtdx-attest-dev; fi
+    libsgx-dcap-quote-verify-dev; fi
 
 # Build and Install KBS
-WORKDIR /usr/src/kbs
+WORKDIR /usr/src/trustee
 COPY . .
 
-RUN cd kbs && make AS_FEATURE=coco-as-builtin HTTPS_CRYPTO=${HTTPS_CRYPTO} POLICY_ENGINE=opa ALIYUN=${ALIYUN} && \
-    make install-kbs
+RUN cd kbs && make AS_FEATURE=coco-as-builtin ALIYUN=${ALIYUN} ARCH=${ARCH} && \
+    make ARCH=${ARCH} install-kbs
 
 FROM ubuntu:22.04
 ARG ARCH=x86_64
