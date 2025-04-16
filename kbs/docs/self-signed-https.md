@@ -62,37 +62,40 @@ openssl pkey -in private.key -pubout -out public.pub
 Set up a `kbs-config.toml`
 ```bash
 cat << EOF > kbs-config.toml
+[http_server]
+sockets = ["0.0.0.0:8080"]
 private_key = "/etc/key.pem"
 certificate = "/etc/cert.pem"
+insecure_http = false
 
-sockets = ["0.0.0.0:8080"]
-
+[admin]
 auth_public_key = "/etc/public.pub"
 
-insecure_api = true
+[attestation_token]
+insecure_key = true
 
-[attestation_token_config]
-attestation_token_type = "CoCo"
+[policy_engine]
+policy_path = "/opa/confidential-containers/kbs/policy.rego"
 
-[repository_config]
-type = "LocalFs"
-dir_path = "/opt/confidential-containers/kbs/repository"
-
-[as_config]
+[attestation_service]
+type = "coco_as_builtin"
 work_dir = "/opt/confidential-containers/attestation-service"
 policy_engine = "opa"
-rvps_store_type = "LocalFs"
-attestation_token_broker = "Simple"
 
-[as_config.attestation_token_config]
-duration_min = 5
+    [attestation_serivce.attestation_token_broker]
+    type = "Ear"
+    duration_min = 5
 
-[as_config.rvps_config]
-store_type = "LocalFs"
-remote_addr = ""
+    [attestation_service.rvps_config]
+    type = "BuiltIn"
 
-[policy_engine_config]
-policy_path = "/opa/confidential-containers/kbs/policy.rego"
+    [attestation_service.rvps_config.storage]
+    type = "LocalFs"
+
+[[plugins]]
+name = "resource"
+type = "LocalFs"
+dir_path = "/opt/confidential-containers/kbs/repository"
 EOF
 ```
 

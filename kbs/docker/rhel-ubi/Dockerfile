@@ -1,5 +1,5 @@
 # Use CentOS Stream to build.
-FROM quay.io/centos/centos:stream9 as builder
+FROM quay.io/centos/centos:stream9 AS builder
 
 # Install build dependencies from CentOS repos.
 RUN dnf -y --setopt=install_weak_deps=0 --enablerepo=crb install \
@@ -15,7 +15,7 @@ dnf -y install --nogpgcheck --repofrompath "sgx,file:///root/sgx_rpm_local_repo"
 # Build.
 WORKDIR /usr/src/kbs
 COPY . .
-ARG KBS_FEATURES=coco-as-builtin,rustls,resource,opa
+ARG KBS_FEATURES=coco-as-builtin
 RUN \
 cargo install --locked --root /usr/local/ --path kbs --bin kbs --no-default-features --features ${KBS_FEATURES} && \
 # Collect linked files necessary for the binary to run.

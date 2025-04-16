@@ -54,6 +54,9 @@ eyJhbGciOiJSUzM4NCIsInR5cCI6IkpXVCJ9.eyJjdXN0b21pemVkX2NsYWltcyI6eyJ0ZXN0X2tleSI
 
 The value is a base64 encoded JWT. The body of the JWT is showed in the [example.token.json](./example.token.json).
 
+
+More configuration items please refer to the [document](./config.md).
+
 ## Advanced Topics
 
 ### Building from Source
@@ -67,7 +70,9 @@ Build and install binary
 git clone https://github.com/confidential-containers/trustee
 cd trustee/attestation-service
 WORKDIR=$(pwd)
-make && make install
+make VERIFIER=all-verifier && make install
+
+# You can use different verifier by changing the value of VERIFIER
 ```
 
 - For help information, run:
@@ -96,7 +101,27 @@ Build and run container image
 ```shell
 git clone https://github.com/confidential-containers/trustee
 cd trustee
-docker build -t coco-as:restful -f attestation-service/docker/as-restful/Dockerfile .
+docker build \
+  -t coco-as:restful \
+  -f attestation-service/docker/as-restful/Dockerfile \
+  --build-arg VERIFIER=all-verifier \
+  . 
+```
+
+Or you can run the binary in a podman container:
+```shell
+# Build the restful-as container image
+podman build \
+    -t restful-as \
+    -f attestation-service/podman/restful-as/Containerfile \
+    .
+
+# Run the restful-as container
+podman run \
+    -d \
+    -p 50004:50004 \
+    --net host \
+    restful-as
 ```
 
 ### HTTPS support

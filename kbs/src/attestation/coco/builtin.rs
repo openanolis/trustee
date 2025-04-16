@@ -2,13 +2,14 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::attestation::{make_nonce, Attest};
 use anyhow::*;
 use async_trait::async_trait;
 use attestation_service::{config::Config as AsConfig, AttestationService, Data, HashAlgorithm};
 use kbs_types::{Attestation, Challenge, Tee};
 use serde_json::json;
 use tokio::sync::RwLock;
+
+use crate::attestation::backend::{make_nonce, Attest};
 
 pub struct BuiltInCoCoAs {
     inner: RwLock<AttestationService>,
@@ -40,7 +41,7 @@ impl Attest for BuiltInCoCoAs {
                 HashAlgorithm::Sha384,
                 None,
                 HashAlgorithm::Sha384,
-                vec!["default".into()],
+                vec!["default".to_string()],
             )
             .await
     }

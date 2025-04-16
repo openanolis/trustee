@@ -27,26 +27,36 @@ cfg-if = "1.0.0"
 chrono = "0.4.19"
 clap = { version = "4", features = ["derive"] }
 config = "0.13.3"
+ear = "0.3.0"
 env_logger = "0.10.0"
 hex = "0.4.3"
-jwt-simple = "0.11"
+jwt-simple = { version = "0.12", default-features = false, features = [
+    "pure-rust",
+] }
 kbs_protocol = { git = "https://github.com/inclavare-containers/guest-components.git", branch = "main", default-features = false }
 kbs-types = { git = "https://github.com/inclavare-containers/kbs-types.git", rev = "d881395" }
 confidential-data-hub = { git = "https://github.com/inclavare-containers/guest-components.git", branch = "main", default-features = false, features = ["aliyun", "kbs", "bin", "ttrpc", "cli"] }
 jsonwebtoken = { version = "9", default-features = false }
 log = "0.4.17"
+openssl = "0.10.46"
 prost = "0.13"
-regorus = { version = "0.1.5", default-features = false, features = ["regex", "base64", "time"] }
+regorus = { version = "0.2.6", default-features = false, features = [
+    "regex",
+    "base64",
+    "time",
+    "std",
+] }
 reqwest = "0.12"
 rstest = "0.18.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.89"
+serde_qs = "0.13.0"
 serde_with = { version = "1.11.0", features = ["base64", "hex"] }
 serial_test = "0.9.0"
 sha2 = "0.10"
 shadow-rs = "0.19.0"
 strum = { version = "0.25", features = ["derive"] }
-thiserror = "1.0"
+thiserror = "2.0"
 tokio = { version = "1", features = ["full"] }
 tempfile = "3.4.0"
 tonic = "0.12"

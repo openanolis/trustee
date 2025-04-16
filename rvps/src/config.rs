@@ -2,23 +2,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-
+use anyhow::{Context, Result};
 use serde::Deserialize;
-use serde_json::{json, Value};
 
-pub const DEFAULT_STORAGE_TYPE: &str = "LocalFs";
+use crate::storage::ReferenceValueStorageConfig;
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Config {
-    pub store_type: String,
-    pub store_config: Value,
+    #[serde(default)]
+    pub storage: ReferenceValueStorageConfig,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            store_type: DEFAULT_STORAGE_TYPE.to_string(),
-            store_config: json!({}),
-        }
+impl Config {
+    pub fn from_file(config_path: &str) -> Result<Self> {
+        let c = config::Config::builder()
+            .add_source(config::File::with_name(config_path))
+            .build()?;
+
+        let res = c.try_deserialize().context("invalid config")?;
+        Ok(res)
     }
 }

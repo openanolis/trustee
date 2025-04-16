@@ -193,6 +193,7 @@ pub trait Verifier {
     }
 }
 
+#[allow(dead_code)]
 /// Padding or truncate the given data slice to the given `len` bytes.
 fn regularize_data(data: &[u8], len: usize, data_name: &str, arch: &str) -> Vec<u8> {
     let data_len = data.len();
