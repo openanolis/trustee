@@ -9,33 +9,34 @@ metadata:
     {{- include "coco-kbs.labels" . | nindent 4 }}
 data:
   "kbs-config.toml": |
+    [http_server]
     sockets = ["0.0.0.0:{{ .Values.kbs.service.port }}"]
-    auth_public_key = "/opt/confidential-containers/kbs/user-keys/public.pub"
     insecure_http = true
     # insecure_api = true
 
+    [admin]
+    auth_public_key = "/opt/confidential-containers/kbs/user-keys/public.pub"
+
+    [[plugins]]
+    name = "resource"
     {{- if .Values.kbs.aliyunKms.enabled }}
-    [repository_config]
     type = "Aliyun"
     client_key = {{ .Values.kbs.aliyunKms.clientKey | quote }}
     kms_instance_id = "{{ .Values.kbs.aliyunKms.kmsIntanceId }}"
     password = "{{ .Values.kbs.aliyunKms.password }}"
     cert_pem = {{ .Values.kbs.aliyunKms.certPem | quote}}
     {{- else }}
-    [repository_config]
     type = "LocalFs"
     dir_path = "/opt/confidential-containers/kbs/repository"
     {{- end }}
     
-    [attestation_token_config]
-    attestation_token_type = "CoCo"
+    [attestation_token]
+    insecure_key = true
 
-    [grpc_config]
+    [attestation_service]
+    type = "coco_as_grpc"
     {{- if .Values.as_ip }}
     as_addr = "http://{{ .Values.as_ip }}:{{ .Values.as.service.port }}"
     {{- else }}
     as_addr = "http://as:{{ .Values.as.service.port }}"
     {{- end }}
-
-    [policy_engine_config]
-    policy_path = "/opa/confidential-containers/kbs/policy.rego"

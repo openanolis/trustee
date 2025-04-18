@@ -13,14 +13,15 @@ data:
         "work_dir": "/opt/confidential-containers/attestation-service",
         "policy_engine": "opa",
         "rvps_config": {
+          "type": "GrpcRemote",
           {{- if .Values.rvps_ip }}
-	        "remote_addr":"http://{{ .Values.rvps_ip }}:{{ .Values.rvps.service.port }}"
+	        "address":"http://{{ .Values.rvps_ip }}:{{ .Values.rvps.service.port }}"
           {{- else }}
-          "remote_addr":"http://rvps:{{ .Values.rvps.service.port }}"
+          "address":"http://rvps:{{ .Values.rvps.service.port }}"
           {{- end }}
         },
-        "attestation_token_broker": "Simple",
-        "attestation_token_config": {
+        "attestation_token_broker": {
+            "type": "Simple",
             "duration_min": 5
         }
     }

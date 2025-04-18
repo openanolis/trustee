@@ -36,7 +36,7 @@ spec:
           command:
             - "/bin/bash"
             - "-c"
-            - "rvps --config /etc/rvps-config/rvps.json"
+            - "rvps --config /etc/rvps-config/rvps.json --address 0.0.0.0:{{ .Values.rvps.service.port }}"
           env:
             - name: RUST_LOG
               value: {{ .Values.log_level }}
