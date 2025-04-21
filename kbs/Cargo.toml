@@ -34,6 +34,9 @@ pkcs11 = ["cryptoki"]
 # that want to join a Nebula overlay network
 nebula-ca-plugin = []
 
+# Use TPM CA plugin to provide CA services to EK/AIK of TPM instance
+tpm-pca = []
+
 [dependencies]
 actix = "0.13.5"
 actix-web = { workspace = true, features = ["openssl"] }
