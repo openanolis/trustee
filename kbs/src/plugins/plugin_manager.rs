@@ -16,6 +16,9 @@ use super::{NebulaCaPlugin, NebulaCaPluginConfig};
 #[cfg(feature = "pkcs11")]
 use super::{Pkcs11Backend, Pkcs11Config};
 
+#[cfg(feature = "tpm-pca")]
+use super::{TpmCaConfig, TpmCaPlugin};
+
 type ClientPluginInstance = Arc<dyn ClientPlugin>;
 
 #[async_trait::async_trait]
@@ -73,6 +76,10 @@ pub enum PluginsConfig {
     #[cfg(feature = "pkcs11")]
     #[serde(alias = "pkcs11")]
     Pkcs11(Pkcs11Config),
+
+    #[cfg(feature = "tpm-pca")]
+    #[serde(alias = "tpm-pca")]
+    TpmPca(TpmCaConfig),
 }
 
 impl Display for PluginsConfig {
@@ -84,6 +91,8 @@ impl Display for PluginsConfig {
             PluginsConfig::NebulaCaPlugin(_) => f.write_str("nebula-ca"),
             #[cfg(feature = "pkcs11")]
             PluginsConfig::Pkcs11(_) => f.write_str("pkcs11"),
+            #[cfg(feature = "tpm-pca")]
+            PluginsConfig::TpmPca(_) => f.write_str("tpm-pca"),
         }
     }
 }
@@ -114,6 +123,12 @@ impl TryInto<ClientPluginInstance> for PluginsConfig {
                 let pkcs11 = Pkcs11Backend::try_from(pkcs11_config)
                     .context("Initialize 'pkcs11' plugin failed")?;
                 Arc::new(pkcs11) as _
+            }
+            #[cfg(feature = "tpm-pca")]
+            PluginsConfig::TpmPca(tpm_pca_config) => {
+                let tpm_pca = TpmCaPlugin::try_from(tpm_pca_config)
+                    .context("Initialize 'tpm-pca' plugin failed")?;
+                Arc::new(tpm_pca) as _
             }
         };
 
