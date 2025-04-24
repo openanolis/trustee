@@ -29,6 +29,10 @@ data:
     type = "LocalFs"
     dir_path = "/opt/confidential-containers/kbs/repository"
     {{- end }}
+
+    [[plugins]]
+    name = "tpm-pca"
+    work_dir = "/opt/confidential-containers/kbs/tpm-pca"
     
     [attestation_token]
     insecure_key = true

@@ -55,7 +55,7 @@ jobs:
 
     - name: KBS Build [Default]
       working-directory: kbs
-      run: make
+      run: make TPM_PCA_PLUGIN=true
 
     - name: KBS Build [gRPC CoCo AS]
       working-directory: kbs
