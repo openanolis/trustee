@@ -227,6 +227,17 @@ This is also called "Repository" in old versions. The properties to be configure
 | `password`        | String | AAP client key password           | Yes      | `8f9989c18d27...`                                   |
 | `cert_pem`        | String | CA cert for the KMS instance      | Yes      | `-----BEGIN CERTIFICATE----- ...`                   |
 
+#### TPM Private CA Configuration
+
+The TPM Private CA plugin can be enabled by adding the following to the KBS config.
+
+```yaml
+[[plugins]]
+name = "tpm-pca"
+```
+
+Detailed [documentation](#kbs/docs/plugins/tpm_pca.md).
+
 #### Nebula CA Configuration
 
 The Nebula CA plugin can be enabled by adding the following to the KBS config.
