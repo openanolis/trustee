@@ -105,3 +105,12 @@ services:
     - kbs
     - as
     - rvps
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "8082:8082"
+    depends_on:
+    - gateway
