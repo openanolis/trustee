@@ -1,0 +1,8 @@
+{
+  "tee-pubkey": {
+    "alg": "algorithm",
+    "k-mod": "my_modulus",
+    "k-exp": "my_exponent"
+  },
+  "tee-evidence": "my_evidence"
+}

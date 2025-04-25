@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package reference;
 
+option go_package = "github.com/openanolis/trustee/gateway/internal/rvps/protos";
+
 message ReferenceValueQueryRequest {}
 
 message ReferenceValueQueryResponse {
