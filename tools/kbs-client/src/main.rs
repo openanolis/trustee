@@ -5,8 +5,8 @@
 //! A simple KBS client for test.
 
 use anyhow::{bail, Result};
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::{engine::general_purpose::STANDARD, prelude::BASE64_URL_SAFE_NO_PAD};
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -97,6 +97,16 @@ enum ConfigCommands {
         #[clap(long, value_parser)]
         policy_file: PathBuf,
     },
+
+    /// Get attestation verification policy
+    GetAttestationPolicy {
+        /// Policy ID, e.g "default"
+        #[clap(long, value_parser)]
+        id: String,
+    },
+
+    /// List all attestation verification policies
+    ListAttestationPolicies {},
 
     /// Set resource policy
     SetResourcePolicy {
@@ -230,6 +240,17 @@ async fn main() -> Result<()> {
                         "Set resource success \n resource: {}",
                         STANDARD.encode(resource_bytes)
                     );
+                }
+                ConfigCommands::GetAttestationPolicy { id } => {
+                    let policy_b64 =
+                        kbs_client::get_attestation_policy(&cli.url, &id, kbs_cert.clone()).await?;
+                    let policy = BASE64_URL_SAFE_NO_PAD.decode(policy_b64)?;
+                    println!("{}", String::from_utf8_lossy(&policy));
+                }
+                ConfigCommands::ListAttestationPolicies {} => {
+                    let policies =
+                        kbs_client::list_attestation_policies(&cli.url, kbs_cert.clone()).await?;
+                    println!("{}", policies);
                 }
             }
         }

@@ -77,6 +77,22 @@ message SetPolicyRequest {
 }
 message SetPolicyResponse {}
 
+message GetPolicyRequest {
+    string policy_id = 1;
+}
+message GetPolicyResponse {
+    string policy = 1;
+}
+
+message ListPoliciesRequest {}
+message ListPoliciesResponse {
+    message PolicyInfo {
+        string policy_id = 1;
+        string policy_hash = 2;
+    }
+    repeated PolicyInfo policies = 1;
+}
+
 message ChallengeRequest {
     // ChallengeRequest uses HashMap to pass variables like:
     // tee, tee_params etc
@@ -89,6 +105,8 @@ message ChallengeResponse {
 service AttestationService {
     rpc AttestationEvaluate(AttestationRequest) returns (AttestationResponse) {};
     rpc SetAttestationPolicy(SetPolicyRequest) returns (SetPolicyResponse) {};
+    rpc GetAttestationPolicy(GetPolicyRequest) returns (GetPolicyResponse) {};
+    rpc ListAttestationPolicies(ListPoliciesRequest) returns (ListPoliciesResponse) {};
     rpc GetAttestationChallenge(ChallengeRequest) returns (ChallengeResponse) {};
     // Get the GetPolicyRequest.user and GetPolicyRequest.tee specified Policy(.rego)
 }

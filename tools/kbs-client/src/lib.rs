@@ -155,6 +155,66 @@ pub async fn set_attestation_policy(
     }
 }
 
+/// Get attestation policy by id
+/// Input parameters:
+/// - url: KBS server root URL.
+/// - policy_id: Policy ID to get.
+/// - kbs_root_certs_pem: Custom HTTPS root certificate of KBS server. It can be left blank.
+pub async fn get_attestation_policy(
+    url: &str,
+    policy_id: &str,
+    kbs_root_certs_pem: Vec<String>,
+) -> Result<String> {
+    let http_client = build_http_client(kbs_root_certs_pem)?;
+
+    let get_policy_url = format!("{}/{KBS_URL_PREFIX}/attestation-policy/{policy_id}", url);
+
+    let res = http_client
+        .get(get_policy_url)
+        .header("Content-Type", "application/json")
+        .send()
+        .await?;
+
+    match res.status() {
+        reqwest::StatusCode::OK => {
+            let policy = res.text().await?;
+            Ok(policy)
+        }
+        _ => {
+            bail!("Request Failed, Response: {:?}", res.text().await?)
+        }
+    }
+}
+
+/// List all attestation policies
+/// Input parameters:
+/// - url: KBS server root URL.
+/// - kbs_root_certs_pem: Custom HTTPS root certificate of KBS server. It can be left blank.
+pub async fn list_attestation_policies(
+    url: &str,
+    kbs_root_certs_pem: Vec<String>,
+) -> Result<String> {
+    let http_client = build_http_client(kbs_root_certs_pem)?;
+
+    let list_policies_url = format!("{}/{KBS_URL_PREFIX}/attestation-policies", url);
+
+    let res = http_client
+        .get(list_policies_url)
+        .header("Content-Type", "application/json")
+        .send()
+        .await?;
+
+    match res.status() {
+        reqwest::StatusCode::OK => {
+            let policies_json = res.text().await?;
+            Ok(policies_json)
+        }
+        _ => {
+            bail!("Request Failed, Response: {:?}", res.text().await?)
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 struct ResourcePolicyData {
     pub policy: String,

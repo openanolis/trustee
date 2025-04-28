@@ -65,6 +65,29 @@ set_config_test(){
     output=$(docker exec $c_id sh -c "trustee-client --url $TRUSTEE_URL \
     config \
     --auth-private-key /opt/trustee-kbs-auth.key \
+    get-attestation-policy \
+    --id default")
+    echo $output
+    status=1
+    if echo "$output" | grep -q "package policy"; then
+        status=0
+    fi
+    check_result get_attestation_policy_check $status $c_id $INSTANCE_NAME
+
+    output=$(docker exec $c_id sh -c "trustee-client --url $TRUSTEE_URL \
+    config \
+    --auth-private-key /opt/trustee-kbs-auth.key \
+    list-attestation-policies")
+    echo $output
+    status=1
+    if echo "$output" | grep -q "policy-id"; then
+        status=0
+    fi
+    check_result list_attestation_policies_check $status $c_id $INSTANCE_NAME
+
+    output=$(docker exec $c_id sh -c "trustee-client --url $TRUSTEE_URL \
+    config \
+    --auth-private-key /opt/trustee-kbs-auth.key \
     set-resource-policy \
     --policy-file /root/test_policy.rego")
     echo $output

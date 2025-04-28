@@ -179,6 +179,24 @@ pub(crate) async fn api(
 
             Ok(HttpResponse::Ok().finish())
         }
+        #[cfg(feature = "as")]
+        "attestation-policy" if request.method() == Method::GET && !additional_path.is_empty() => {
+            let policy_id = additional_path.strip_prefix('/').unwrap_or(additional_path);
+
+            let policy = core.attestation_service.get_policy(policy_id).await?;
+            Ok(HttpResponse::Ok()
+                .content_type("application/json")
+                .body(policy))
+        }
+        #[cfg(feature = "as")]
+        "attestation-policies" if request.method() == Method::GET => {
+            let policies = core.attestation_service.list_policies().await?;
+            let policies_json = serde_json::to_string(&policies)?;
+
+            Ok(HttpResponse::Ok()
+                .content_type("application/json")
+                .body(policies_json))
+        }
         // TODO: consider to rename the api name for it is not only for
         // resource retrievement but for all plugins.
         "resource-policy" if request.method() == Method::POST => {
