@@ -18,7 +18,7 @@ use crate::attestation::backend::{make_nonce, Attest};
 
 use self::attestation::{
     attestation_request::RuntimeData, attestation_service_client::AttestationServiceClient,
-    AttestationRequest, ChallengeRequest, SetPolicyRequest,
+    AttestationRequest, ChallengeRequest, GetPolicyRequest, ListPoliciesRequest, SetPolicyRequest,
 };
 
 mod attestation {
@@ -90,6 +90,39 @@ impl Attest for GrpcClientPool {
             .map_err(|e| anyhow!("Set Policy Failed: {:?}", e))?;
 
         Ok(())
+    }
+
+    async fn get_policy(&self, policy_id: &str) -> Result<String> {
+        let req = tonic::Request::new(GetPolicyRequest {
+            policy_id: policy_id.to_string(),
+        });
+
+        let mut client = { self.pool.lock().await.get().await? };
+
+        let resp = client
+            .get_attestation_policy(req)
+            .await
+            .map_err(|e| anyhow!("Get Policy Failed: {:?}", e))?;
+
+        Ok(resp.into_inner().policy)
+    }
+
+    async fn list_policies(&self) -> Result<HashMap<String, String>> {
+        let req = tonic::Request::new(ListPoliciesRequest {});
+
+        let mut client = { self.pool.lock().await.get().await? };
+
+        let resp = client
+            .list_attestation_policies(req)
+            .await
+            .map_err(|e| anyhow!("List Policies Failed: {:?}", e))?;
+
+        let mut policies_map = HashMap::new();
+        for policy_info in resp.into_inner().policies {
+            policies_map.insert(policy_info.policy_id, policy_info.policy_hash);
+        }
+
+        Ok(policies_map)
     }
 
     async fn verify(&self, tee: Tee, nonce: &str, attestation: &str) -> Result<String> {

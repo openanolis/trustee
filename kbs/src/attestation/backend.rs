@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse};
@@ -76,6 +77,16 @@ pub trait Attest: Send + Sync {
     /// Set Attestation Policy
     async fn set_policy(&self, _policy_id: &str, _policy: &str) -> anyhow::Result<()> {
         Err(anyhow!("Set Policy API is unimplemented"))
+    }
+
+    /// Get Attestation Policy
+    async fn get_policy(&self, _policy_id: &str) -> anyhow::Result<String> {
+        Err(anyhow!("Get Policy API is unimplemented"))
+    }
+
+    /// List Attestation Policies
+    async fn list_policies(&self) -> anyhow::Result<HashMap<String, String>> {
+        Err(anyhow!("List Policies API is unimplemented"))
     }
 
     /// Verify Attestation Evidence
@@ -161,6 +172,20 @@ impl AttestationService {
         let input: SetPolicyInput =
             serde_json::from_slice(request).context("parse set policy request")?;
         self.inner.set_policy(&input.policy_id, &input.policy).await
+    }
+
+    pub async fn get_policy(&self, policy_id: &str) -> Result<String> {
+        self.inner
+            .get_policy(policy_id)
+            .await
+            .map_err(|e| Error::GetPolicy { source: e })
+    }
+
+    pub async fn list_policies(&self) -> Result<HashMap<String, String>> {
+        self.inner
+            .list_policies()
+            .await
+            .map_err(|e| Error::ListPolicies { source: e })
     }
 
     pub async fn auth(&self, request: &[u8]) -> Result<HttpResponse> {

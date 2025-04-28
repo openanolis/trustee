@@ -39,4 +39,16 @@ pub enum Error {
         #[source]
         source: anyhow::Error,
     },
+
+    #[error("Get Attestation Policy failed")]
+    GetPolicy {
+        #[source]
+        source: anyhow::Error,
+    },
+
+    #[error("List Attestation Policies failed")]
+    ListPolicies {
+        #[source]
+        source: anyhow::Error,
+    },
 }

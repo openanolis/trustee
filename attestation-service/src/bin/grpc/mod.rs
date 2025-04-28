@@ -16,8 +16,9 @@ use tonic::{Request, Response, Status};
 
 use crate::as_api::attestation_service_server::{AttestationService, AttestationServiceServer};
 use crate::as_api::{
-    AttestationRequest, AttestationResponse, ChallengeRequest, ChallengeResponse, SetPolicyRequest,
-    SetPolicyResponse,
+    list_policies_response::PolicyInfo, AttestationRequest, AttestationResponse, ChallengeRequest,
+    ChallengeResponse, GetPolicyRequest, GetPolicyResponse, ListPoliciesRequest,
+    ListPoliciesResponse, SetPolicyRequest, SetPolicyResponse,
 };
 
 use crate::rvps_api::reference_value_provider_service_server::{
@@ -232,6 +233,50 @@ impl AttestationService for Arc<RwLock<AttestationServer>> {
             attestation_challenge,
         };
         Ok(Response::new(res))
+    }
+
+    async fn get_attestation_policy(
+        &self,
+        request: Request<GetPolicyRequest>,
+    ) -> Result<Response<GetPolicyResponse>, Status> {
+        let request: GetPolicyRequest = request.into_inner();
+        info!("GetAttestationPolicy API called.");
+        debug!("GetAttestationPolicy: {request:#?}");
+
+        let policy = self
+            .read()
+            .await
+            .attestation_service
+            .get_policy(request.policy_id)
+            .await
+            .map_err(|e| Status::aborted(format!("Get Attestation Policy Failed: {e}")))?;
+
+        Ok(Response::new(GetPolicyResponse { policy }))
+    }
+
+    async fn list_attestation_policies(
+        &self,
+        _request: Request<ListPoliciesRequest>,
+    ) -> Result<Response<ListPoliciesResponse>, Status> {
+        info!("ListAttestationPolicies API called.");
+
+        let policy_map = self
+            .read()
+            .await
+            .attestation_service
+            .list_policies()
+            .await
+            .map_err(|e| Status::aborted(format!("List Attestation Policy Failed: {e}")))?;
+
+        let policies = policy_map
+            .into_iter()
+            .map(|(policy_id, policy_hash)| PolicyInfo {
+                policy_id,
+                policy_hash,
+            })
+            .collect();
+
+        Ok(Response::new(ListPoliciesResponse { policies }))
     }
 }
 
