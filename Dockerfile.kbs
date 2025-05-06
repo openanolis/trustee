@@ -19,7 +19,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 RUN rustup component add rustfmt clippy
 
 # Build and Install KBS
-RUN cd kbs && make AS_FEATURE=coco-as-grpc ALIYUN=${ALIYUN} TPM_PCA_PLUGIN={TPM_PCA_PLUGIN} && \
+RUN cd kbs && make AS_FEATURE=coco-as-grpc ALIYUN=${ALIYUN} TPM_PCA_PLUGIN=${TPM_PCA_PLUGIN} && \
     make install-kbs
 
 FROM ${BASE_IMAGE}
