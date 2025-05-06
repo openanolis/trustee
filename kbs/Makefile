@@ -55,7 +55,7 @@ ifeq ($(NEBULA_CA_PLUGIN), true)
 endif
 
 ifeq ($(TPM_PCA_PLUGIN), true)
-  FEATURES += tpm-pca
+  FEATURES := $(FEATURES),tpm-pca
 endif
 
 ifndef CLI_FEATURES

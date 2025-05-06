@@ -71,6 +71,6 @@ services:
       "rvps",
       "--address",
       "0.0.0.0:50003",
-      "--config-file",
+      "--config",
       "/etc/trustee/rvps.json"
     ]
