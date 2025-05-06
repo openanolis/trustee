@@ -1,0 +1,12 @@
+{
+    "work_dir": "/opt/trustee/attestation-service",
+    "policy_engine": "opa",
+    "rvps_config": {
+        "type": "GrpcRemote",
+        "address": "http://rvps:50003"
+    },
+    "attestation_token_broker": {
+	"type": "Simple",
+        "duration_min": 5
+    }
+}

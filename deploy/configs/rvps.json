@@ -1,0 +1,6 @@
+{
+    "storage": {
+	"type":"LocalFs",
+	"file_path": "/opt/trustee/reference_values"
+    }
+}
