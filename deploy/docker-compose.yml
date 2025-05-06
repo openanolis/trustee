@@ -1,0 +1,76 @@
+version: '3.2'
+services:
+  kbs:
+    image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/kbs:latest
+    command: [
+        "/usr/local/bin/kbs",
+        "--config-file",
+        "/etc/trustee/kbs-config.toml",
+      ]
+    restart: always
+    ports:
+      - "${KBS_PORT:-8080}:8080"
+    volumes:
+      - ./kbs-repository:/opt/trustee/kbs/repository":rw
+      - ./kbs-public.pub:/etc/trustee/public.pub
+      - ./configs/kbs-config.toml:/etc/trustee/kbs-config.toml
+    depends_on:
+    - as
+
+  as:
+    image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/as:latest
+    ports:
+      - "${AS_PORT:-50004}:50004"
+    restart: always
+    environment:
+      RUST_LOG: debug
+    volumes:
+    - ./attestation-service:/opt/trustee/attestation-service:rw
+    - ./configs/as-config.json:/etc/trustee/as-config.json:rw
+    - ./configs/config/sgx_default_qcnl.conf:/etc/sgx_default_qcnl.conf:rw
+    command: [
+      "grpc-as",
+      "--socket",
+      "0.0.0.0:50004",
+      "--config-file",
+      "/etc/trustee/as-config.json"
+    ]
+    depends_on:
+    - rvps
+
+  as-restful:
+    image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/as-restful:latest
+    ports:
+      - "${AS_RESTFUL_PORT:-50005}:50005"
+    restart: always
+    environment:
+      RUST_LOG: debug
+    volumes:
+    - ./attestation-service:/opt/trustee/attestation-service:rw
+    - ./configs/as-config.json:/etc/trustee/as-config.json:rw
+    - ./configs/sgx_default_qcnl.conf:/etc/sgx_default_qcnl.conf:rw
+    command: [
+      "restful-as",
+      "--socket",
+      "0.0.0.0:50005",
+      "--config-file",
+      "/etc/trustee/as-config.json"
+    ]
+    depends_on:
+    - rvps
+
+  rvps:
+    image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/rvps:latest
+    restart: always
+    ports:
+      - "${RVPS_PORT:-50003}:50003"
+    volumes:
+      - ./reference-values:/opt/trustee/reference_values:rw
+      - ./configs/rvps.json:/etc/trustee/rvps.json:rw
+    command: [
+      "rvps",
+      "--address",
+      "0.0.0.0:50003",
+      "--config-file",
+      "/etc/trustee/rvps.json"
+    ]

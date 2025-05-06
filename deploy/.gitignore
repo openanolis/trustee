@@ -1,0 +1,5 @@
+kbs-private.key
+kbs-public.pub
+kbs-repository/
+attestation-service/
+reference-values/

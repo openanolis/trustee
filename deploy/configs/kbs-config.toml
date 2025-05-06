@@ -1,0 +1,28 @@
+[http_server]
+sockets = ["0.0.0.0:8080"]
+insecure_http = true
+
+[attestation_token]
+insecure_key = true
+
+[attestation_service]
+type = "coco_as_grpc"
+as_addr = "http://as:50004"
+
+[admin]
+auth_public_key = "/etc/trustee/public.pub"
+
+[[plugins]]
+name = "resource"
+type = "LocalFs"
+dir_path = "/opt/trustee/kbs/repository"
+
+[[plugins]]
+name = "tpm-pca"
+work_dir = "/opt/trustee/kbs/tpm-pca"
+# signing_key_path = "/opt/trustee/kbs/tpm-pca/ca.key"
+# cert_chain_path = "/opt/trustee/kbs/tpm-pca/ca.crt"
+# [plugins.tpm_self_signed_ca_config]
+# name = "Test Trustee TPM private CA"
+# duration = "365d" # Unit can be 's', 'm', 'h', 'd', example: "100s", "20m", "3h", "10d"
+# organization = "Alibaba Cloud"
