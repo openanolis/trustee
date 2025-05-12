@@ -5,7 +5,7 @@ After=network.target
 Requires=rvps.service
 
 [Service]
-ExecStart=/usr/local/bin/restful-as --socket 0.0.0.0:50005 --config-file /etc/trustee/as-config.json
+ExecStart=/usr/bin/restful-as --socket 0.0.0.0:50005 --config-file /etc/trustee/as-config.json
 Environment=RUST_LOG=info
 Restart=always
 RestartSec=5
