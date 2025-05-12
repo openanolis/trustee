@@ -5,7 +5,7 @@ After=network.target
 Requires=as.service
 
 [Service]
-ExecStart=/usr/local/bin/kbs --config-file /etc/trustee/kbs-config.toml
+ExecStart=/usr/bin/kbs --config-file /etc/trustee/kbs-config.toml
 Environment=RUST_LOG=debug
 Restart=always
 RestartSec=5
