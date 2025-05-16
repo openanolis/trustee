@@ -13,7 +13,7 @@ use strum::{AsRefStr, EnumString};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
-use crate::restful::{attestation, get_challenge, get_policies, set_policy};
+use crate::restful::{attestation, get_certificate, get_challenge, get_policies, set_policy};
 
 mod restful;
 
@@ -51,6 +51,9 @@ enum WebApi {
 
     #[strum(serialize = "/challenge")]
     Challenge,
+
+    #[strum(serialize = "/certificate")]
+    Certificate,
 }
 
 #[derive(Error, Debug)]
@@ -71,8 +74,8 @@ pub enum RestfulError {
     SetHttpsCert(#[source] openssl::error::ErrorStack),
     #[error("io error: {0}")]
     IO(#[from] std::io::Error),
-    #[error(transparent)]
-    Anyhow(#[from] anyhow::Error),
+    #[error("Failed to get certificate: {0}")]
+    Certificate(#[from] anyhow::Error),
 }
 
 #[actix_web::main]
@@ -104,6 +107,9 @@ async fn main() -> Result<(), RestfulError> {
                     .route(web::get().to(get_policies)),
             )
             .service(web::resource(WebApi::Challenge.as_ref()).route(web::post().to(get_challenge)))
+            .service(
+                web::resource(WebApi::Certificate.as_ref()).route(web::get().to(get_certificate)),
+            )
             .app_data(web::Data::clone(&attestation_service))
     });
 
