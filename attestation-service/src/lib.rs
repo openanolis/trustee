@@ -14,10 +14,12 @@ use anyhow::{anyhow, Context, Result};
 use config::Config;
 pub use kbs_types::{Attestation, Tee};
 use log::{debug, info};
+use reqwest::Client;
 use rvps::{RvpsApi, RvpsError};
 use serde_json::Value;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::collections::HashMap;
+use std::io::Read;
 use strum::{AsRefStr, Display, EnumString};
 use thiserror::Error;
 use tokio::fs;
@@ -227,6 +229,70 @@ impl AttestationService {
         verifier
             .generate_supplemental_challenge(tee_parameters)
             .await
+    }
+
+    /// Get token broker certificate content
+    /// Returns the binary content of the certificate
+    pub async fn get_token_broker_cert_config(&self) -> Result<Option<Vec<u8>>> {
+        match &self._config.attestation_token_broker {
+            token::AttestationTokenConfig::Simple(cfg) => {
+                if let Some(signer) = &cfg.signer {
+                    self.get_cert_content(signer.cert_path.as_deref(), signer.cert_url.as_deref())
+                        .await
+                } else {
+                    Ok(None)
+                }
+            }
+            token::AttestationTokenConfig::Ear(cfg) => {
+                if let Some(signer) = &cfg.signer {
+                    self.get_cert_content(signer.cert_path.as_deref(), signer.cert_url.as_deref())
+                        .await
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
+
+    /// Get certificate content from file path or URL
+    async fn get_cert_content(
+        &self,
+        cert_path: Option<&str>,
+        cert_url: Option<&str>,
+    ) -> Result<Option<Vec<u8>>> {
+        if let Some(path) = cert_path {
+            // Read certificate from file
+            let mut file = std::fs::File::open(path)
+                .map_err(|e| anyhow!("Failed to open certificate file: {}", e))?;
+            let mut content = Vec::new();
+            file.read_to_end(&mut content)
+                .map_err(|e| anyhow!("Failed to read certificate file: {}", e))?;
+            Ok(Some(content))
+        } else if let Some(url) = cert_url {
+            // Get certificate from URL
+            let client = Client::new();
+            let response = client
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| anyhow!("Failed to fetch certificate from URL: {}", e))?;
+
+            if !response.status().is_success() {
+                return Err(anyhow!(
+                    "Failed to fetch certificate: HTTP {}",
+                    response.status()
+                ));
+            }
+
+            let content = response
+                .bytes()
+                .await
+                .map_err(|e| anyhow!("Failed to read certificate content: {}", e))?;
+
+            Ok(Some(content.to_vec()))
+        } else {
+            Ok(None)
+        }
     }
 }
 

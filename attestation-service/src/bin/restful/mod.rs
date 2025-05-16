@@ -1,11 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
-use actix_web::{body::BoxBody, web, HttpRequest, HttpResponse, ResponseError};
+use actix_web::{body::BoxBody, web, HttpRequest, HttpResponse, Responder, ResponseError};
 use anyhow::{anyhow, bail, Context};
 use attestation_service::{AttestationService, HashAlgorithm};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use kbs_types::Tee;
-use log::{debug, info};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use strum::AsRefStr;
@@ -269,4 +269,31 @@ pub async fn get_policies(
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RemovePolicyRequest {
     pub policy_ids: Vec<String>,
+}
+
+/// Handler for getting token broker certificate
+pub async fn get_certificate(
+    attestation_service: web::Data<Arc<RwLock<AttestationService>>>,
+) -> impl Responder {
+    let service = attestation_service.read().await;
+    match service.get_token_broker_cert_config().await {
+        Ok(Some(cert_content)) => {
+            // Return certificate content
+            HttpResponse::Ok()
+                .content_type("application/x-pem-file")
+                .body(cert_content)
+        }
+        Ok(None) => {
+            // No certificate configured
+            HttpResponse::NotFound().json(serde_json::json!({
+                "error": "No certificate configured"
+            }))
+        }
+        Err(e) => {
+            error!("Failed to get certificate: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to get certificate: {}", e)
+            }))
+        }
+    }
 }
