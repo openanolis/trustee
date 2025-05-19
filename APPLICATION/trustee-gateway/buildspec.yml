@@ -21,17 +21,16 @@ t-one:
 # 构建镜像配置
 images:
   # 分组名称，支持自定义
-  KBS:
+  trustee-gateway:
     build: true
     test: false
     region: cn-hongkong
     platform: [linux/amd64]
     docker_file:
-      # path: kbs/docker/coco-as-grpc/Dockerfile
-      path: Dockerfile.kbs
+      path: Dockerfile.trustee-gateway
       scene:
         args: []
         tags: [[1.1.4-alpha, latest]]
         registry: [*ACR_PROD]
       # 测试配置
-      test_config: [*WORKSPACE, *PROJECT, *TEST_SUITE, *TEST_CONF, *TEST_CASE, *CLOUD_SERVER_TAG[0], '']
+      test_config: [*WORKSPACE, *PROJECT, *TEST_SUITE, *TEST_CONF, *TEST_CASE, *CLOUD_SERVER_TAG[0], ''] 
