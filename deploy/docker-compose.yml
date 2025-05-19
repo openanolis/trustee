@@ -74,3 +74,28 @@ services:
       "--config",
       "/etc/trustee/rvps.json"
     ]
+
+  gateway:
+    image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/trustee-gateway:latest
+    restart: always
+    ports:
+      - "${GATEWAY_PORT:-8081}:8081"
+    volumes:
+      - ./configs/trustee-gateway.yaml:/app/config.yaml:rw
+      - ./trustee-gateway/data:/app/data:rw
+    command: [
+      "/app/gateway",
+      "--config",
+      "/app/config.yaml"
+    ]
+    depends_on:
+    - kbs
+    - as
+    - rvps
+
+  frontend:
+    image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/frontend:latest
+    ports:
+      - "${FRONTEND_PORT:-8082}:8082"
+    depends_on:
+    - gateway
