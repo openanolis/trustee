@@ -1,5 +1,5 @@
 {
-    "work_dir": "/opt/confidential-containers/attestation-service",
+    "work_dir": "/opt/trustee/attestation-service",
     "policy_engine": "opa",
     "rvps_config": {
         "type": "GrpcRemote",
