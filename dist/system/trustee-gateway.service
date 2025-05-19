@@ -1,0 +1,19 @@
+[Unit]
+Description=Trustee-Gateway
+Documentation=https://confidentialcontainers.org
+After=network.target
+Requires=kbs.service as.service as-restful.service rvps.service
+
+[Service]
+ExecStart=/usr/bin/trustee-gateway --config /etc/trustee/gateway.yml
+Restart=always
+RestartSec=5
+Delegate=yes
+KillMode=process
+OOMScoreAdjust=-999
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+
+[Install]
+WantedBy=multi-user.target
