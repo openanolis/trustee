@@ -129,17 +129,55 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
         let eventlog = Eventlog::try_from(eventlog_bytes)
             .map_err(|e| anyhow!("parse TCG Eventlog failed: {e}"))?;
         for event in eventlog.log {
-            let claim_event_key = format!(
-                "TCG.eventlog.{}.{}.{}",
-                event.event_type,
-                event.digests[0].algorithm,
-                hex::encode(event.digests[0].digest.clone())
-            );
+            // let claim_event_key = format!(
+            //     "TCG.eventlog.{}.{}.{}",
+            //     event.event_type,
+            //     event.digests[0].algorithm,
+            //     hex::encode(event.digests[0].digest.clone())
+            // );
+            // parsed_claims.insert(claim_event_key, serde_json::Value::String(event_data.clone()));
+
             let event_data = match String::from_utf8(event.event_desc.clone()) {
                 Result::Ok(d) => d,
                 Result::Err(_) => hex::encode(event.event_desc),
             };
-            parsed_claims.insert(claim_event_key, serde_json::Value::String(event_data));
+
+            // Check if event_desc contains "Kernel" or starts with "/boot/vmlinuz"
+            if event_data.contains("Kernel") || event_data.starts_with("/boot/vmlinuz") {
+                let kernel_claim_key =
+                    format!("TCG.eventlog.kernel.{}", event.digests[0].algorithm);
+                parsed_claims.insert(
+                    kernel_claim_key,
+                    serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
+                );
+            }
+
+            // Check if event_desc starts with "grub_cmd linux", "kernel_cmdline", or "grub_kernel_cmdline"
+            if event_data.starts_with("grub_cmd linux")
+                || event_data.starts_with("kernel_cmdline")
+                || event_data.starts_with("grub_kernel_cmdline")
+            {
+                let kernel_cmdline_claim_key =
+                    format!("TCG.eventlog.kernel_cmdline.{}", event.digests[0].algorithm);
+                parsed_claims.insert(
+                    kernel_cmdline_claim_key,
+                    serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
+                );
+                parsed_claims.insert(
+                    "TCG.eventlog.kernel_cmdline.content".to_string(),
+                    serde_json::Value::String(event_data.clone()),
+                );
+            }
+
+            // Check if event_desc contains "Initrd" or starts with "/boot/initramfs"
+            if event_data.contains("Initrd") || event_data.starts_with("/boot/initramfs") {
+                let initrd_claim_key =
+                    format!("TCG.eventlog.initrd.{}", event.digests[0].algorithm);
+                parsed_claims.insert(
+                    initrd_claim_key,
+                    serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
+                );
+            }
         }
     }
 
