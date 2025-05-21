@@ -2,6 +2,8 @@ package storage
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/openanolis/trustee/gateway/internal/config"
 	"github.com/openanolis/trustee/gateway/internal/models"
@@ -22,6 +24,11 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 
 	switch cfg.Database.Type {
 	case "sqlite":
+		dir := filepath.Dir(cfg.Database.Path)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return nil, fmt.Errorf("failed to create database directory: %w", err)
+		}
+
 		db, err = gorm.Open(sqlite.Open(cfg.Database.Path), &gorm.Config{})
 	default:
 		return nil, fmt.Errorf("unsupported database type: %s", cfg.Database.Type)
