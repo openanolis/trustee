@@ -37,6 +37,7 @@ type AttestationRecord struct {
 	ClientIP    string    `json:"client_ip"`
 	SessionID   string    `json:"session_id"`
 	RequestBody string    `json:"request_body"`
+	Claims      string    `json:"claims"`
 	Status      int       `json:"status"`
 	Successful  bool      `json:"successful"`
 	Timestamp   time.Time `json:"timestamp"`
