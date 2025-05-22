@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -115,11 +117,18 @@ func (h *KBSHandler) HandleAttest(c *gin.Context) {
 		}
 	}
 
+	claims, err := extractClaims(string(responseBody))
+	if err != nil {
+		logrus.Errorf("Failed to extract claims from attestation response: %v", err)
+	}
+	logrus.Debugf("Attestation claims: %+v", claims)
+
 	// Create attestation record
 	record := &models.AttestationRecord{
 		ClientIP:    c.ClientIP(),
 		SessionID:   sessionID,
 		RequestBody: string(requestBody),
+		Claims:      claims,
 		Status:      resp.StatusCode,
 		Successful:  resp.StatusCode == http.StatusOK,
 		Timestamp:   time.Now(),
@@ -139,6 +148,24 @@ func (h *KBSHandler) HandleAttest(c *gin.Context) {
 	// Set status code and write response body
 	c.Status(resp.StatusCode)
 	c.Writer.Write(responseBody)
+}
+
+func extractClaims(tokenString string) (string, error) {
+	parts := strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("token invalid, expected 3 parts, got %d", len(parts))
+	}
+
+	payloadBase64 := parts[1]
+
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(payloadBase64)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode payload: %v", err)
+	}
+
+	claims := string(payloadBytes)
+
+	return claims, nil
 }
 
 // HandleSetAttestationPolicy handles setting an attestation policy

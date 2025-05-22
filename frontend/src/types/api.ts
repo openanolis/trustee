@@ -33,6 +33,7 @@ export interface AttestationRecord {
   client_ip: string;
   session_id: string;
   request_body: string;
+  claims: string;
   status: number;
   successful: boolean;
   timestamp: string;

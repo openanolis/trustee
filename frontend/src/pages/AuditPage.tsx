@@ -169,6 +169,14 @@ const AuditPage: React.FC = () => {
           >
             evidence
           </Button>
+          <Button
+            type="primary"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => handleShowDetail(record.claims, 'claims')}
+          >
+            claims
+          </Button>
         </Space>
       ),
     },
