@@ -21,11 +21,14 @@ type ServiceType string
 const (
 	// KBSService represents the KBS service
 	KBSService ServiceType = "kbs"
+	// AttestationServiceType represents the Attestation Service
+	AttestationServiceType ServiceType = "attestation-service"
 )
 
 // Proxy handles the forwarding of requests to backend services
 type Proxy struct {
-	kbsURL *url.URL
+	kbsURL                *url.URL
+	attestationServiceURL *url.URL // Added URL for Attestation Service
 }
 
 // NewProxy creates a new proxy instance
@@ -35,14 +38,25 @@ func NewProxy(cfg *config.Config) (*Proxy, error) {
 		return nil, fmt.Errorf("invalid KBS URL: %w", err)
 	}
 
+	attestationServiceURL, err := url.Parse(cfg.AttestationService.URL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Attestation Service URL: %w", err)
+	}
+
 	return &Proxy{
-		kbsURL: kbsURL,
+		kbsURL:                kbsURL,
+		attestationServiceURL: attestationServiceURL, // Set Attestation Service URL
 	}, nil
 }
 
 // ForwardToKBS forwards a request to the KBS service
 func (p *Proxy) ForwardToKBS(c *gin.Context) (*http.Response, error) {
 	return p.forwardRequest(c, KBSService)
+}
+
+// ForwardToAttestationService forwards a request to the Attestation service
+func (p *Proxy) ForwardToAttestationService(c *gin.Context) (*http.Response, error) {
+	return p.forwardRequest(c, AttestationServiceType)
 }
 
 // RequestBodyBuffer is a buffer that records the request body while forwarding it
@@ -84,9 +98,12 @@ func (r *ResponseBodyBuffer) Close() error {
 // forwardRequest forwards a request to a backend service
 func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.Response, error) {
 	var targetURL *url.URL
+
 	switch serviceType {
 	case KBSService:
 		targetURL = p.kbsURL
+	case AttestationServiceType:
+		targetURL = p.attestationServiceURL
 	default:
 		return nil, fmt.Errorf("unknown service type: %s", serviceType)
 	}
@@ -100,6 +117,8 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 	// For KBS, we need to strip the prefix if necessary
 	if serviceType == KBSService && !strings.HasPrefix(targetPath, "/kbs/v0") {
 		targetPath = "/kbs/v0" + strings.TrimPrefix(targetPath, "/api/kbs/v0")
+	} else if serviceType == AttestationServiceType {
+		targetPath = strings.TrimPrefix(targetPath, "/api/attestation-service")
 	}
 
 	targetQuery := c.Request.URL.RawQuery

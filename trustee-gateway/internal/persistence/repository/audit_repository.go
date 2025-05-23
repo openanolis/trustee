@@ -28,7 +28,7 @@ func (r *AuditRepository) SaveAttestationRecord(record *models.AttestationRecord
 // ListAttestationRecords retrieves attestation records with optional filtering
 func (r *AuditRepository) ListAttestationRecords(
 	sessionID string,
-	requestType string,
+	sourceService string,
 	successful *bool,
 	startTime, endTime *time.Time,
 	limit, offset int,
@@ -41,8 +41,8 @@ func (r *AuditRepository) ListAttestationRecords(
 		query = query.Where("session_id = ?", sessionID)
 	}
 
-	if requestType != "" {
-		query = query.Where("request_type = ?", requestType)
+	if sourceService != "" {
+		query = query.Where("source_service = ?", sourceService)
 	}
 
 	if successful != nil {

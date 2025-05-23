@@ -34,13 +34,14 @@ type ResourcePolicy struct {
 // AttestationRecord represents a record of an attestation request
 type AttestationRecord struct {
 	gorm.Model
-	ClientIP    string    `json:"client_ip"`
-	SessionID   string    `json:"session_id"`
-	RequestBody string    `json:"request_body"`
-	Claims      string    `json:"claims"`
-	Status      int       `json:"status"`
-	Successful  bool      `json:"successful"`
-	Timestamp   time.Time `json:"timestamp"`
+	ClientIP      string    `json:"client_ip"`
+	SessionID     string    `json:"session_id"`
+	RequestBody   string    `json:"request_body"`
+	Claims        string    `json:"claims"`
+	Status        int       `json:"status"`
+	Successful    bool      `json:"successful"`
+	Timestamp     time.Time `json:"timestamp"`
+	SourceService string    `json:"source_service"` // Indicates the source of the attestation (e.g., "kbs", "attestation-service")
 }
 
 // ResourceRequest represents a record of a resource request

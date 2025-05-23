@@ -5,6 +5,9 @@ server:
 kbs:
   url: "http://kbs:8080"
 
+attestation_service:
+  url: "http://as-restful:50005"
+
 rvps:
   grpc_addr: "rvps:50003"
 

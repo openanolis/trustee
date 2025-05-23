@@ -81,8 +81,8 @@ services:
     ports:
       - "${GATEWAY_PORT:-8081}:8081"
     volumes:
-      - ./configs/trustee-gateway.yaml:/app/config.yaml:rw
-      - ./trustee-gateway/data:/app/data:rw
+      - ./configs/trustee-gateway.yml:/app/config.yaml:rw
+      - ../trustee-gateway/data:/app/data:rw
     command: [
       "/app/gateway",
       "--config",

@@ -7,11 +7,12 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	KBS      ServiceConfig  `mapstructure:"kbs"`
-	RVPS     RVPSConfig     `mapstructure:"rvps"`
-	Database DatabaseConfig `mapstructure:"database"`
-	Logging  LoggingConfig  `mapstructure:"logging"`
+	Server             ServerConfig   `mapstructure:"server"`
+	KBS                ServiceConfig  `mapstructure:"kbs"`
+	AttestationService ServiceConfig  `mapstructure:"attestation_service"`
+	RVPS               RVPSConfig     `mapstructure:"rvps"`
+	Database           DatabaseConfig `mapstructure:"database"`
+	Logging            LoggingConfig  `mapstructure:"logging"`
 }
 
 // ServerConfig holds the gateway server configuration
@@ -27,7 +28,7 @@ type ServiceConfig struct {
 
 // RVPSConfig holds configuration for the RVPS service
 type RVPSConfig struct {
-	GRPCAddr   string `mapstructure:"grpc_addr"`
+	GRPCAddr string `mapstructure:"grpc_addr"`
 }
 
 // DatabaseConfig holds database configuration
@@ -49,6 +50,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8081)
 	viper.SetDefault("kbs.url", "http://localhost:8080")
+	viper.SetDefault("attestation_service.url", "http://localhost:50005")
 	viper.SetDefault("rvps.grpc_addr", "localhost:50003")
 	viper.SetDefault("database.type", "sqlite")
 	viper.SetDefault("database.path", "./trustee-gateway.db")
