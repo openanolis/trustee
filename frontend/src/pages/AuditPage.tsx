@@ -69,10 +69,10 @@ const AuditPage: React.FC = () => {
   };
 
   const handleAttestationSearch = (values: any) => {
-    const { session_id, request_type, successful, time_range } = values;
+    const { session_id, source_service, successful, time_range } = values;
     const params: any = {
       session_id,
-      request_type,
+      source_service,
       successful
     };
 
@@ -154,6 +154,12 @@ const AuditPage: React.FC = () => {
       key: 'timestamp',
       width: 180,
       render: (text: string) => new Date(text).toLocaleString(),
+    },
+    {
+      title: '请求服务类型',
+      dataIndex: 'source_service',
+      key: 'source_service',
+      width: 120,
     },
     {
       title: '操作',
@@ -245,6 +251,28 @@ const AuditPage: React.FC = () => {
       width: 180,
       render: (text: string) => new Date(text).toLocaleString(),
     },
+    {
+      title: '操作',
+      key: 'action',
+      width: 180,
+      render: (_: any, record: ResourceRequest) =>
+        record.session_id ? (
+          <Button
+            type="link"
+            size="small"
+            onClick={() => {
+              if (record.session_id) {
+                setActiveTab('attestation');
+                attestationForm.resetFields();
+                attestationForm.setFieldsValue({ session_id: record.session_id });
+                attestationForm.submit();
+              }
+            }}
+          >
+            查看关联Attestation
+          </Button>
+        ) : null,
+    },
   ];
 
   return (
@@ -264,10 +292,10 @@ const AuditPage: React.FC = () => {
                   <Input placeholder="输入会话ID" style={{ width: 200 }} />
                 </Form.Item>
 
-                <Form.Item name="request_type" label="请求类型">
+                <Form.Item name="source_service" label="请求服务类型">
                   <Select style={{ width: 120 }} allowClear>
-                    <Option value="auth">Auth</Option>
-                    <Option value="attest">Attest</Option>
+                    <Option value="kbs">KBS</Option>
+                    <Option value="attestation-service">Attestation Service</Option>
                   </Select>
                 </Form.Item>
 
@@ -367,7 +395,7 @@ const AuditPage: React.FC = () => {
             dataSource={resourceRequests}
             rowKey="ID"
             loading={resourceLoading}
-            scroll={{ x: 1200 }}
+            scroll={{ x: 1300 }}
             pagination={{ pageSize: 10 }}
           />
         </TabPane>
