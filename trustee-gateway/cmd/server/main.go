@@ -59,6 +59,7 @@ func main() {
 	// Create handlers
 	kbsHandler := handlers.NewKBSHandler(p, resourceRepo, policyRepo, auditRepo)
 	rvpsHandler := handlers.NewRVPSHandler(p, rvpsClient)
+	attestationServiceHandler := handlers.NewAttestationServiceHandler(p, auditRepo)
 	auditHandler := handlers.NewAuditHandler(auditRepo)
 	healthCheckHandler := handlers.NewHealthCheckHandler(p)
 
@@ -69,7 +70,7 @@ func main() {
 	router.Use(middleware.Logger())
 
 	// API routes
-	setupRoutes(router, kbsHandler, rvpsHandler, auditHandler, healthCheckHandler, p)
+	setupRoutes(router, kbsHandler, rvpsHandler, attestationServiceHandler, auditHandler, healthCheckHandler, p)
 
 	// Start server
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
@@ -79,7 +80,7 @@ func main() {
 	}
 }
 
-func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandler *handlers.RVPSHandler, auditHandler *handlers.AuditHandler, healthCheckHandler *handlers.HealthCheckHandler, p *proxy.Proxy) {
+func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandler *handlers.RVPSHandler, attestationServiceHandler *handlers.AttestationServiceHandler, auditHandler *handlers.AuditHandler, healthCheckHandler *handlers.HealthCheckHandler, p *proxy.Proxy) {
 	// KBS API routes
 	kbs := router.Group("/api/kbs/v0")
 	{
@@ -100,6 +101,14 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 		kbs.POST("/resource/:repository/:type/:tag", kbsHandler.HandleSetResource)
 
 		kbs.GET("/resources", kbsHandler.ListResources)
+	}
+
+	// Attestation Service API routes
+	attestationSvc := router.Group("/api/attestation-service")
+	{
+		attestationSvc.POST("/attestation", attestationServiceHandler.HandleAttestation)
+		attestationSvc.POST("/challenge", attestationServiceHandler.HandleGeneralRequest)
+		attestationSvc.POST("/certificate", attestationServiceHandler.HandleGeneralRequest)
 	}
 
 	// RVPS API routes

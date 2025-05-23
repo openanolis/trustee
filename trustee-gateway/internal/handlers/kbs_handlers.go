@@ -125,13 +125,14 @@ func (h *KBSHandler) HandleAttest(c *gin.Context) {
 
 	// Create attestation record
 	record := &models.AttestationRecord{
-		ClientIP:    c.ClientIP(),
-		SessionID:   sessionID,
-		RequestBody: string(requestBody),
-		Claims:      claims,
-		Status:      resp.StatusCode,
-		Successful:  resp.StatusCode == http.StatusOK,
-		Timestamp:   time.Now(),
+		ClientIP:      c.ClientIP(),
+		SessionID:     sessionID,
+		RequestBody:   string(requestBody),
+		Claims:        claims,
+		Status:        resp.StatusCode,
+		Successful:    resp.StatusCode == http.StatusOK,
+		Timestamp:     time.Now(),
+		SourceService: string(proxy.KBSService),
 	}
 
 	// Save the record asynchronously

@@ -3,10 +3,13 @@ server:
   port: 8081
 
 kbs:
-  url: "http://kbs:8080"
+  url: "http://localhost:8080"
+
+attestation_service:
+  url: "http://localhost:50005"
 
 rvps:
-  grpc_addr: "rvps:50003"
+  grpc_addr: "localhost:50003"
 
 database:
   type: "sqlite"
