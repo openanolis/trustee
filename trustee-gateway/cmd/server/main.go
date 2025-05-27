@@ -106,7 +106,7 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 	{
 		attestationSvc.POST("/attestation", attestationServiceHandler.HandleAttestation)
 		attestationSvc.POST("/challenge", attestationServiceHandler.HandleGeneralRequest)
-		attestationSvc.POST("/certificate", attestationServiceHandler.HandleGeneralRequest)
+		attestationSvc.GET("/certificate", attestationServiceHandler.HandleGeneralRequest)
 	}
 
 	// RVPS API routes
