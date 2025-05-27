@@ -136,35 +136,19 @@ const ResourcesPage: React.FC = () => {
 
   const columns = [
     {
-      title: 'ID',
-      dataIndex: 'ID',
-      key: 'ID',
-    },
-    {
       title: '仓库',
-      dataIndex: 'repository',
-      key: 'repository',
+      dataIndex: 'repository_name',
+      key: 'repository_name',
     },
     {
       title: '类型',
-      dataIndex: 'type',
-      key: 'type',
+      dataIndex: 'resource_type',
+      key: 'resource_type',
     },
     {
       title: '标签',
-      dataIndex: 'tag',
-      key: 'tag',
-    },
-    {
-      title: '元数据',
-      dataIndex: 'metadata',
-      key: 'metadata',
-    },
-    {
-      title: '创建时间',
-      dataIndex: 'CreatedAt',
-      key: 'CreatedAt',
-      render: (text: string) => new Date(text).toLocaleString(),
+      dataIndex: 'resource_tag',
+      key: 'resource_tag',
     },
   ];
 
