@@ -13,11 +13,9 @@ export interface HealthStatus {
 
 // 资源相关类型
 export interface Resource {
-  ID: number;
-  repository: string;
-  type: string;
-  tag: string;
-  metadata: string;
+  repository_name: string;
+  resource_type: string;
+  resource_tag: string;
 }
 
 // 策略相关类型
