@@ -12,6 +12,9 @@ as_addr = "http://127.0.0.1:50004"
 [admin]
 auth_public_key = "/etc/trustee/public.pub"
 
+[policy_engine]
+policy_path = "/opt/trustee/kbs/policy.rego"
+
 [[plugins]]
 name = "resource"
 type = "LocalFs"
