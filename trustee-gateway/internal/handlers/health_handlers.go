@@ -3,21 +3,25 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openanolis/trustee/gateway/internal/proxy"
+	"github.com/openanolis/trustee/gateway/internal/rvps"
 	"github.com/sirupsen/logrus"
 )
 
 type HealthCheckHandler struct {
-	proxy *proxy.Proxy
+	proxy      *proxy.Proxy
+	rvpsClient *rvps.GrpcClient
 }
 
-func NewHealthCheckHandler(proxy *proxy.Proxy) *HealthCheckHandler {
+func NewHealthCheckHandler(proxy *proxy.Proxy, rvpsClient *rvps.GrpcClient) *HealthCheckHandler {
 	return &HealthCheckHandler{
-		proxy: proxy,
+		proxy:      proxy,
+		rvpsClient: rvpsClient,
 	}
 }
 
@@ -112,8 +116,30 @@ func (h *HealthCheckHandler) checkKBSHealth(c *gin.Context) ServiceStatus {
 func (h *HealthCheckHandler) checkRVPSHealth(c *gin.Context) ServiceStatus {
 	now := time.Now().Format(time.RFC3339)
 
+	if h.rvpsClient == nil {
+		return ServiceStatus{
+			Status:    "error",
+			Message:   "rvps grpc client not available",
+			Timestamp: now,
+		}
+	}
+
+	// Create a fresh context instead of using c.Request.Context() which might be modified
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := h.rvpsClient.QueryReferenceValue(ctx)
+	if err != nil {
+		logrus.Errorf("rvps health check failed: %v", err)
+		return ServiceStatus{
+			Status:    "error",
+			Message:   fmt.Sprintf("rvps grpc query failed: %v", err),
+			Timestamp: now,
+		}
+	}
+
 	return ServiceStatus{
-		Status:    "not supported",
+		Status:    "ok",
 		Timestamp: now,
 	}
 }

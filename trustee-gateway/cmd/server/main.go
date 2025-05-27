@@ -59,7 +59,7 @@ func main() {
 	rvpsHandler := handlers.NewRVPSHandler(p, rvpsClient)
 	attestationServiceHandler := handlers.NewAttestationServiceHandler(p, auditRepo)
 	auditHandler := handlers.NewAuditHandler(auditRepo)
-	healthCheckHandler := handlers.NewHealthCheckHandler(p)
+	healthCheckHandler := handlers.NewHealthCheckHandler(p, rvpsClient)
 
 	// Setup Gin router
 	gin.SetMode(gin.ReleaseMode)

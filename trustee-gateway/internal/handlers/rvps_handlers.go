@@ -32,6 +32,7 @@ func NewRVPSHandler(proxy *proxy.Proxy, client *rvps.GrpcClient) *RVPSHandler {
 func (h *RVPSHandler) HandleRVPSRequest(c *gin.Context) {
 	path := strings.TrimPrefix(c.Param("path"), "/")
 
+	// Try gRPC first if client is available
 	if h.client != nil {
 		switch {
 		case c.Request.Method == "GET" && path == "query":
@@ -42,6 +43,9 @@ func (h *RVPSHandler) HandleRVPSRequest(c *gin.Context) {
 			return
 		}
 	}
+
+	// Fallback to HTTP proxy for all other requests or when gRPC client is not available
+	h.handleHTTPProxy(c)
 }
 
 func (h *RVPSHandler) handleQueryReferenceValue(c *gin.Context) {
@@ -90,4 +94,14 @@ func (h *RVPSHandler) handleRegisterReferenceValue(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// handleHTTPProxy forwards requests to RVPS via HTTP proxy
+func (h *RVPSHandler) handleHTTPProxy(c *gin.Context) {
+	// For now, return 404 since HTTP proxy to RVPS is not implemented
+	// This should be implemented when RVPS HTTP API is available
+	logrus.Warnf("RVPS HTTP proxy not implemented, gRPC client unavailable for path: %s", c.Request.URL.Path)
+	c.AbortWithStatusJSON(http.StatusNotImplemented, gin.H{
+		"error": "RVPS HTTP proxy not implemented, gRPC client required",
+	})
 }
