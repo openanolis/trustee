@@ -213,6 +213,25 @@ pub(crate) async fn api(
 
             Ok(HttpResponse::Ok().content_type("text/xml").body(policy))
         }
+        "resources" if request.method() == Method::GET => {
+            // Get the resource plugin
+            let plugin = core
+                .plugin_manager
+                .get("resource")
+                .ok_or(Error::PluginNotFound {
+                    plugin_name: "resource".to_string(),
+                })?;
+
+            let body = body.to_vec();
+            let response = plugin
+                .handle(&body, query, "/resources", request.method())
+                .await
+                .map_err(|e| Error::PluginInternalError { source: e })?;
+
+            Ok(HttpResponse::Ok()
+                .content_type("application/json")
+                .body(response))
+        }
         // If the base_path cannot be served by any of the above built-in
         // functions, try fulfilling the request via the PluginManager.
         plugin_name => {
