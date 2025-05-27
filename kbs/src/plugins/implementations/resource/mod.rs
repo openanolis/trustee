@@ -34,10 +34,18 @@ impl ClientPlugin for ResourceStorage {
                 Ok(vec![])
             }
             "GET" => {
-                let resource_description = ResourceDesc::try_from(resource_desc)?;
-                let resource = self.get_secret_resource(resource_description).await?;
-
-                Ok(resource)
+                // Check if this is a list request based on path pattern
+                if resource_desc == "resources" {
+                    let resources = self.list_secret_resources().await?;
+                    let json_response = serde_json::to_vec(&resources)
+                        .context("Failed to serialize resource list")?;
+                    Ok(json_response)
+                } else {
+                    // Handle single resource request
+                    let resource_description = ResourceDesc::try_from(resource_desc)?;
+                    let resource = self.get_secret_resource(resource_description).await?;
+                    Ok(resource)
+                }
             }
             _ => bail!("Illegal HTTP method. Only supports `GET` and `POST`"),
         }

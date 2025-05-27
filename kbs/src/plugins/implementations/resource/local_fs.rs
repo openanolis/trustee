@@ -6,9 +6,12 @@ use super::{ResourceDesc, StorageBackend};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::{
+    boxed::Box,
     fs,
     path::{Path, PathBuf},
+    pin::Pin,
 };
+use tokio::fs as async_fs;
 
 pub const DEFAULT_REPO_DIR_PATH: &str = "/opt/confidential-containers/kbs/repository";
 
@@ -69,9 +72,57 @@ impl StorageBackend for LocalFs {
             .await
             .context("write local fs")
     }
+
+    async fn list_secret_resources(&self) -> Result<Vec<ResourceDesc>> {
+        let base_path = PathBuf::from(&self.repo_dir_path);
+        let results = Self::scan_directory(&base_path, Vec::new()).await?;
+        Ok(results)
+    }
 }
 
 impl LocalFs {
+    fn scan_directory(
+        path: &Path,
+        path_components: Vec<String>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<ResourceDesc>>> + Send + '_>> {
+        Box::pin(async move {
+            let mut results = Vec::new();
+
+            let mut entries = match async_fs::read_dir(path).await {
+                Ok(entries) => entries,
+                Err(_) => return Ok(results),
+            };
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let metadata = match entry.metadata().await {
+                    Ok(metadata) => metadata,
+                    Err(_) => continue,
+                };
+
+                let entry_name = match entry.file_name().to_str() {
+                    Some(name) => name.to_string(),
+                    None => continue,
+                };
+
+                let mut current_path_components = path_components.clone();
+                current_path_components.push(entry_name);
+
+                if metadata.is_dir() && current_path_components.len() < 3 {
+                    let sub_results =
+                        Self::scan_directory(&entry.path(), current_path_components).await?;
+                    results.extend(sub_results);
+                } else if metadata.is_file() && current_path_components.len() == 3 {
+                    results.push(ResourceDesc {
+                        repository_name: current_path_components[0].clone(),
+                        resource_type: current_path_components[1].clone(),
+                        resource_tag: current_path_components[2].clone(),
+                    });
+                }
+            }
+
+            Ok(results)
+        })
+    }
+
     pub fn new(repo_desc: &LocalFsRepoDesc) -> anyhow::Result<Self> {
         // Create repository dir.
         if !Path::new(&repo_desc.dir_path).exists() {

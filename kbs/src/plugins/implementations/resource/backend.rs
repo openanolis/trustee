@@ -21,9 +21,12 @@ pub trait StorageBackend: Send + Sync {
 
     /// Write secret resource into repository
     async fn write_secret_resource(&self, resource_desc: ResourceDesc, data: &[u8]) -> Result<()>;
+
+    /// List secret resources from repository
+    async fn list_secret_resources(&self) -> Result<Vec<ResourceDesc>>;
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ResourceDesc {
     pub repository_name: String,
     pub resource_type: String,
@@ -121,6 +124,10 @@ impl ResourceStorage {
 
     pub(crate) async fn get_secret_resource(&self, resource_desc: ResourceDesc) -> Result<Vec<u8>> {
         self.backend.read_secret_resource(resource_desc).await
+    }
+
+    pub(crate) async fn list_secret_resources(&self) -> Result<Vec<ResourceDesc>> {
+        self.backend.list_secret_resources().await
     }
 }
 
