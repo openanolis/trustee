@@ -79,13 +79,16 @@ const HealthPage: React.FC = () => {
         <Row gutter={[16, 16]}>
           {healthStatus && (
             <>
-              <Col xs={24} sm={24} md={8}>
+              <Col xs={24} sm={12} md={6}>
                 {renderServiceCard('Gateway 服务', healthStatus.gateway)}
               </Col>
-              <Col xs={24} sm={24} md={8}>
+              <Col xs={24} sm={12} md={6}>
                 {renderServiceCard('KBS 服务', healthStatus.kbs)}
               </Col>
-              <Col xs={24} sm={24} md={8}>
+              <Col xs={24} sm={12} md={6}>
+                {renderServiceCard('AS 服务', healthStatus.as)}
+              </Col>
+              <Col xs={24} sm={12} md={6}>
                 {renderServiceCard('RVPS 服务', healthStatus.rvps)}
               </Col>
             </>

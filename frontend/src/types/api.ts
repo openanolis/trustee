@@ -8,6 +8,7 @@ export interface ServiceStatus {
 export interface HealthStatus {
   gateway: ServiceStatus;
   kbs: ServiceStatus;
+  as: ServiceStatus;
   rvps: ServiceStatus;
 }
 
