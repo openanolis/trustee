@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,24 +19,18 @@ import (
 
 // KBSHandler handles requests to the KBS service
 type KBSHandler struct {
-	proxy        *proxy.Proxy
-	resourceRepo *repository.ResourceRepository
-	policyRepo   *repository.PolicyRepository
-	auditRepo    *repository.AuditRepository
+	proxy     *proxy.Proxy
+	auditRepo *repository.AuditRepository
 }
 
 // NewKBSHandler creates a new KBS handler
 func NewKBSHandler(
 	proxy *proxy.Proxy,
-	resourceRepo *repository.ResourceRepository,
-	policyRepo *repository.PolicyRepository,
 	auditRepo *repository.AuditRepository,
 ) *KBSHandler {
 	return &KBSHandler{
-		proxy:        proxy,
-		resourceRepo: resourceRepo,
-		policyRepo:   policyRepo,
-		auditRepo:    auditRepo,
+		proxy:     proxy,
+		auditRepo: auditRepo,
 	}
 }
 
@@ -385,22 +380,6 @@ func (h *KBSHandler) HandleSetResource(c *gin.Context) {
 		}
 	}()
 
-	// If the request was successful, save the resource
-	if requestRecord.Successful {
-		resource := &models.Resource{
-			Repository: repository,
-			Type:       resourceType,
-			Tag:        tag,
-			Metadata:   fmt.Sprintf("Set by %s at %s", c.ClientIP(), time.Now().Format(time.RFC3339)),
-		}
-
-		if err := h.resourceRepo.SaveResource(resource); err != nil {
-			logrus.Errorf("Failed to save resource: %v", err)
-		} else {
-			logrus.Infof("Saved resource %s/%s/%s", repository, resourceType, tag)
-		}
-	}
-
 	// Read response body
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -506,12 +485,64 @@ func (h *KBSHandler) ListResources(c *gin.Context) {
 	repository := c.Query("repository")
 	resourceType := c.Query("type")
 
-	resources, err := h.resourceRepo.ListResources(repository, resourceType)
+	// Forward the request to KBS to get all resources
+	c.Request.URL.Path = "/kbs/v0/resources"
+	resp, err := h.proxy.ForwardToKBS(c)
 	if err != nil {
-		logrus.Errorf("Failed to list resources: %v", err)
+		logrus.Errorf("Failed to list resources from KBS: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list resources"})
 		return
 	}
+	defer resp.Body.Close()
 
-	c.JSON(http.StatusOK, resources)
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.Errorf("Failed to read KBS resources response: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read KBS response"})
+		return
+	}
+
+	// If no query parameters, return all resources
+	if repository == "" && resourceType == "" {
+		proxy.CopyHeaders(c, resp)
+		c.Status(resp.StatusCode)
+		c.Writer.Write(responseBody)
+		return
+	}
+
+	// Parse the response to filter resources
+	var resources []map[string]interface{}
+	if err := json.Unmarshal(responseBody, &resources); err != nil {
+		logrus.Errorf("Failed to parse KBS resources response: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse KBS response"})
+		return
+	}
+
+	// Filter resources based on query parameters
+	var filteredResources []map[string]interface{}
+	for _, resource := range resources {
+		match := true
+
+		// Check repository filter
+		if repository != "" {
+			if repoName, ok := resource["repository_name"].(string); !ok || repoName != repository {
+				match = false
+			}
+		}
+
+		// Check resource type filter
+		if resourceType != "" && match {
+			if resType, ok := resource["resource_type"].(string); !ok || resType != resourceType {
+				match = false
+			}
+		}
+
+		if match {
+			filteredResources = append(filteredResources, resource)
+		}
+	}
+
+	// Return filtered results
+	proxy.CopyHeadersExceptContentLength(c, resp)
+	c.JSON(resp.StatusCode, filteredResources)
 }

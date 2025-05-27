@@ -36,8 +36,6 @@ func main() {
 	}
 
 	// Create repositories
-	resourceRepo := repository.NewResourceRepository(db)
-	policyRepo := repository.NewPolicyRepository(db)
 	auditRepo := repository.NewAuditRepository(db)
 
 	// Initialize proxy
@@ -57,7 +55,7 @@ func main() {
 	}
 
 	// Create handlers
-	kbsHandler := handlers.NewKBSHandler(p, resourceRepo, policyRepo, auditRepo)
+	kbsHandler := handlers.NewKBSHandler(p, auditRepo)
 	rvpsHandler := handlers.NewRVPSHandler(p, rvpsClient)
 	attestationServiceHandler := handlers.NewAttestationServiceHandler(p, auditRepo)
 	auditHandler := handlers.NewAuditHandler(auditRepo)
