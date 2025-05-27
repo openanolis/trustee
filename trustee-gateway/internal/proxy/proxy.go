@@ -219,6 +219,20 @@ func CopyHeaders(dst *gin.Context, src *http.Response) {
 	}
 }
 
+// CopyHeadersExceptContentLength copies headers from a source response to the destination gin context
+// but excludes Content-Length header to avoid conflicts when using c.JSON()
+func CopyHeadersExceptContentLength(dst *gin.Context, src *http.Response) {
+	for k, vv := range src.Header {
+		// Skip Content-Length header to avoid conflicts
+		if k == "Content-Length" {
+			continue
+		}
+		for _, v := range vv {
+			dst.Writer.Header().Add(k, v)
+		}
+	}
+}
+
 // CopyCookies copies cookies from a source response to the destination gin context
 func CopyCookies(dst *gin.Context, src *http.Response) {
 	for _, cookie := range src.Cookies() {
