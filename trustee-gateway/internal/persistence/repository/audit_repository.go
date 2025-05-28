@@ -122,3 +122,89 @@ func (r *AuditRepository) ListResourceRequests(
 
 	return records, nil
 }
+
+// CleanupOldRecords removes old audit records based on retention policy
+func (r *AuditRepository) CleanupOldRecords(maxRecords int, retentionDays int) error {
+	cutoffTime := time.Now().AddDate(0, 0, -retentionDays)
+
+	// Delete old attestation records (hard delete using Unscoped)
+	if err := r.db.Unscoped().Where("timestamp < ?", cutoffTime).Delete(&models.AttestationRecord{}).Error; err != nil {
+		return err
+	}
+
+	// Delete old resource request records (hard delete using Unscoped)
+	if err := r.db.Unscoped().Where("timestamp < ?", cutoffTime).Delete(&models.ResourceRequest{}).Error; err != nil {
+		return err
+	}
+
+	// Keep only the latest maxRecords for attestation records
+	var attestationCount int64
+	if err := r.db.Model(&models.AttestationRecord{}).Count(&attestationCount).Error; err != nil {
+		return err
+	}
+
+	if attestationCount > int64(maxRecords) {
+		// Get IDs of records to keep (latest maxRecords)
+		var keepIDs []uint
+		if err := r.db.Model(&models.AttestationRecord{}).
+			Select("id").
+			Order("timestamp desc").
+			Limit(maxRecords).
+			Pluck("id", &keepIDs).Error; err != nil {
+			return err
+		}
+
+		// Delete records not in the keep list (hard delete using Unscoped)
+		if len(keepIDs) > 0 {
+			if err := r.db.Unscoped().Where("id NOT IN ?", keepIDs).Delete(&models.AttestationRecord{}).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	// Keep only the latest maxRecords for resource request records
+	var resourceCount int64
+	if err := r.db.Model(&models.ResourceRequest{}).Count(&resourceCount).Error; err != nil {
+		return err
+	}
+
+	if resourceCount > int64(maxRecords) {
+		// Get IDs of records to keep (latest maxRecords)
+		var keepIDs []uint
+		if err := r.db.Model(&models.ResourceRequest{}).
+			Select("id").
+			Order("timestamp desc").
+			Limit(maxRecords).
+			Pluck("id", &keepIDs).Error; err != nil {
+			return err
+		}
+
+		// Delete records not in the keep list (hard delete using Unscoped)
+		if len(keepIDs) > 0 {
+			if err := r.db.Unscoped().Where("id NOT IN ?", keepIDs).Delete(&models.ResourceRequest{}).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// GetAuditStats returns statistics about audit records
+func (r *AuditRepository) GetAuditStats() (map[string]int64, error) {
+	stats := make(map[string]int64)
+
+	var attestationCount int64
+	if err := r.db.Model(&models.AttestationRecord{}).Count(&attestationCount).Error; err != nil {
+		return nil, err
+	}
+	stats["attestation_records"] = attestationCount
+
+	var resourceCount int64
+	if err := r.db.Model(&models.ResourceRequest{}).Count(&resourceCount).Error; err != nil {
+		return nil, err
+	}
+	stats["resource_requests"] = resourceCount
+
+	return stats, nil
+}
