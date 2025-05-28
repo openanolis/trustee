@@ -8,6 +8,6 @@
     "attestation_token_broker": {
 	"type": "Simple",
         "duration_min": 5,
-        "policy_path": "/opt/trustee/attestation-service/policies"
+        "policy_dir": "/opt/trustee/attestation-service/policies"
     }
 }
