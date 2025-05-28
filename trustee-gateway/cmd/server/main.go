@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openanolis/trustee/gateway/internal/config"
@@ -12,6 +16,7 @@ import (
 	"github.com/openanolis/trustee/gateway/internal/persistence/storage"
 	"github.com/openanolis/trustee/gateway/internal/proxy"
 	"github.com/openanolis/trustee/gateway/internal/rvps"
+	"github.com/openanolis/trustee/gateway/internal/services"
 	"github.com/sirupsen/logrus"
 )
 
@@ -38,6 +43,9 @@ func main() {
 	// Create repositories
 	auditRepo := repository.NewAuditRepository(db)
 
+	// Initialize audit cleanup service
+	auditCleanupService := services.NewAuditCleanupService(auditRepo, &cfg.Audit)
+
 	// Initialize proxy
 	p, err := proxy.NewProxy(cfg)
 	if err != nil {
@@ -61,6 +69,14 @@ func main() {
 	auditHandler := handlers.NewAuditHandler(auditRepo)
 	healthCheckHandler := handlers.NewHealthCheckHandler(p, rvpsClient)
 
+	// Setup context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start audit cleanup service
+	auditCleanupService.Start(ctx)
+	defer auditCleanupService.Stop()
+
 	// Setup Gin router
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -70,12 +86,33 @@ func main() {
 	// API routes
 	setupRoutes(router, kbsHandler, rvpsHandler, attestationServiceHandler, auditHandler, healthCheckHandler, p)
 
-	// Start server
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start server in a goroutine
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	logrus.Infof("Starting server on %s", addr)
-	if err := router.Run(addr); err != nil {
-		logrus.Fatalf("Failed to start server: %v", err)
+
+	go func() {
+		if err := router.Run(addr); err != nil {
+			logrus.Errorf("Server failed to start: %v", err)
+			cancel()
+		}
+	}()
+
+	// Wait for shutdown signal
+	select {
+	case sig := <-sigChan:
+		logrus.Infof("Received signal %v, shutting down gracefully...", sig)
+	case <-ctx.Done():
+		logrus.Info("Context cancelled, shutting down...")
 	}
+
+	// Graceful shutdown
+	logrus.Info("Shutting down audit cleanup service...")
+	auditCleanupService.Stop()
+	logrus.Info("Server shutdown complete")
 }
 
 func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandler *handlers.RVPSHandler, attestationServiceHandler *handlers.AttestationServiceHandler, auditHandler *handlers.AuditHandler, healthCheckHandler *handlers.HealthCheckHandler, p *proxy.Proxy) {
