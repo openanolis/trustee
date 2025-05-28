@@ -214,3 +214,142 @@ func TestListResourceRequests(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, pageResults, 1)
 }
+
+func TestCleanupOldRecords_HardDelete(t *testing.T) {
+	testDB := setupAuditTestDB(t)
+	repo := NewAuditRepository(testDB)
+
+	baseTime := time.Now()
+
+	// Create test attestation records
+	attestationRecords := []*models.AttestationRecord{
+		{
+			ClientIP:    "192.168.1.1",
+			SessionID:   "old-session-1",
+			RequestBody: "old-request-1",
+			Status:      200,
+			Successful:  true,
+			Timestamp:   baseTime.AddDate(0, 0, -5), // 5 days old
+		},
+		{
+			ClientIP:    "192.168.1.2",
+			SessionID:   "old-session-2",
+			RequestBody: "old-request-2",
+			Status:      200,
+			Successful:  true,
+			Timestamp:   baseTime.AddDate(0, 0, -2), // 2 days old
+		},
+		{
+			ClientIP:    "192.168.1.3",
+			SessionID:   "new-session-1",
+			RequestBody: "new-request-1",
+			Status:      200,
+			Successful:  true,
+			Timestamp:   baseTime, // current time
+		},
+	}
+
+	// Create test resource request records
+	resourceRecords := []*models.ResourceRequest{
+		{
+			ClientIP:   "192.168.1.1",
+			SessionID:  "old-resource-1",
+			Repository: "old-repo-1",
+			Type:       "old-type-1",
+			Tag:        "old-tag-1",
+			Method:     "GET",
+			Status:     200,
+			Successful: true,
+			Timestamp:  baseTime.AddDate(0, 0, -5), // 5 days old
+		},
+		{
+			ClientIP:   "192.168.1.2",
+			SessionID:  "old-resource-2",
+			Repository: "old-repo-2",
+			Type:       "old-type-2",
+			Tag:        "old-tag-2",
+			Method:     "GET",
+			Status:     200,
+			Successful: true,
+			Timestamp:  baseTime.AddDate(0, 0, -2), // 2 days old
+		},
+		{
+			ClientIP:   "192.168.1.3",
+			SessionID:  "new-resource-1",
+			Repository: "new-repo-1",
+			Type:       "new-type-1",
+			Tag:        "new-tag-1",
+			Method:     "GET",
+			Status:     200,
+			Successful: true,
+			Timestamp:  baseTime, // current time
+		},
+	}
+
+	// Save all records
+	for _, rec := range attestationRecords {
+		err := repo.SaveAttestationRecord(rec)
+		assert.NoError(t, err)
+	}
+
+	for _, rec := range resourceRecords {
+		err := repo.SaveResourceRequest(rec)
+		assert.NoError(t, err)
+	}
+
+	// Verify initial counts
+	stats, err := repo.GetAuditStats()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(3), stats["attestation_records"])
+	assert.Equal(t, int64(3), stats["resource_requests"])
+
+	// Perform cleanup with 3 days retention (should delete records older than 3 days)
+	err = repo.CleanupOldRecords(1000, 3)
+	assert.NoError(t, err)
+
+	// Verify that old records (5 days old) are permanently deleted
+	stats, err = repo.GetAuditStats()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(2), stats["attestation_records"]) // Should have 2 records left
+	assert.Equal(t, int64(2), stats["resource_requests"])   // Should have 2 records left
+
+	// Verify that we cannot find the deleted records even with Unscoped query
+	var deletedAttestationCount int64
+	err = testDB.DB.Unscoped().Model(&models.AttestationRecord{}).Where("session_id = ?", "old-session-1").Count(&deletedAttestationCount).Error
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), deletedAttestationCount, "Old attestation record should be permanently deleted")
+
+	var deletedResourceCount int64
+	err = testDB.DB.Unscoped().Model(&models.ResourceRequest{}).Where("session_id = ?", "old-resource-1").Count(&deletedResourceCount).Error
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), deletedResourceCount, "Old resource request should be permanently deleted")
+
+	// Test max records limit
+	// Add more records to test the max records limit
+	for i := 0; i < 5; i++ {
+		attestationRecord := &models.AttestationRecord{
+			ClientIP:    "192.168.1.100",
+			SessionID:   "extra-session-" + string(rune(i)),
+			RequestBody: "extra-request",
+			Status:      200,
+			Successful:  true,
+			Timestamp:   baseTime.Add(time.Duration(i) * time.Minute),
+		}
+		err := repo.SaveAttestationRecord(attestationRecord)
+		assert.NoError(t, err)
+	}
+
+	// Now we should have 7 attestation records total
+	stats, err = repo.GetAuditStats()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(7), stats["attestation_records"])
+
+	// Cleanup with max 3 records
+	err = repo.CleanupOldRecords(3, 0) // 0 retention days, only limit by max records
+	assert.NoError(t, err)
+
+	// Should have only 3 attestation records left (the latest ones)
+	stats, err = repo.GetAuditStats()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(3), stats["attestation_records"])
+}

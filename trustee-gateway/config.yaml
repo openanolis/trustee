@@ -16,4 +16,9 @@ database:
   path: "/app/data/trustee-gateway.db"
 
 logging:
-  level: "debug" 
+  level: "debug"
+
+audit:
+  max_records: 1000
+  retention_days: 3
+  cleanup_interval_hours: 24

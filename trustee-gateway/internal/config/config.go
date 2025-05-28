@@ -13,6 +13,7 @@ type Config struct {
 	RVPS               RVPSConfig     `mapstructure:"rvps"`
 	Database           DatabaseConfig `mapstructure:"database"`
 	Logging            LoggingConfig  `mapstructure:"logging"`
+	Audit              AuditConfig    `mapstructure:"audit"`
 }
 
 // ServerConfig holds the gateway server configuration
@@ -42,6 +43,13 @@ type LoggingConfig struct {
 	Level string `mapstructure:"level"`
 }
 
+// AuditConfig holds audit configuration
+type AuditConfig struct {
+	MaxRecords           int `mapstructure:"max_records"`
+	RetentionDays        int `mapstructure:"retention_days"`
+	CleanupIntervalHours int `mapstructure:"cleanup_interval_hours"`
+}
+
 // LoadConfig loads the application configuration from file
 func LoadConfig(configPath string) (*Config, error) {
 	viper.SetConfigFile(configPath)
@@ -55,6 +63,9 @@ func LoadConfig(configPath string) (*Config, error) {
 	viper.SetDefault("database.type", "sqlite")
 	viper.SetDefault("database.path", "./trustee-gateway.db")
 	viper.SetDefault("logging.level", "info")
+	viper.SetDefault("audit.max_records", 1000)
+	viper.SetDefault("audit.retention_days", 3)
+	viper.SetDefault("audit.cleanup_interval_hours", 24)
 
 	if err := viper.ReadInConfig(); err != nil {
 		logrus.Warnf("Failed to read config file: %v. Using default values.", err)
