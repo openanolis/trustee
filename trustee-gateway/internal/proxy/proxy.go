@@ -2,11 +2,14 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -29,6 +32,8 @@ const (
 type Proxy struct {
 	kbsURL                *url.URL
 	attestationServiceURL *url.URL // Added URL for Attestation Service
+	kbsClient             *http.Client
+	attestationClient     *http.Client
 }
 
 // NewProxy creates a new proxy instance
@@ -43,9 +48,60 @@ func NewProxy(cfg *config.Config) (*Proxy, error) {
 		return nil, fmt.Errorf("invalid Attestation Service URL: %w", err)
 	}
 
+	// Create HTTP client for KBS
+	kbsClient, err := createHTTPClient(&cfg.KBS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create KBS client: %w", err)
+	}
+
+	// Create HTTP client for Attestation Service
+	attestationClient, err := createHTTPClient(&cfg.AttestationService)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Attestation Service client: %w", err)
+	}
+
 	return &Proxy{
 		kbsURL:                kbsURL,
-		attestationServiceURL: attestationServiceURL, // Set Attestation Service URL
+		attestationServiceURL: attestationServiceURL,
+		kbsClient:             kbsClient,
+		attestationClient:     attestationClient,
+	}, nil
+}
+
+// createHTTPClient creates an HTTP client with TLS configuration
+func createHTTPClient(serviceConfig *config.ServiceConfig) (*http.Client, error) {
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{},
+	}
+
+	// Configure TLS if the URL uses HTTPS
+	if strings.HasPrefix(serviceConfig.URL, "https://") {
+		tlsConfig := &tls.Config{}
+
+		// Handle insecure TLS (skip certificate verification)
+		if serviceConfig.InsecureHTTP {
+			tlsConfig.InsecureSkipVerify = true
+		}
+
+		// Load CA certificate if provided
+		if serviceConfig.CACertFile != "" {
+			caCert, err := os.ReadFile(serviceConfig.CACertFile)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read CA cert file: %w", err)
+			}
+			caCertPool := x509.NewCertPool()
+			if !caCertPool.AppendCertsFromPEM(caCert) {
+				return nil, fmt.Errorf("failed to parse CA cert")
+			}
+			tlsConfig.RootCAs = caCertPool
+		}
+
+		transport.TLSClientConfig = tlsConfig
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   time.Second * 30,
 	}, nil
 }
 
@@ -176,9 +232,15 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 	targetReq.Header.Set("X-Forwarded-Host", c.Request.Host)
 	targetReq.Header.Set("X-Forwarded-Proto", c.Request.URL.Scheme)
 
-	// Create HTTP client with appropriate timeout
-	client := &http.Client{
-		Timeout: time.Second * 30,
+	// Use the appropriate HTTP client based on service type
+	var client *http.Client
+	switch serviceType {
+	case KBSService:
+		client = p.kbsClient
+	case AttestationServiceType:
+		client = p.attestationClient
+	default:
+		return nil, fmt.Errorf("unknown service type: %s", serviceType)
 	}
 
 	// Send the request to the target
