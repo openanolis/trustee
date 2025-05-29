@@ -18,13 +18,23 @@ type Config struct {
 
 // ServerConfig holds the gateway server configuration
 type ServerConfig struct {
-	Host string `mapstructure:"host"`
-	Port int    `mapstructure:"port"`
+	Host         string    `mapstructure:"host"`
+	Port         int       `mapstructure:"port"`
+	TLS          TLSConfig `mapstructure:"tls"`
+	InsecureHTTP bool      `mapstructure:"insecure_http"`
+}
+
+// TLSConfig holds TLS configuration
+type TLSConfig struct {
+	CertFile string `mapstructure:"cert_file"`
+	KeyFile  string `mapstructure:"key_file"`
 }
 
 // ServiceConfig holds configuration for the upstream services (KBS)
 type ServiceConfig struct {
-	URL string `mapstructure:"url"`
+	URL          string `mapstructure:"url"`
+	InsecureHTTP bool   `mapstructure:"insecure_http"`
+	CACertFile   string `mapstructure:"ca_cert_file"`
 }
 
 // RVPSConfig holds configuration for the RVPS service
@@ -57,6 +67,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	// Set defaults
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8081)
+	viper.SetDefault("server.insecure_http", true)
 	viper.SetDefault("kbs.url", "http://localhost:8080")
 	viper.SetDefault("attestation_service.url", "http://localhost:50005")
 	viper.SetDefault("rvps.grpc_addr", "localhost:50003")

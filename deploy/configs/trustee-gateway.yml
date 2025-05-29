@@ -1,12 +1,20 @@
 server:
   host: "0.0.0.0"
   port: 8081
+  insecure_http: true
+  tls:
+    cert_file: ""
+    key_file: ""
 
 kbs:
-  url: "http://kbs:8080"
+  url: "http://localhost:8080"
+  insecure_http: true
+  ca_cert_file: ""
 
 attestation_service:
-  url: "http://as-restful:50005"
+  url: "http://localhost:50005"
+  insecure_http: true
+  ca_cert_file: ""
 
 rvps:
   grpc_addr: "rvps:50003"

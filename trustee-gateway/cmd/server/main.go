@@ -95,7 +95,15 @@ func main() {
 	logrus.Infof("Starting server on %s", addr)
 
 	go func() {
-		if err := router.Run(addr); err != nil {
+		var err error
+		if !cfg.Server.InsecureHTTP && cfg.Server.TLS.CertFile != "" && cfg.Server.TLS.KeyFile != "" {
+			logrus.Infof("Starting HTTPS server on %s", addr)
+			err = router.RunTLS(addr, cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
+		} else {
+			logrus.Infof("Starting HTTP server on %s", addr)
+			err = router.Run(addr)
+		}
+		if err != nil {
 			logrus.Errorf("Server failed to start: %v", err)
 			cancel()
 		}
