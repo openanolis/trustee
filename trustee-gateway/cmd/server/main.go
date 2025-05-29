@@ -4,9 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openanolis/trustee/gateway/internal/config"
@@ -75,7 +77,6 @@ func main() {
 
 	// Start audit cleanup service
 	auditCleanupService.Start(ctx)
-	defer auditCleanupService.Stop()
 
 	// Setup Gin router
 	gin.SetMode(gin.ReleaseMode)
@@ -86,24 +87,28 @@ func main() {
 	// API routes
 	setupRoutes(router, kbsHandler, rvpsHandler, attestationServiceHandler, auditHandler, healthCheckHandler, p)
 
+	// Setup HTTP server
+	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+	server := &http.Server{
+		Addr:    addr,
+		Handler: router,
+	}
+
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Start server in a goroutine
-	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-	logrus.Infof("Starting server on %s", addr)
-
 	go func() {
 		var err error
 		if !cfg.Server.InsecureHTTP && cfg.Server.TLS.CertFile != "" && cfg.Server.TLS.KeyFile != "" {
 			logrus.Infof("Starting HTTPS server on %s", addr)
-			err = router.RunTLS(addr, cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
+			err = server.ListenAndServeTLS(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
 		} else {
 			logrus.Infof("Starting HTTP server on %s", addr)
-			err = router.Run(addr)
+			err = server.ListenAndServe()
 		}
-		if err != nil {
+		if err != nil && err != http.ErrServerClosed {
 			logrus.Errorf("Server failed to start: %v", err)
 			cancel()
 		}
@@ -117,9 +122,18 @@ func main() {
 		logrus.Info("Context cancelled, shutting down...")
 	}
 
-	// Graceful shutdown
+	// Graceful shutdown with timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	logrus.Info("Shutting down HTTP server...")
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logrus.Errorf("HTTP server shutdown failed: %v", err)
+	}
+
 	logrus.Info("Shutting down audit cleanup service...")
 	auditCleanupService.Stop()
+
 	logrus.Info("Server shutdown complete")
 }
 
