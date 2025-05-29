@@ -26,7 +26,13 @@ database:
 logging:
   level: "debug"
 
+# Audit log cleanup configuration
 audit:
+  # Maximum number of records to keep for each type (attestation_records and resource_requests)
+  # Set to 0 to disable count-based cleanup
   max_records: 1000
+  # Number of days to retain records (records older than this will be deleted)
+  # Set to 0 to disable time-based cleanup
   retention_days: 3
+  # Cleanup interval in hours
   cleanup_interval_hours: 24

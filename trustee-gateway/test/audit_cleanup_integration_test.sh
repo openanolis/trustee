@@ -204,17 +204,7 @@ print_all_db_entries() {
     echo ""
     echo "=== 资源请求记录 (resource_requests) ==="
     sqlite3 -header -column "$DB_FILE" "SELECT id, session_id, client_ip, repository, type, tag, method, status, successful, timestamp FROM resource_requests WHERE deleted_at IS NULL ORDER BY timestamp;"
-    
-    echo ""
-    echo "=== 已删除的认证记录 (deleted attestation_records) ==="
-    sqlite3 -header -column "$DB_FILE" "SELECT id, session_id, client_ip, status, successful, timestamp, source_service, deleted_at FROM attestation_records WHERE deleted_at IS NOT NULL ORDER BY timestamp;"
-    
-    echo ""
-    echo "=== 已删除的资源请求记录 (deleted resource_requests) ==="
-    sqlite3 -header -column "$DB_FILE" "SELECT id, session_id, client_ip, repository, type, tag, method, status, successful, timestamp, deleted_at FROM resource_requests WHERE deleted_at IS NOT NULL ORDER BY timestamp;"
-    
-    echo "=================================================="
-    echo ""
+
 }
 
 # 等待清理执行
@@ -227,12 +217,12 @@ wait_for_cleanup() {
     local waited=0
     
     while [ $waited -lt $max_wait ]; do
-        if grep -q "Audit cleanup completed" "$LOG_FILE" 2>/dev/null; then
+        if grep -q "Audit hard cleanup completed" "$LOG_FILE" 2>/dev/null; then
             log_info "检测到清理操作完成"
             return 0
         fi
         
-        if grep -q "Starting audit records cleanup" "$LOG_FILE" 2>/dev/null; then
+        if grep -q "Starting audit records hard cleanup" "$LOG_FILE" 2>/dev/null; then
             log_info "检测到清理操作开始"
         fi
         

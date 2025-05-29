@@ -353,3 +353,63 @@ func TestCleanupOldRecords_HardDelete(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(3), stats["attestation_records"])
 }
+
+func TestCleanupOldRecords_EdgeCases(t *testing.T) {
+	testDB := setupAuditTestDB(t)
+	repo := NewAuditRepository(testDB)
+
+	baseTime := time.Now()
+
+	// Create test records
+	attestationRecord := &models.AttestationRecord{
+		ClientIP:    "192.168.1.1",
+		SessionID:   "test-session",
+		RequestBody: "test-request",
+		Status:      200,
+		Successful:  true,
+		Timestamp:   baseTime,
+	}
+	err := repo.SaveAttestationRecord(attestationRecord)
+	assert.NoError(t, err)
+
+	resourceRecord := &models.ResourceRequest{
+		ClientIP:   "192.168.1.1",
+		SessionID:  "test-resource",
+		Repository: "test-repo",
+		Type:       "test-type",
+		Tag:        "test-tag",
+		Method:     "GET",
+		Status:     200,
+		Successful: true,
+		Timestamp:  baseTime,
+	}
+	err = repo.SaveResourceRequest(resourceRecord)
+	assert.NoError(t, err)
+
+	// Test with maxRecords = 0 and retentionDays = 0 (should not delete anything)
+	err = repo.CleanupOldRecords(0, 0)
+	assert.NoError(t, err)
+
+	stats, err := repo.GetAuditStats()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), stats["attestation_records"])
+	assert.Equal(t, int64(1), stats["resource_requests"])
+
+	// Test with maxRecords = 0 but retentionDays = 1 (should only apply time-based cleanup)
+	err = repo.CleanupOldRecords(0, 1)
+	assert.NoError(t, err)
+
+	stats, err = repo.GetAuditStats()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), stats["attestation_records"])
+	assert.Equal(t, int64(1), stats["resource_requests"])
+
+	// Test with retentionDays = 0 but maxRecords = 0 (should not delete anything)
+	err = repo.CleanupOldRecords(0, 0)
+	assert.NoError(t, err)
+
+	stats, err = repo.GetAuditStats()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), stats["attestation_records"])
+	assert.Equal(t, int64(1), stats["resource_requests"])
+}

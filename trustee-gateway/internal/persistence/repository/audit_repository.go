@@ -125,64 +125,80 @@ func (r *AuditRepository) ListResourceRequests(
 
 // CleanupOldRecords removes old audit records based on retention policy
 func (r *AuditRepository) CleanupOldRecords(maxRecords int, retentionDays int) error {
-	cutoffTime := time.Now().AddDate(0, 0, -retentionDays)
+	// Only apply time-based cleanup if retention days > 0
+	if retentionDays > 0 {
+		cutoffTime := time.Now().AddDate(0, 0, -retentionDays)
 
-	// Delete old attestation records (hard delete using Unscoped)
-	if err := r.db.Unscoped().Where("timestamp < ?", cutoffTime).Delete(&models.AttestationRecord{}).Error; err != nil {
-		return err
-	}
-
-	// Delete old resource request records (hard delete using Unscoped)
-	if err := r.db.Unscoped().Where("timestamp < ?", cutoffTime).Delete(&models.ResourceRequest{}).Error; err != nil {
-		return err
-	}
-
-	// Keep only the latest maxRecords for attestation records
-	var attestationCount int64
-	if err := r.db.Model(&models.AttestationRecord{}).Count(&attestationCount).Error; err != nil {
-		return err
-	}
-
-	if attestationCount > int64(maxRecords) {
-		// Get IDs of records to keep (latest maxRecords)
-		var keepIDs []uint
-		if err := r.db.Model(&models.AttestationRecord{}).
-			Select("id").
-			Order("timestamp desc").
-			Limit(maxRecords).
-			Pluck("id", &keepIDs).Error; err != nil {
+		// Delete old attestation records (hard delete using Unscoped)
+		if err := r.db.Unscoped().Where("timestamp < ?", cutoffTime).Delete(&models.AttestationRecord{}).Error; err != nil {
 			return err
 		}
 
-		// Delete records not in the keep list (hard delete using Unscoped)
-		if len(keepIDs) > 0 {
-			if err := r.db.Unscoped().Where("id NOT IN ?", keepIDs).Delete(&models.AttestationRecord{}).Error; err != nil {
+		// Delete old resource request records (hard delete using Unscoped)
+		if err := r.db.Unscoped().Where("timestamp < ?", cutoffTime).Delete(&models.ResourceRequest{}).Error; err != nil {
+			return err
+		}
+	}
+
+	// Only apply count-based cleanup if maxRecords > 0
+	if maxRecords > 0 {
+		// Keep only the latest maxRecords for attestation records
+		var attestationCount int64
+		if err := r.db.Model(&models.AttestationRecord{}).Count(&attestationCount).Error; err != nil {
+			return err
+		}
+
+		if attestationCount > int64(maxRecords) {
+			// Get IDs of records to keep (latest maxRecords)
+			var keepIDs []uint
+			if err := r.db.Model(&models.AttestationRecord{}).
+				Select("id").
+				Order("timestamp desc").
+				Limit(maxRecords).
+				Pluck("id", &keepIDs).Error; err != nil {
 				return err
 			}
+
+			// Delete records not in the keep list (hard delete using Unscoped)
+			if len(keepIDs) > 0 {
+				if err := r.db.Unscoped().Where("id NOT IN ?", keepIDs).Delete(&models.AttestationRecord{}).Error; err != nil {
+					return err
+				}
+			} else {
+				// If no records to keep, delete all attestation records
+				if err := r.db.Unscoped().Where("1=1").Delete(&models.AttestationRecord{}).Error; err != nil {
+					return err
+				}
+			}
 		}
-	}
 
-	// Keep only the latest maxRecords for resource request records
-	var resourceCount int64
-	if err := r.db.Model(&models.ResourceRequest{}).Count(&resourceCount).Error; err != nil {
-		return err
-	}
-
-	if resourceCount > int64(maxRecords) {
-		// Get IDs of records to keep (latest maxRecords)
-		var keepIDs []uint
-		if err := r.db.Model(&models.ResourceRequest{}).
-			Select("id").
-			Order("timestamp desc").
-			Limit(maxRecords).
-			Pluck("id", &keepIDs).Error; err != nil {
+		// Keep only the latest maxRecords for resource request records
+		var resourceCount int64
+		if err := r.db.Model(&models.ResourceRequest{}).Count(&resourceCount).Error; err != nil {
 			return err
 		}
 
-		// Delete records not in the keep list (hard delete using Unscoped)
-		if len(keepIDs) > 0 {
-			if err := r.db.Unscoped().Where("id NOT IN ?", keepIDs).Delete(&models.ResourceRequest{}).Error; err != nil {
+		if resourceCount > int64(maxRecords) {
+			// Get IDs of records to keep (latest maxRecords)
+			var keepIDs []uint
+			if err := r.db.Model(&models.ResourceRequest{}).
+				Select("id").
+				Order("timestamp desc").
+				Limit(maxRecords).
+				Pluck("id", &keepIDs).Error; err != nil {
 				return err
+			}
+
+			// Delete records not in the keep list (hard delete using Unscoped)
+			if len(keepIDs) > 0 {
+				if err := r.db.Unscoped().Where("id NOT IN ?", keepIDs).Delete(&models.ResourceRequest{}).Error; err != nil {
+					return err
+				}
+			} else {
+				// If no records to keep, delete all resource request records
+				if err := r.db.Unscoped().Where("1=1").Delete(&models.ResourceRequest{}).Error; err != nil {
+					return err
+				}
 			}
 		}
 	}
