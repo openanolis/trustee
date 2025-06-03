@@ -97,18 +97,18 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
     }
 
     // Parse TPM Quote
-    for (algorithm, quote) in &tpm_evidence.quote {
+    for (_, quote) in &tpm_evidence.quote {
         let tpm_quote = Attest::unmarshall(&engine.decode(quote.attest_body.clone())?)?;
         parsed_claims.insert(
-            format!("{algorithm}.quote.signer"),
+            format!("quote.signer"),
             serde_json::Value::String(hex::encode(tpm_quote.qualified_signer().value())),
         );
         parsed_claims.insert(
-            format!("{algorithm}.quote.clock_info"),
+            format!("quote.clock_info"),
             serde_json::Value::String(tpm_quote.clock_info().clock().to_string()),
         );
         parsed_claims.insert(
-            format!("{algorithm}.quote.firmware_version"),
+            format!("quote.firmware_version"),
             serde_json::Value::String(tpm_quote.firmware_version().to_string()),
         );
         parsed_claims.insert(
@@ -116,11 +116,11 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
             serde_json::Value::String(hex::encode(tpm_quote.extra_data().value())),
         );
 
-        for (index, pcr_digest) in quote.pcrs.iter().enumerate() {
-            let key_name = format!("{algorithm}.pcr{index}");
-            let digest_string = hex::encode(pcr_digest.clone());
-            parsed_claims.insert(key_name, serde_json::Value::String(digest_string));
-        }
+        // for (index, pcr_digest) in quote.pcrs.iter().enumerate() {
+        //     let key_name = format!("{algorithm}.pcr{index}");
+        //     let digest_string = hex::encode(pcr_digest.clone());
+        //     parsed_claims.insert(key_name, serde_json::Value::String(digest_string));
+        // }
     }
 
     // Parse TCG Eventlogs
@@ -128,51 +128,117 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
         let eventlog_bytes = engine.decode(b64_eventlog)?;
         let eventlog = Eventlog::try_from(eventlog_bytes)
             .map_err(|e| anyhow!("parse TCG Eventlog failed: {e}"))?;
-        for event in eventlog.log {
-            // let claim_event_key = format!(
-            //     "TCG.eventlog.{}.{}.{}",
-            //     event.event_type,
-            //     event.digests[0].algorithm,
-            //     hex::encode(event.digests[0].digest.clone())
-            // );
-            // parsed_claims.insert(claim_event_key, serde_json::Value::String(event_data.clone()));
 
+        for event in eventlog.log {
             let event_data = match String::from_utf8(event.event_desc.clone()) {
                 Result::Ok(d) => d,
                 Result::Err(_) => hex::encode(event.event_desc),
             };
 
+            let event_digest_algorithm = event.digests[0].algorithm.trim_start_matches("TPM_ALG_");
+
+            #[allow(dead_code)]
+            struct UefiImageLoadEvent {
+                image_location_in_memory: u64,
+                image_length_in_memory: u64,
+                image_link_time_address: u64,
+                length_of_device_path: u64,
+                device_path: Vec<u8>,
+            }
+
+            impl UefiImageLoadEvent {
+                fn from_bytes(bytes: &[u8]) -> Result<Self> {
+                    if bytes.len() < 32 {
+                        bail!("Event data too short for UefiImageLoadEvent");
+                    }
+
+                    let image_location_in_memory = u64::from_le_bytes(bytes[0..8].try_into()?);
+                    let image_length_in_memory = u64::from_le_bytes(bytes[8..16].try_into()?);
+                    let image_link_time_address = u64::from_le_bytes(bytes[16..24].try_into()?);
+                    let length_of_device_path = u64::from_le_bytes(bytes[24..32].try_into()?);
+
+                    if bytes.len() < 32 + length_of_device_path as usize {
+                        bail!("Event data too short for device path");
+                    }
+
+                    let device_path = bytes[32..32 + length_of_device_path as usize].to_vec();
+
+                    Ok(Self {
+                        image_location_in_memory,
+                        image_length_in_memory,
+                        image_link_time_address,
+                        length_of_device_path,
+                        device_path,
+                    })
+                }
+            }
+
+            // Shim and Grub measurement (Authenticode)
+            // Parse EV_EFI_BOOT_SERVICES_APPLICATION for shim and grub measurement (Authenticode)
+            if event.event_type == "EV_EFI_BOOT_SERVICES_APPLICATION" {
+                let event_data_bytes = hex::decode(&event_data).map_err(|e| {
+                    anyhow!(
+                        "Failed to hex decode event data of EV_EFI_BOOT_SERVICES_APPLICATION: {e}"
+                    )
+                })?;
+                let image_load_event = UefiImageLoadEvent::from_bytes(&event_data_bytes)
+                    .map_err(|e| anyhow!("Failed to parse UefiImageLoadEvent: {e}"))?;
+                let device_path_str =
+                    String::from_utf8_lossy(&image_load_event.device_path).to_lowercase();
+
+                let device_path_str = device_path_str
+                    .chars()
+                    .filter(|c| c.is_ascii() && !c.is_ascii_control())
+                    .collect::<String>();
+
+                println!("device_path_str: {}", device_path_str);
+
+                if device_path_str.contains("shim") {
+                    parsed_claims.insert(
+                        format!("measurement.shim.{}", event_digest_algorithm),
+                        serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
+                    );
+                }
+                if device_path_str.contains("grub") {
+                    parsed_claims.insert(
+                        format!("measurement.grub.{}", event_digest_algorithm),
+                        serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
+                    );
+                }
+            }
+
+            // Kernel blob measurement
             // Check if event_desc contains "Kernel" or starts with "/boot/vmlinuz"
             if event_data.contains("Kernel") || event_data.starts_with("/boot/vmlinuz") {
-                let kernel_claim_key =
-                    format!("TCG.eventlog.kernel.{}", event.digests[0].algorithm);
+                let kernel_claim_key = format!("measurement.kernel.{}", event_digest_algorithm);
                 parsed_claims.insert(
                     kernel_claim_key,
                     serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
                 );
             }
 
+            // Kernel command line measurement
             // Check if event_desc starts with "grub_cmd linux", "kernel_cmdline", or "grub_kernel_cmdline"
             if event_data.starts_with("grub_cmd linux")
                 || event_data.starts_with("kernel_cmdline")
                 || event_data.starts_with("grub_kernel_cmdline")
             {
                 let kernel_cmdline_claim_key =
-                    format!("TCG.eventlog.kernel_cmdline.{}", event.digests[0].algorithm);
+                    format!("measurement.kernel_cmdline.{}", event_digest_algorithm);
                 parsed_claims.insert(
                     kernel_cmdline_claim_key,
                     serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
                 );
                 parsed_claims.insert(
-                    "TCG.eventlog.kernel_cmdline.content".to_string(),
+                    "kernel_cmdline".to_string(),
                     serde_json::Value::String(event_data.clone()),
                 );
             }
 
+            // Initrd blob measurement
             // Check if event_desc contains "Initrd" or starts with "/boot/initramfs"
             if event_data.contains("Initrd") || event_data.starts_with("/boot/initramfs") {
-                let initrd_claim_key =
-                    format!("TCG.eventlog.initrd.{}", event.digests[0].algorithm);
+                let initrd_claim_key = format!("measurement.initrd.{}", event_digest_algorithm);
                 parsed_claims.insert(
                     initrd_claim_key,
                     serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
@@ -189,11 +255,11 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
             let event_split: Vec<&str> = event.splitn(3, ' ').collect();
 
             if event_split[0] == "INIT" {
-                let claims_key = format!("AA.eventlog.INIT.{}", event_split[0]);
-                parsed_claims.insert(
-                    claims_key,
-                    serde_json::Value::String(event_split[1].to_string()),
-                );
+                // let claims_key = format!("AA.eventlog.INIT.{}", event_split[0]);
+                // parsed_claims.insert(
+                //     claims_key,
+                //     serde_json::Value::String(event_split[1].to_string()),
+                // );
                 continue;
             } else if event_split[0].to_string().is_empty() {
                 break;
