@@ -136,8 +136,48 @@ async fn verify_evidence(
         }
     };
 
-    let tdx_attestation_claims: serde_json::Value =
+    let mut tdx_attestation_claims: serde_json::Value =
         generate_parsed_claim(quote, ccel_option, aael)? as serde_json::Value;
+
+    // Parse AA eventlog
+    if let Some(aa_eventlog_str) = &evidence.aa_eventlog {
+        let mut aa_eventlog_claims = serde_json::Map::new();
+        let aa_eventlog_lines: Vec<&str> = aa_eventlog_str.split('\n').collect();
+
+        for event_line in aa_eventlog_lines.iter() {
+            let event_split: Vec<&str> = event_line.splitn(3, ' ').collect();
+
+            if event_split[0] == "INIT" {
+                continue;
+            } else if event_split[0].is_empty() {
+                break;
+            }
+
+            if event_split.len() != 3 {
+                warn!("Illegal AA eventlog format in line: {}", event_line);
+                continue;
+            }
+
+            let claims_key = format!("AA.eventlog.{}.{}", event_split[0], event_split[1]);
+            aa_eventlog_claims.insert(
+                claims_key,
+                serde_json::Value::String(event_split[2].to_string()),
+            );
+        }
+
+        // Merge AA eventlog claims into tdx_attestation_claims
+        let aa_claims_value = serde_json::Value::Object(aa_eventlog_claims);
+        tdx_attestation_claims = match (tdx_attestation_claims.clone(), aa_claims_value) {
+            (Value::Object(mut tdx), Value::Object(aa)) => {
+                tdx.extend(aa);
+                Value::Object(tdx)
+            }
+            _ => {
+                warn!("Merge TDX and AA eventlog claims failed");
+                tdx_attestation_claims
+            }
+        };
+    }
 
     if let Some(gpu_attestation_token) = evidence.gpu_attestation_token {
         let gpu_attestation_claims: serde_json::Value =
