@@ -7,13 +7,14 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	Server             ServerConfig   `mapstructure:"server"`
-	KBS                ServiceConfig  `mapstructure:"kbs"`
-	AttestationService ServiceConfig  `mapstructure:"attestation_service"`
-	RVPS               RVPSConfig     `mapstructure:"rvps"`
-	Database           DatabaseConfig `mapstructure:"database"`
-	Logging            LoggingConfig  `mapstructure:"logging"`
-	Audit              AuditConfig    `mapstructure:"audit"`
+	Server                       ServerConfig                       `mapstructure:"server"`
+	KBS                          ServiceConfig                      `mapstructure:"kbs"`
+	AttestationService           ServiceConfig                      `mapstructure:"attestation_service"`
+	RVPS                         RVPSConfig                         `mapstructure:"rvps"`
+	Database                     DatabaseConfig                     `mapstructure:"database"`
+	Logging                      LoggingConfig                      `mapstructure:"logging"`
+	Audit                        AuditConfig                        `mapstructure:"audit"`
+	AttestationAgentInstanceInfo AttestationAgentInstanceInfoConfig `mapstructure:"attestation_agent_instance_info"`
 }
 
 // ServerConfig holds the gateway server configuration
@@ -53,6 +54,11 @@ type LoggingConfig struct {
 	Level string `mapstructure:"level"`
 }
 
+// AttestationAgentInfoConfig holds configuration for attestation agent heartbeat
+type AttestationAgentInstanceInfoConfig struct {
+	HeartbeatTimeoutMinutes int `mapstructure:"heartbeat_timeout_minutes"`
+}
+
 // AuditConfig holds audit configuration
 type AuditConfig struct {
 	MaxRecords           int `mapstructure:"max_records"`
@@ -77,6 +83,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	viper.SetDefault("audit.max_records", 1000)
 	viper.SetDefault("audit.retention_days", 3)
 	viper.SetDefault("audit.cleanup_interval_hours", 24)
+	viper.SetDefault("attestation_agent_instance_info.heartbeat_timeout_minutes", 10)
 
 	if err := viper.ReadInConfig(); err != nil {
 		logrus.Warnf("Failed to read config file: %v. Using default values.", err)

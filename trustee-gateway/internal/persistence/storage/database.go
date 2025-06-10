@@ -59,6 +59,7 @@ func migrateSchema(db *gorm.DB) error {
 		&models.ResourcePolicy{},
 		&models.AttestationRecord{},
 		&models.ResourceRequest{},
+		&models.AAInstanceHeartbeat{},
 	)
 
 	if err != nil {

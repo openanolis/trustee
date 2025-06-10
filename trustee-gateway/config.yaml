@@ -36,3 +36,8 @@ audit:
   retention_days: 3
   # Cleanup interval in hours
   cleanup_interval_hours: 24
+
+# Attestation agent instance heartbeat configuration
+attestation_agent_instance_info:
+  # Heartbeat timeout in minutes (default: 10 minutes)
+  heartbeat_timeout_minutes: 10

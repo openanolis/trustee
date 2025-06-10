@@ -78,32 +78,32 @@ func TestListAttestationRecords(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	results, err := repo.ListAttestationRecords("", "", nil, nil, nil, 10, 0)
+	results, err := repo.ListAttestationRecords("", "", "", nil, nil, nil, 10, 0)
 	assert.NoError(t, err)
 	assert.Len(t, results, 3)
 
-	sessionResults, err := repo.ListAttestationRecords("session1", "", nil, nil, nil, 10, 0)
+	sessionResults, err := repo.ListAttestationRecords("session1", "", "", nil, nil, nil, 10, 0)
 	assert.NoError(t, err)
 	assert.Len(t, sessionResults, 1)
 	assert.Equal(t, "session1", sessionResults[0].SessionID)
 
-	typeResults, err := repo.ListAttestationRecords("", "auth", nil, nil, nil, 10, 0)
+	typeResults, err := repo.ListAttestationRecords("", "auth", "", nil, nil, nil, 10, 0)
 	assert.NoError(t, err)
 	assert.Len(t, typeResults, 2)
 
 	successTrue := true
-	successResults, err := repo.ListAttestationRecords("", "", &successTrue, nil, nil, 10, 0)
+	successResults, err := repo.ListAttestationRecords("", "", "", &successTrue, nil, nil, 10, 0)
 	assert.NoError(t, err)
 	assert.Len(t, successResults, 2)
 
 	startTime := baseTime.Add(30 * time.Minute)
 	endTime := baseTime.Add(90 * time.Minute)
-	timeResults, err := repo.ListAttestationRecords("", "", nil, &startTime, &endTime, 10, 0)
+	timeResults, err := repo.ListAttestationRecords("", "", "", nil, &startTime, &endTime, 10, 0)
 	assert.NoError(t, err)
 	assert.Len(t, timeResults, 1)
 	assert.Equal(t, "session2", timeResults[0].SessionID)
 
-	pageResults, err := repo.ListAttestationRecords("", "", nil, nil, nil, 1, 1)
+	pageResults, err := repo.ListAttestationRecords("", "", "", nil, nil, nil, 1, 1)
 	assert.NoError(t, err)
 	assert.Len(t, pageResults, 1)
 }
@@ -177,40 +177,40 @@ func TestListResourceRequests(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	results, err := repo.ListResourceRequests("", "", "", "", "", nil, nil, nil, 10, 0)
+	results, err := repo.ListResourceRequests("", "", "", "", "", "", nil, nil, nil, 10, 0)
 	assert.NoError(t, err)
 	assert.Len(t, results, 3)
 
-	sessionResults, err := repo.ListResourceRequests("session1", "", "", "", "", nil, nil, nil, 10, 0)
+	sessionResults, err := repo.ListResourceRequests("session1", "", "", "", "", "", nil, nil, nil, 10, 0)
 	assert.NoError(t, err)
 	assert.Len(t, sessionResults, 1)
 	assert.Equal(t, "session1", sessionResults[0].SessionID)
 
-	repoResults, err := repo.ListResourceRequests("", "repo1", "", "", "", nil, nil, nil, 10, 0)
+	repoResults, err := repo.ListResourceRequests("", "repo1", "", "", "", "", nil, nil, nil, 10, 0)
 	assert.NoError(t, err)
 	assert.Len(t, repoResults, 2)
 
-	typeResults, err := repo.ListResourceRequests("", "", "type1", "", "", nil, nil, nil, 10, 0)
+	typeResults, err := repo.ListResourceRequests("", "", "type1", "", "", "", nil, nil, nil, 10, 0)
 	assert.NoError(t, err)
 	assert.Len(t, typeResults, 2)
 
-	methodResults, err := repo.ListResourceRequests("", "", "", "", "GET", nil, nil, nil, 10, 0)
+	methodResults, err := repo.ListResourceRequests("", "", "", "", "GET", "", nil, nil, nil, 10, 0)
 	assert.NoError(t, err)
 	assert.Len(t, methodResults, 2)
 
 	successTrue := true
-	successResults, err := repo.ListResourceRequests("", "", "", "", "", &successTrue, nil, nil, 10, 0)
+	successResults, err := repo.ListResourceRequests("", "", "", "", "", "", &successTrue, nil, nil, 10, 0)
 	assert.NoError(t, err)
 	assert.Len(t, successResults, 2)
 
 	startTime := baseTime.Add(30 * time.Minute)
 	endTime := baseTime.Add(90 * time.Minute)
-	timeResults, err := repo.ListResourceRequests("", "", "", "", "", nil, &startTime, &endTime, 10, 0)
+	timeResults, err := repo.ListResourceRequests("", "", "", "", "", "", nil, &startTime, &endTime, 10, 0)
 	assert.NoError(t, err)
 	assert.Len(t, timeResults, 1)
 	assert.Equal(t, "session2", timeResults[0].SessionID)
 
-	pageResults, err := repo.ListResourceRequests("", "", "", "", "", nil, nil, nil, 1, 1)
+	pageResults, err := repo.ListResourceRequests("", "", "", "", "", "", nil, nil, nil, 1, 1)
 	assert.NoError(t, err)
 	assert.Len(t, pageResults, 1)
 }
