@@ -6,6 +6,7 @@ import {
   BookOutlined, 
   AuditOutlined,
   CloudServerOutlined,
+  TeamOutlined,
   LogoutOutlined
 } from '@ant-design/icons';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -69,6 +70,11 @@ const MainLayout: React.FC = () => {
               key: 'audit',
               icon: <AuditOutlined />,
               label: <Link to="/audit">审计日志</Link>,
+            },
+            {
+              key: 'aa-instances',
+              icon: <TeamOutlined />,
+              label: <Link to="/aa-instances">实例列表</Link>,
             },
             {
               key: 'rvps',

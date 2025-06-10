@@ -26,6 +26,27 @@ export type AttestationPolicyList = string;
 
 export type ResourcePolicy = string;
 
+// AA Instance Info相关类型
+export interface InstanceInfo {
+  instance_id: string;
+  image_id: string;
+  instance_name: string;
+  owner_account_id: string;
+}
+
+// AA Instance Heartbeat相关类型
+export interface AAInstanceHeartbeat {
+  ID: number;
+  instance_id: string;
+  image_id: string;
+  instance_name: string;
+  owner_account_id: string;
+  client_ip: string;
+  last_heartbeat: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+}
+
 // 审计记录类型
 export interface AttestationRecord {
   ID: number;
@@ -36,6 +57,11 @@ export interface AttestationRecord {
   status: number;
   successful: boolean;
   timestamp: string;
+  source_service: string;
+  instance_id?: string;
+  image_id?: string;
+  instance_name?: string;
+  owner_account_id?: string;
 }
 
 export interface ResourceRequest {
@@ -49,6 +75,10 @@ export interface ResourceRequest {
   status: number;
   successful: boolean;
   timestamp: string;
+  instance_id?: string;
+  image_id?: string;
+  instance_name?: string;
+  owner_account_id?: string;
 }
 
 // 认证相关类型
