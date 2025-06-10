@@ -29,6 +29,7 @@ func (r *AuditRepository) SaveAttestationRecord(record *models.AttestationRecord
 func (r *AuditRepository) ListAttestationRecords(
 	sessionID string,
 	sourceService string,
+	instanceID string,
 	successful *bool,
 	startTime, endTime *time.Time,
 	limit, offset int,
@@ -43,6 +44,10 @@ func (r *AuditRepository) ListAttestationRecords(
 
 	if sourceService != "" {
 		query = query.Where("source_service = ?", sourceService)
+	}
+
+	if instanceID != "" {
+		query = query.Where("instance_id = ?", instanceID)
 	}
 
 	if successful != nil {
@@ -76,6 +81,7 @@ func (r *AuditRepository) ListResourceRequests(
 	resourceType string,
 	tag string,
 	method string,
+	instanceID string,
 	successful *bool,
 	startTime, endTime *time.Time,
 	limit, offset int,
@@ -102,6 +108,10 @@ func (r *AuditRepository) ListResourceRequests(
 
 	if method != "" {
 		query = query.Where("method = ?", method)
+	}
+
+	if instanceID != "" {
+		query = query.Where("instance_id = ?", instanceID)
 	}
 
 	if successful != nil {

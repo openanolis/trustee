@@ -26,6 +26,7 @@ func NewAuditHandler(auditRepo *repository.AuditRepository) *AuditHandler {
 func (h *AuditHandler) ListAttestationRecords(c *gin.Context) {
 	sessionID := c.Query("session_id")
 	sourceService := c.Query("source_service")
+	instanceID := c.Query("instance_id")
 
 	var successful *bool
 	if successfulStr := c.Query("successful"); successfulStr != "" {
@@ -65,6 +66,7 @@ func (h *AuditHandler) ListAttestationRecords(c *gin.Context) {
 	records, err := h.auditRepo.ListAttestationRecords(
 		sessionID,
 		sourceService,
+		instanceID,
 		successful,
 		startTime,
 		endTime,
@@ -88,6 +90,7 @@ func (h *AuditHandler) ListResourceRequests(c *gin.Context) {
 	resourceType := c.Query("type")
 	tag := c.Query("tag")
 	method := c.Query("method")
+	instanceID := c.Query("instance_id")
 
 	var successful *bool
 	if successfulStr := c.Query("successful"); successfulStr != "" {
@@ -130,6 +133,7 @@ func (h *AuditHandler) ListResourceRequests(c *gin.Context) {
 		resourceType,
 		tag,
 		method,
+		instanceID,
 		successful,
 		startTime,
 		endTime,

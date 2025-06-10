@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,6 +32,22 @@ func NewAttestationServiceHandler(
 		proxy:     p,
 		auditRepo: auditRepo,
 	}
+}
+
+// parseAAInstanceInfo parses the AAInstanceInfo header and returns the structured data
+func parseAAInstanceInfoAS(c *gin.Context) (*models.InstanceInfo, error) {
+	aaInstanceInfoHeader := c.GetHeader("AAInstanceInfo")
+	if aaInstanceInfoHeader == "" {
+		// If no AAInstanceInfo header, return empty struct (not an error for backwards compatibility)
+		return &models.InstanceInfo{}, nil
+	}
+
+	var aaInstanceInfo models.InstanceInfo
+	if err := json.Unmarshal([]byte(aaInstanceInfoHeader), &aaInstanceInfo); err != nil {
+		return nil, fmt.Errorf("failed to parse AAInstanceInfo header: %v", err)
+	}
+
+	return &aaInstanceInfo, nil
 }
 
 // HandleAttest handles the attestation endpoint for the Attestation Service
@@ -67,6 +84,14 @@ func (h *AttestationServiceHandler) HandleAttestation(c *gin.Context) {
 	// For now, we'll leave it empty. If session management is needed, it should be implemented here.
 	sessionID := "" // Placeholder for session ID if applicable
 
+	// Parse AAInstanceInfo from request header
+	aaInstanceInfo, err := parseAAInstanceInfoAS(c)
+	if err != nil {
+		logrus.Errorf("Failed to parse AAInstanceInfo: %v", err)
+		// Don't fail the request, just log the error
+		aaInstanceInfo = &models.InstanceInfo{}
+	}
+
 	claims, err := extractClaimsFromAttestationResponse(string(responseBody))
 	if err != nil {
 		// Log the error but don't fail the request, claims might not always be present or parsable in the same way
@@ -84,6 +109,7 @@ func (h *AttestationServiceHandler) HandleAttestation(c *gin.Context) {
 		Successful:    resp.StatusCode == http.StatusOK,
 		Timestamp:     time.Now(),
 		SourceService: string(proxy.AttestationServiceType), // Set the source service
+		InstanceInfo:  *aaInstanceInfo,
 	}
 
 	// Save the record asynchronously

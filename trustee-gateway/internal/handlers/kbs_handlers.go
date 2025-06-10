@@ -34,6 +34,22 @@ func NewKBSHandler(
 	}
 }
 
+// parseAAInstanceInfo parses the AAInstanceInfo header and returns the structured data
+func parseAAInstanceInfo(c *gin.Context) (*models.InstanceInfo, error) {
+	aaInstanceInfoHeader := c.GetHeader("AAInstanceInfo")
+	if aaInstanceInfoHeader == "" {
+		// If no AAInstanceInfo header, return empty struct (not an error for backwards compatibility)
+		return &models.InstanceInfo{}, nil
+	}
+
+	var aaInstanceInfo models.InstanceInfo
+	if err := json.Unmarshal([]byte(aaInstanceInfoHeader), &aaInstanceInfo); err != nil {
+		return nil, fmt.Errorf("failed to parse AAInstanceInfo header: %v", err)
+	}
+
+	return &aaInstanceInfo, nil
+}
+
 // HandleAuth handles the KBS authentication endpoint
 func (h *KBSHandler) HandleAuth(c *gin.Context) {
 	// Read the request body
@@ -112,6 +128,14 @@ func (h *KBSHandler) HandleAttest(c *gin.Context) {
 		}
 	}
 
+	// Parse AAInstanceInfo from request header
+	aaInstanceInfo, err := parseAAInstanceInfo(c)
+	if err != nil {
+		logrus.Errorf("Failed to parse AAInstanceInfo: %v", err)
+		// Don't fail the request, just log the error
+		aaInstanceInfo = &models.InstanceInfo{}
+	}
+
 	claims, err := extractClaims(string(responseBody))
 	if err != nil {
 		logrus.Errorf("Failed to extract claims from attestation response: %v", err)
@@ -128,6 +152,7 @@ func (h *KBSHandler) HandleAttest(c *gin.Context) {
 		Successful:    resp.StatusCode == http.StatusOK,
 		Timestamp:     time.Now(),
 		SourceService: string(proxy.KBSService),
+		InstanceInfo:  *aaInstanceInfo,
 	}
 
 	// Save the record asynchronously
@@ -255,15 +280,24 @@ func (h *KBSHandler) HandleGetResource(c *gin.Context) {
 		}
 	}
 
+	// Parse AAInstanceInfo from request header
+	aaInstanceInfo, err := parseAAInstanceInfo(c)
+	if err != nil {
+		logrus.Errorf("Failed to parse AAInstanceInfo: %v", err)
+		// Don't fail the request, just log the error
+		aaInstanceInfo = &models.InstanceInfo{}
+	}
+
 	// Create a record for this request
 	requestRecord := &models.ResourceRequest{
-		ClientIP:   c.ClientIP(),
-		SessionID:  sessionID,
-		Repository: repository,
-		Type:       resourceType,
-		Tag:        tag,
-		Method:     c.Request.Method,
-		Timestamp:  time.Now(),
+		ClientIP:     c.ClientIP(),
+		SessionID:    sessionID,
+		Repository:   repository,
+		Type:         resourceType,
+		Tag:          tag,
+		Method:       c.Request.Method,
+		Timestamp:    time.Now(),
+		InstanceInfo: *aaInstanceInfo,
 	}
 
 	// Forward the request to KBS
@@ -339,15 +373,24 @@ func (h *KBSHandler) HandleSetResource(c *gin.Context) {
 		}
 	}
 
+	// Parse AAInstanceInfo from request header
+	aaInstanceInfo, err := parseAAInstanceInfo(c)
+	if err != nil {
+		logrus.Errorf("Failed to parse AAInstanceInfo: %v", err)
+		// Don't fail the request, just log the error
+		aaInstanceInfo = &models.InstanceInfo{}
+	}
+
 	// Create a record for this request
 	requestRecord := &models.ResourceRequest{
-		ClientIP:   c.ClientIP(),
-		SessionID:  sessionID,
-		Repository: repository,
-		Type:       resourceType,
-		Tag:        tag,
-		Method:     c.Request.Method,
-		Timestamp:  time.Now(),
+		ClientIP:     c.ClientIP(),
+		SessionID:    sessionID,
+		Repository:   repository,
+		Type:         resourceType,
+		Tag:          tag,
+		Method:       c.Request.Method,
+		Timestamp:    time.Now(),
+		InstanceInfo: *aaInstanceInfo,
 	}
 
 	// Forward the request to KBS

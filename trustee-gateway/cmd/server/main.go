@@ -44,6 +44,7 @@ func main() {
 
 	// Create repositories
 	auditRepo := repository.NewAuditRepository(db)
+	aaInstanceRepo := repository.NewAAInstanceRepository(db)
 
 	// Initialize audit cleanup service
 	auditCleanupService := services.NewAuditCleanupService(auditRepo, &cfg.Audit)
@@ -70,6 +71,7 @@ func main() {
 	attestationServiceHandler := handlers.NewAttestationServiceHandler(p, auditRepo)
 	auditHandler := handlers.NewAuditHandler(auditRepo)
 	healthCheckHandler := handlers.NewHealthCheckHandler(p, rvpsClient)
+	aaInstanceHandler := handlers.NewAAInstanceHandler(aaInstanceRepo, &cfg.AttestationAgentInstanceInfo)
 
 	// Setup context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -85,7 +87,7 @@ func main() {
 	router.Use(middleware.Logger())
 
 	// API routes
-	setupRoutes(router, kbsHandler, rvpsHandler, attestationServiceHandler, auditHandler, healthCheckHandler, p)
+	setupRoutes(router, kbsHandler, rvpsHandler, attestationServiceHandler, auditHandler, healthCheckHandler, p, aaInstanceHandler)
 
 	// Setup HTTP server
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
@@ -137,7 +139,7 @@ func main() {
 	logrus.Info("Server shutdown complete")
 }
 
-func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandler *handlers.RVPSHandler, attestationServiceHandler *handlers.AttestationServiceHandler, auditHandler *handlers.AuditHandler, healthCheckHandler *handlers.HealthCheckHandler, p *proxy.Proxy) {
+func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandler *handlers.RVPSHandler, attestationServiceHandler *handlers.AttestationServiceHandler, auditHandler *handlers.AuditHandler, healthCheckHandler *handlers.HealthCheckHandler, p *proxy.Proxy, aaInstanceHandler *handlers.AAInstanceHandler) {
 	// KBS API routes
 	kbs := router.Group("/api/kbs/v0")
 	{
@@ -184,4 +186,11 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 	// Health check routes
 	router.GET("/api/health", healthCheckHandler.HandleHealthCheck)
 	router.GET("/api/services-health", healthCheckHandler.HandleServicesHealthCheck)
+
+	// Attestation Agent routes
+	aa := router.Group("/api/aa-instance")
+	{
+		aa.POST("/heartbeat", aaInstanceHandler.HandleHeartbeat)
+		aa.GET("/list", aaInstanceHandler.HandleGetActiveAAInstances)
+	}
 }
