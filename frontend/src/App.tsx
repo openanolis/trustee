@@ -8,6 +8,7 @@ const HealthPage = lazy(() => import('./pages/HealthPage'));
 const PoliciesPage = lazy(() => import('./pages/PoliciesPage'));
 const ResourcesPage = lazy(() => import('./pages/ResourcesPage'));
 const AuditPage = lazy(() => import('./pages/AuditPage'));
+const AAInstancePage = lazy(() => import('./pages/AAInstancePage'));
 const RvpsPage = lazy(() => import('./pages/RvpsPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 
@@ -55,6 +56,7 @@ const App: React.FC = () => (
         <Route path="policies" element={<PoliciesPage />} />
         <Route path="resources" element={<ResourcesPage />} />
         <Route path="audit" element={<AuditPage />} />
+        <Route path="aa-instances" element={<AAInstancePage />} />
         <Route path="rvps" element={<RvpsPage />} />
       </Route>
       

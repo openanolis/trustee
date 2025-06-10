@@ -69,11 +69,12 @@ const AuditPage: React.FC = () => {
   };
 
   const handleAttestationSearch = (values: any) => {
-    const { session_id, source_service, successful, time_range } = values;
+    const { session_id, source_service, successful, instance_id, time_range } = values;
     const params: any = {
       session_id,
       source_service,
-      successful
+      successful,
+      instance_id
     };
 
     if (time_range && time_range.length === 2) {
@@ -85,14 +86,15 @@ const AuditPage: React.FC = () => {
   };
 
   const handleResourceSearch = (values: any) => {
-    const { session_id, repository, type, tag, method, successful, time_range } = values;
+    const { session_id, repository, type, tag, method, successful, instance_id, time_range } = values;
     const params: any = {
       session_id,
       repository,
       type,
       tag,
       method,
-      successful
+      successful,
+      instance_id
     };
 
     if (time_range && time_range.length === 2) {
@@ -160,6 +162,16 @@ const AuditPage: React.FC = () => {
       dataIndex: 'source_service',
       key: 'source_service',
       width: 120,
+    },
+    {
+      title: 'Instance ID',
+      dataIndex: 'instance_id',
+      key: 'instance_id',
+      width: 150,
+      ellipsis: true,
+      render: (text: string) => text ? (
+        <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>{text}</span>
+      ) : '-',
     },
     {
       title: '操作',
@@ -252,6 +264,16 @@ const AuditPage: React.FC = () => {
       render: (text: string) => new Date(text).toLocaleString(),
     },
     {
+      title: 'Instance ID',
+      dataIndex: 'instance_id',
+      key: 'instance_id',
+      width: 150,
+      ellipsis: true,
+      render: (text: string) => text ? (
+        <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>{text}</span>
+      ) : '-',
+    },
+    {
       title: '操作',
       key: 'action',
       width: 180,
@@ -304,6 +326,10 @@ const AuditPage: React.FC = () => {
                     <Option value="true">成功</Option>
                     <Option value="false">失败</Option>
                   </Select>
+                </Form.Item>
+
+                <Form.Item name="instance_id" label="Instance ID">
+                  <Input placeholder="输入Instance ID" style={{ width: 200 }} />
                 </Form.Item>
 
                 <Form.Item name="time_range" label="时间范围">
@@ -370,6 +396,10 @@ const AuditPage: React.FC = () => {
                     <Option value="true">成功</Option>
                     <Option value="false">失败</Option>
                   </Select>
+                </Form.Item>
+
+                <Form.Item name="instance_id" label="Instance ID">
+                  <Input placeholder="输入Instance ID" style={{ width: 200 }} />
                 </Form.Item>
 
                 <Form.Item name="time_range" label="时间范围">

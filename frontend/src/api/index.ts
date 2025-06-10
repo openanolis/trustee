@@ -7,7 +7,8 @@ import type {
   AttestationRecord, 
   ResourceRequest,
   HealthStatus,
-  RvpsMessage
+  RvpsMessage,
+  AAInstanceHeartbeat
 } from '@/types/api';
 import { createSignedToken, isTokenValid, getTokenRemainingTime } from '@/utils/auth';
 import { Base64 } from 'js-base64';
@@ -142,10 +143,11 @@ export const resourceApi = {
 export const auditApi = {
   listAttestationRecords: (params?: {
     session_id?: string;
-    request_type?: string;
+    source_service?: string;
     successful?: boolean;
     start_time?: string;
     end_time?: string;
+    instance_id?: string;
     limit?: number;
     offset?: number;
   }) => apiClient.get<AttestationRecord[]>('/audit/attestation', { params }),
@@ -159,6 +161,7 @@ export const auditApi = {
     successful?: boolean;
     start_time?: string;
     end_time?: string;
+    instance_id?: string;
     limit?: number;
     offset?: number;
   }) => apiClient.get<ResourceRequest[]>('/audit/resources', { params }),
@@ -178,6 +181,14 @@ export const rvpsApi = {
     };
     return apiClient.post('/rvps/register', payload);
   }
+};
+
+export const aaInstanceApi = {
+  listActiveInstances: () => apiClient.get<{
+    active_aa_instances: AAInstanceHeartbeat[];
+    count: number;
+    timestamp: string;
+  }>('/aa-instance/list'),
 };
 
 declare global {
