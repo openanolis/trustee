@@ -97,18 +97,18 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
     }
 
     // Parse TPM Quote
-    for (_, quote) in &tpm_evidence.quote {
+    for quote in tpm_evidence.quote.values() {
         let tpm_quote = Attest::unmarshall(&engine.decode(quote.attest_body.clone())?)?;
         parsed_claims.insert(
-            format!("quote.signer"),
+            "quote.signer".to_string(),
             serde_json::Value::String(hex::encode(tpm_quote.qualified_signer().value())),
         );
         parsed_claims.insert(
-            format!("quote.clock_info"),
+            "quote.clock_info".to_string(),
             serde_json::Value::String(tpm_quote.clock_info().clock().to_string()),
         );
         parsed_claims.insert(
-            format!("quote.firmware_version"),
+            "quote.firmware_version".to_string(),
             serde_json::Value::String(tpm_quote.firmware_version().to_string()),
         );
         parsed_claims.insert(
