@@ -93,12 +93,33 @@ impl ResponseError for Error {
         // A test covering all the possible error types are given to ensure this.
         let body = serde_json::to_string(&info).expect("Failed to serialize error");
 
-        // Per the KBS protocol, errors should yield 401 or 404 reponses
+        // Map errors to appropriate HTTP status codes based on their nature
         let mut res = match self {
+            // 400 Bad Request - Client request errors
+            Error::JweError { .. } | Error::SerdeError(_) => HttpResponse::BadRequest(),
+
+            // 401 Unauthorized - Authentication/authorization errors
+            Error::AdminAuth(_) | Error::TokenNotFound | Error::TokenVerifierError(_) => {
+                HttpResponse::Unauthorized()
+            }
+
+            // 403 Forbidden - Access denied by policy
+            Error::PolicyDeny => HttpResponse::Forbidden(),
+
+            // 404 Not Found - Resource not found
             Error::InvalidRequestPath { .. } | Error::PluginNotFound { .. } => {
                 HttpResponse::NotFound()
             }
-            _ => HttpResponse::Unauthorized(),
+
+            // 500 Internal Server Error - Server-side failures
+            Error::HTTPFailed { .. }
+            | Error::HTTPSFailed { .. }
+            | Error::PluginManagerInitialization { .. }
+            | Error::PluginInternalError { .. }
+            | Error::PolicyEngine(_) => HttpResponse::InternalServerError(),
+
+            #[cfg(feature = "as")]
+            Error::AttestationError(_) => HttpResponse::InternalServerError(),
         };
 
         error!("{self:?}");
