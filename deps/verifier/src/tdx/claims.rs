@@ -47,15 +47,12 @@
 
 use anyhow::*;
 use byteorder::{LittleEndian, ReadBytesExt};
-use log::{debug, warn};
+use log::debug;
 use serde_json::{Map, Value};
 
 use crate::{eventlog::AAEventlog, tdx::quote::QuoteV5Body, TeeEvidenceParsedClaim};
 
-use super::{
-    eventlog::{CcEventLog, MeasuredEntity},
-    quote::Quote,
-};
+use super::{eventlog::CcEventLog, quote::Quote};
 
 macro_rules! parse_claim {
     ($map_name: ident, $key_name: literal, $field: ident) => {
@@ -193,46 +190,118 @@ pub fn generate_parsed_claim(
 }
 
 fn parse_ccel(ccel: CcEventLog, ccel_map: &mut Map<String, Value>) -> Result<()> {
-    // Digest of kernel using td-shim
-    match ccel.query_digest(MeasuredEntity::TdShimKernel) {
-        Some(kernel_digest) => {
+    let eventlog = ccel.cc_events.clone();
+
+    for event in eventlog.log {
+        let event_data = match String::from_utf8(event.event_desc.clone()) {
+            Result::Ok(d) => d,
+            Result::Err(_) => hex::encode(event.event_desc),
+        };
+
+        let event_digest_algorithm = event.digests[0].algorithm.trim_start_matches("TPM_ALG_");
+
+        #[allow(dead_code)]
+        struct UefiImageLoadEvent {
+            image_location_in_memory: u64,
+            image_length_in_memory: u64,
+            image_link_time_address: u64,
+            length_of_device_path: u64,
+            device_path: Vec<u8>,
+        }
+
+        impl UefiImageLoadEvent {
+            fn from_bytes(bytes: &[u8]) -> Result<Self> {
+                if bytes.len() < 32 {
+                    bail!("Event data too short for UefiImageLoadEvent");
+                }
+
+                let image_location_in_memory = u64::from_le_bytes(bytes[0..8].try_into()?);
+                let image_length_in_memory = u64::from_le_bytes(bytes[8..16].try_into()?);
+                let image_link_time_address = u64::from_le_bytes(bytes[16..24].try_into()?);
+                let length_of_device_path = u64::from_le_bytes(bytes[24..32].try_into()?);
+
+                if bytes.len() < 32 + length_of_device_path as usize {
+                    bail!("Event data too short for device path");
+                }
+
+                let device_path = bytes[32..32 + length_of_device_path as usize].to_vec();
+
+                Ok(Self {
+                    image_location_in_memory,
+                    image_length_in_memory,
+                    image_link_time_address,
+                    length_of_device_path,
+                    device_path,
+                })
+            }
+        }
+
+        // Shim and Grub measurement (Authenticode)
+        // Parse EV_EFI_BOOT_SERVICES_APPLICATION for shim and grub measurement (Authenticode)
+        if event.event_type == "EV_EFI_BOOT_SERVICES_APPLICATION" {
+            let event_data_bytes = hex::decode(&event_data).map_err(|e| {
+                anyhow!("Failed to hex decode event data of EV_EFI_BOOT_SERVICES_APPLICATION: {e}")
+            })?;
+            let image_load_event = UefiImageLoadEvent::from_bytes(&event_data_bytes)
+                .map_err(|e| anyhow!("Failed to parse UefiImageLoadEvent: {e}"))?;
+            let device_path_str =
+                String::from_utf8_lossy(&image_load_event.device_path).to_lowercase();
+
+            let device_path_str = device_path_str
+                .chars()
+                .filter(|c| c.is_ascii() && !c.is_ascii_control())
+                .collect::<String>();
+
+            if device_path_str.contains("shim") {
+                ccel_map.insert(
+                    format!("measurement.shim.{}", event_digest_algorithm),
+                    serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
+                );
+            }
+            if device_path_str.contains("grub") {
+                ccel_map.insert(
+                    format!("measurement.grub.{}", event_digest_algorithm),
+                    serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
+                );
+            }
+        }
+
+        // Kernel blob measurement
+        // Check if event_desc contains "Kernel" or starts with "/boot/vmlinuz"
+        if event_data.contains("Kernel") || event_data.starts_with("/boot/vmlinuz") {
+            let kernel_claim_key = format!("measurement.kernel.{}", event_digest_algorithm);
             ccel_map.insert(
-                "kernel".to_string(),
-                serde_json::Value::String(kernel_digest),
+                kernel_claim_key,
+                serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
             );
         }
-        _ => {
-            warn!("No td-shim kernel hash in CCEL");
-        }
-    }
 
-    // Digest of kernel using TDVF
-    match ccel.query_digest(MeasuredEntity::TdvfKernel) {
-        Some(kernel_digest) => {
+        // Kernel command line measurement
+        // Check if event_desc starts with "grub_cmd linux", "kernel_cmdline", or "grub_kernel_cmdline"
+        if event_data.starts_with("grub_cmd linux")
+            || event_data.starts_with("kernel_cmdline")
+            || event_data.starts_with("grub_kernel_cmdline")
+        {
+            let kernel_cmdline_claim_key =
+                format!("measurement.kernel_cmdline.{}", event_digest_algorithm);
             ccel_map.insert(
-                "kernel".to_string(),
-                serde_json::Value::String(kernel_digest),
+                kernel_cmdline_claim_key,
+                serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
+            );
+            ccel_map.insert(
+                "kernel_cmdline".to_string(),
+                serde_json::Value::String(event_data.clone()),
             );
         }
-        _ => {
-            warn!("No tdvf kernel hash in CCEL");
-        }
-    }
 
-    // Map of Kernel Parameters
-    match ccel.query_event_data(MeasuredEntity::TdShimKernelParams) {
-        Some(config_info) => {
-            let td_shim_platform_config_info =
-                TdShimPlatformConfigInfo::try_from(&config_info[..])?;
-
-            let parameters = parse_kernel_parameters(td_shim_platform_config_info.data)?;
+        // Initrd blob measurement
+        // Check if event_desc contains "Initrd" or starts with "/boot/initramfs"
+        if event_data.contains("Initrd") || event_data.starts_with("/boot/initramfs") {
+            let initrd_claim_key = format!("measurement.initrd.{}", event_digest_algorithm);
             ccel_map.insert(
-                "kernel_parameters".to_string(),
-                serde_json::Value::Object(parameters),
+                initrd_claim_key,
+                serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
             );
-        }
-        _ => {
-            warn!("No kernel parameters in CCEL");
         }
     }
 
@@ -286,6 +355,7 @@ impl<'a> TryFrom<&'a [u8]> for TdShimPlatformConfigInfo<'a> {
     }
 }
 
+#[allow(dead_code)]
 fn parse_kernel_parameters(kernel_parameters: &[u8]) -> Result<Map<String, Value>> {
     let parameters_str = String::from_utf8(kernel_parameters.to_vec())?;
     debug!("kernel parameters: {parameters_str}");
