@@ -14,7 +14,9 @@ help:
 	@echo "用法:"
 	@echo "  make          # 默认执行编译"
 	@echo "  make build    # 编译所有组件"
+	@echo "  make build-frontend # 编译前端组件"
 	@echo "  make install [BUILDROOT=path] [PREFIX=path] [CONFIG_DIR=path]"
+	@echo "  make install-frontend [BUILDROOT=path] [PREFIX=path] [CONFIG_DIR=path]"
 	@echo ""
 	@echo "参数说明:"
 	@echo "  BUILDROOT: 构建根目录 (默认为空)"
@@ -25,6 +27,7 @@ help:
 	@echo "  make install"
 	@echo "  make install BUILDROOT=/tmp/build PREFIX=/usr/local"
 	@echo "  make install CONFIG_DIR=/opt/trustee/config"
+	@echo "  make install-frontend  # 安装前端组件"
 
 # 编译目标
 build:
@@ -41,6 +44,14 @@ build:
 	cargo build --bin rvps-tool --release
 	@echo "编译 trustee-gateway..."
 	@echo "编译完成"
+
+# 编译前端目标
+build-frontend:
+	@echo "开始编译前端..."
+	cd ../frontend && \
+	npm ci --production=false && \
+	npm run build
+	@echo "前端编译完成"
 
 # 安装目标
 install:
@@ -79,4 +90,30 @@ install:
 	cp intel-deps/lib64/lib* $(BUILDROOT)$(PREFIX)/lib64/
 	cp intel-deps/etc/sgx_* $(BUILDROOT)/etc/
 
-.PHONY: help install build 
+# 安装前端目标
+install-frontend:
+	@echo "安装前端配置:"
+	@echo "  BUILDROOT: $(if $(BUILDROOT),$(BUILDROOT),'(空)')"
+	@echo "  PREFIX: $(PREFIX)"
+	@echo "  CONFIG_DIR: $(CONFIG_DIR)"
+	@echo ""
+	
+	# 安装前端静态文件
+	install -d -p $(BUILDROOT)/usr/share/nginx/html/trustee
+	cp -r ../frontend/dist/* $(BUILDROOT)/usr/share/nginx/html/trustee/
+	
+	# 安装 nginx 配置文件
+	install -d -p $(BUILDROOT)/etc/nginx/conf.d
+	install -m 644 ../frontend/nginx.conf $(BUILDROOT)/etc/nginx/conf.d/trustee-frontend.conf
+	
+	# 安装前端 systemd 服务文件
+	install -d -p $(BUILDROOT)$(PREFIX)/lib/systemd/system
+	install -m 644 system/trustee-frontend.service $(BUILDROOT)$(PREFIX)/lib/systemd/system/trustee-frontend.service
+	
+	# 安装前端启动脚本
+	install -d -p $(BUILDROOT)$(PREFIX)/bin
+	install -m 755 ../frontend/trustee-frontend-start.sh $(BUILDROOT)$(PREFIX)/bin/trustee-frontend-start
+	
+	@echo "前端安装完成"
+
+.PHONY: help install build build-frontend install-frontend 

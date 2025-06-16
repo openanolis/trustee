@@ -1,0 +1,15 @@
+[Unit]
+Description=Trustee Frontend Service
+Documentation=https://github.com/openanolis/trustee
+After=network.target trustee-gateway.service
+Wants=trustee-gateway.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/trustee-frontend-start
+ExecReload=/bin/systemctl reload nginx
+ExecStop=/bin/systemctl stop nginx
+
+[Install]
+WantedBy=multi-user.target 
