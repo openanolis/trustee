@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = [ "all-verifier" ]
-all-verifier = [ "tdx-verifier", "sgx-verifier", "snp-verifier", "cca-verifier", "se-verifier", "system-verifier", "tpm-verifier" ]
+all-verifier = [ "tdx-verifier", "sgx-verifier", "snp-verifier", "csv-verifier", "system-verifier", "tpm-verifier" ]
 tdx-verifier = [ "scroll", "intel-tee-quote-verification-rs" ]
 sgx-verifier = [ "scroll", "intel-tee-quote-verification-rs" ]
 az-snp-vtpm-verifier = [ "az-snp-vtpm", "sev", "snp-verifier" ]

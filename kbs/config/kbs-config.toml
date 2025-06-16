@@ -1,5 +1,6 @@
 [http_server]
 insecure_http = true
+sockets = ["0.0.0.0:8080"]
 
 [attestation_token]
 insecure_key = true
