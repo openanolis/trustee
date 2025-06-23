@@ -5716,6 +5716,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "quick-xml"
+version = "0.36.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7649a7b4df05aed9ea7ec6f628c67c9953a43869b8bc50929569b2999d443fe"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8125,10 +8134,12 @@ dependencies = [
  "bincode",
  "byteorder",
  "cfg-if",
+ "chrono",
  "codicon",
  "csv-rs",
  "ear 0.1.2",
  "eventlog-rs",
+ "futures",
  "hex",
  "intel-tee-quote-verification-rs",
  "jsonwebkey",
@@ -8136,6 +8147,9 @@ dependencies = [
  "kbs-types",
  "log",
  "openssl",
+ "quick-xml",
+ "regex",
+ "reqwest 0.12.12",
  "rstest",
  "s390_pv",
  "scroll 0.11.0",
@@ -8152,8 +8166,10 @@ dependencies = [
  "tokio",
  "tonic-build",
  "tss-esapi",
+ "uuid",
  "veraison-apiclient",
  "x509-parser",
+ "xml-rs",
 ]
 
 [[package]]
@@ -8745,6 +8761,12 @@ dependencies = [
  "libc",
  "rustix 1.0.5",
 ]
+
+[[package]]
+name = "xml-rs"
+version = "0.8.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a62ce76d9b56901b19a74f19431b0d8b3bc7ca4ad685a746dfd78ca8f4fc6bda"
 
 [[package]]
 name = "xxhash-rust"
