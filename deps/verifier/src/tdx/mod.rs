@@ -16,7 +16,10 @@ use serde_json::Value;
 
 pub(crate) mod claims;
 pub mod eventlog;
+pub(crate) mod gpu;
 pub(crate) mod quote;
+
+use crate::tdx::gpu::GpuEvidenceList;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TdxEvidence {
@@ -27,10 +30,8 @@ struct TdxEvidence {
     quote: String,
     // Eventlog of Attestation Agent
     aa_eventlog: Option<String>,
-    // GPU Attestation Claims
-    gpu_attestation_token: Option<String>,
-    // GPU Switch Attestation Claims
-    gpu_switch_attestation_token: Option<String>,
+    // GPU Evidence
+    gpu_evidence: Option<GpuEvidenceList>,
 }
 
 #[derive(Debug, Default)]
@@ -179,42 +180,51 @@ async fn verify_evidence(
         };
     }
 
-    if let Some(gpu_attestation_token) = evidence.gpu_attestation_token {
-        let gpu_attestation_claims: serde_json::Value =
-            serde_json::from_str(&gpu_attestation_token)?;
-        let mut merged_claims = match (tdx_attestation_claims.clone(), gpu_attestation_claims) {
-            (Value::Object(mut tdx), Value::Object(gpu)) => {
+    if let Some(gpu_evidence) = evidence.gpu_evidence {
+        let mut gpu_claims = serde_json::Map::new();
+
+        // Create tasks for parallel GPU processing
+        let mut tasks = Vec::new();
+        for (index, single_gpu_evidence) in gpu_evidence.evidence_list.iter().enumerate() {
+            let gpu_evidence = single_gpu_evidence.clone();
+            let task = tokio::spawn(async move {
+                let result = gpu::GpuEvidence::evaluate(&gpu_evidence).await;
+                (index, result)
+            });
+            tasks.push(task);
+        }
+
+        // Wait for all tasks to complete
+        for task in tasks {
+            match task.await {
+                std::result::Result::Ok((index, std::result::Result::Ok(gpu_evidence_claims))) => {
+                    gpu_claims.insert(format!("nvidia_gpu.{}", index), gpu_evidence_claims);
+                }
+                std::result::Result::Ok((index, std::result::Result::Err(e))) => {
+                    warn!("GPU {} evaluation failed: {}", index, e);
+                    // Continue with other GPUs
+                }
+                std::result::Result::Err(e) => {
+                    warn!("GPU task failed: {}", e);
+                }
+            }
+        }
+
+        tdx_attestation_claims = match (tdx_attestation_claims.clone(), gpu_claims) {
+            (Value::Object(mut tdx), gpu) => {
                 tdx.extend(gpu);
                 Value::Object(tdx)
             }
             _ => {
-                warn!("Merge TDX and GPU evidence claim failed");
+                warn!("Merge TDX and GPU evidence claims failed");
                 tdx_attestation_claims
             }
         };
-
-        if let Some(gpu_switch_attestation_token) = evidence.gpu_switch_attestation_token {
-            let gpu_switch_attestation_claims: serde_json::Value =
-                serde_json::from_str(&gpu_switch_attestation_token)?;
-            merged_claims = match (merged_claims.clone(), gpu_switch_attestation_claims) {
-                (Value::Object(mut merged), Value::Object(nvswitch)) => {
-                    merged.extend(nvswitch);
-                    Value::Object(merged)
-                }
-                _ => {
-                    warn!("Merge GPU Switch evidence claim failed");
-                    merged_claims
-                }
-            };
-        } else {
-            warn!("GPU Switch Attestation Token is null.");
-        }
-
-        Ok(merged_claims as TeeEvidenceParsedClaim)
     } else {
-        warn!("GPU Attestation Token is null, skipping GPU CC validation.");
-        Ok(tdx_attestation_claims as TeeEvidenceParsedClaim)
+        warn!("GPU Attestation Evidence is null, skipping GPU Evidence validation.");
     }
+
+    Ok(tdx_attestation_claims as TeeEvidenceParsedClaim)
 }
 
 #[cfg(test)]
