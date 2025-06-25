@@ -108,8 +108,49 @@ const AuditPage: React.FC = () => {
   const handleShowDetail = (content: string, title: string) => {
     try {
       // 尝试解析和格式化JSON
-      const formattedContent = JSON.stringify(JSON.parse(content), null, 2);
-      setDetailContent(formattedContent);
+      const parsedContent = JSON.parse(content);
+      
+      // 通用处理：检测并展开任何包含JSON字符串的字段
+      if (parsedContent && typeof parsedContent === 'object') {
+        // 递归处理对象，查找并展开任何包含JSON的字符串字段
+        const processObject = (obj: any): any => {
+          if (Array.isArray(obj)) {
+            return obj.map(item => processObject(item));
+          } else if (obj && typeof obj === 'object') {
+            const processed: any = {};
+            for (const [key, value] of Object.entries(obj)) {
+              if (typeof value === 'string') {
+                try {
+                  // 尝试解析字符串值是否为JSON
+                  // 简单检查：字符串应该以 { 或 [ 开头，以 } 或 ] 结尾
+                  const trimmed = value.trim();
+                  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+                      (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+                    // 尝试解析为JSON
+                    const parsed = JSON.parse(trimmed);
+                    // 递归处理解析后的对象
+                    processed[key] = processObject(parsed);
+                  } else {
+                    processed[key] = value;
+                  }
+                } catch (e) {
+                  // 如果解析失败，保持原值
+                  processed[key] = value;
+                }
+              } else {
+                processed[key] = processObject(value);
+              }
+            }
+            return processed;
+          }
+          return obj;
+        };
+        
+        const processedContent = processObject(parsedContent);
+        setDetailContent(JSON.stringify(processedContent, null, 2));
+      } else {
+        setDetailContent(JSON.stringify(parsedContent, null, 2));
+      }
     } catch (e) {
       // 如果不是有效的JSON，则显示原始内容
       setDetailContent(content);
