@@ -2,6 +2,7 @@
 
 # Create log directory
 mkdir -p /opt/trustee/logs
+cp -r /etc/trustee.bak/* /etc/trustee/
 
 # Define log rotation function
 setup_log_rotation() {
