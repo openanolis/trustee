@@ -17,6 +17,8 @@ use std::collections::HashMap;
 use tss_esapi::structures::{Attest, AttestInfo};
 use tss_esapi::traits::UnMarshall;
 
+const TPM_REPORT_DATA_SIZE: usize = 32;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TpmEvidence {
     // PEM format of EK certificate
@@ -302,7 +304,20 @@ impl TpmQuote {
             .extra_data()
             .value()
             .to_vec();
-        if expected_report_data.to_vec()[..] != quote_data[..expected_report_data.to_vec().len()] {
+
+        // If expected_report_data or quote_data is larger than TPM_REPORT_DATA_SIZE, truncate it to TPM_REPORT_DATA_SIZE
+        let expected_report_data = if expected_report_data.len() > TPM_REPORT_DATA_SIZE {
+            &expected_report_data[..TPM_REPORT_DATA_SIZE]
+        } else {
+            expected_report_data
+        };
+        let quote_data = if quote_data.len() > TPM_REPORT_DATA_SIZE {
+            &quote_data[..TPM_REPORT_DATA_SIZE]
+        } else {
+            &quote_data
+        };
+
+        if expected_report_data != &quote_data[..expected_report_data.len()] {
             debug!(
                 "{}",
                 format!(
