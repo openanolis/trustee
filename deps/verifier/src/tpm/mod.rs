@@ -6,7 +6,7 @@
 use super::*;
 use async_trait::async_trait;
 use base64::Engine;
-use eventlog_rs::Eventlog;
+use eventlog_rs::{BiosEventlog, Eventlog};
 use log::info;
 use openssl::hash::MessageDigest;
 use openssl::pkey::PKey;
@@ -73,6 +73,42 @@ impl Verifier for TpmVerifier {
     }
 }
 
+#[allow(dead_code)]
+struct UefiImageLoadEvent {
+    image_location_in_memory: u64,
+    image_length_in_memory: u64,
+    image_link_time_address: u64,
+    length_of_device_path: u64,
+    device_path: Vec<u8>,
+}
+
+impl UefiImageLoadEvent {
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 32 {
+            bail!("Event data too short for UefiImageLoadEvent");
+        }
+
+        let image_location_in_memory = u64::from_le_bytes(bytes[0..8].try_into()?);
+        let image_length_in_memory = u64::from_le_bytes(bytes[8..16].try_into()?);
+        let image_link_time_address = u64::from_le_bytes(bytes[16..24].try_into()?);
+        let length_of_device_path = u64::from_le_bytes(bytes[24..32].try_into()?);
+
+        if bytes.len() < 32 + length_of_device_path as usize {
+            bail!("Event data too short for device path");
+        }
+
+        let device_path = bytes[32..32 + length_of_device_path as usize].to_vec();
+
+        Ok(Self {
+            image_location_in_memory,
+            image_length_in_memory,
+            image_link_time_address,
+            length_of_device_path,
+            device_path,
+        })
+    }
+}
+
 fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClaim> {
     let mut parsed_claims = Map::new();
     let engine = base64::engine::general_purpose::STANDARD;
@@ -128,124 +164,53 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
     // Parse TCG Eventlogs
     if let Some(b64_eventlog) = tpm_evidence.eventlog {
         let eventlog_bytes = engine.decode(b64_eventlog)?;
-        let eventlog = Eventlog::try_from(eventlog_bytes)
-            .map_err(|e| anyhow!("parse TCG Eventlog failed: {e}"))?;
 
-        for event in eventlog.log {
-            let event_data = match String::from_utf8(event.event_desc.clone()) {
-                Result::Ok(d) => d,
-                Result::Err(_) => hex::encode(event.event_desc),
-            };
+        if let Result::Ok(eventlog) = Eventlog::try_from(eventlog_bytes.clone()) {
+            log::info!("TCG Eventlog parsed successfully");
+            // Process TCG format event log
+            for event in eventlog.log {
+                let event_desc = &event.event_desc;
+                let event_data = match String::from_utf8(event_desc.clone()) {
+                    Result::Ok(d) => d,
+                    Result::Err(_) => hex::encode(event_desc),
+                };
 
-            let event_digest_algorithm = event.digests[0].algorithm.trim_start_matches("TPM_ALG_");
+                let event_digest_algorithm =
+                    event.digests[0].algorithm.trim_start_matches("TPM_ALG_");
+                let event_digest = &event.digests[0].digest;
 
-            #[allow(dead_code)]
-            struct UefiImageLoadEvent {
-                image_location_in_memory: u64,
-                image_length_in_memory: u64,
-                image_link_time_address: u64,
-                length_of_device_path: u64,
-                device_path: Vec<u8>,
+                parse_measurements_from_event(
+                    &mut parsed_claims,
+                    event.event_type.as_str(),
+                    &event_data,
+                    event_digest_algorithm,
+                    event_digest,
+                )?;
             }
+        } else if let Result::Ok(eventlog) = BiosEventlog::try_from(eventlog_bytes.clone()) {
+            log::info!("BIOS Eventlog parsed successfully");
+            // Process BIOS format event log
+            for event in eventlog.log {
+                let event_desc = &event.event_data;
+                let event_data = match String::from_utf8(event_desc.clone()) {
+                    Result::Ok(d) => d,
+                    Result::Err(_) => hex::encode(event_desc),
+                };
 
-            impl UefiImageLoadEvent {
-                fn from_bytes(bytes: &[u8]) -> Result<Self> {
-                    if bytes.len() < 32 {
-                        bail!("Event data too short for UefiImageLoadEvent");
-                    }
+                // If it's BIOS Eventlog, use SHA1 as the digest algorithm
+                let event_digest_algorithm = "SHA1";
+                let event_digest = &event.digest;
 
-                    let image_location_in_memory = u64::from_le_bytes(bytes[0..8].try_into()?);
-                    let image_length_in_memory = u64::from_le_bytes(bytes[8..16].try_into()?);
-                    let image_link_time_address = u64::from_le_bytes(bytes[16..24].try_into()?);
-                    let length_of_device_path = u64::from_le_bytes(bytes[24..32].try_into()?);
-
-                    if bytes.len() < 32 + length_of_device_path as usize {
-                        bail!("Event data too short for device path");
-                    }
-
-                    let device_path = bytes[32..32 + length_of_device_path as usize].to_vec();
-
-                    Ok(Self {
-                        image_location_in_memory,
-                        image_length_in_memory,
-                        image_link_time_address,
-                        length_of_device_path,
-                        device_path,
-                    })
-                }
+                parse_measurements_from_event(
+                    &mut parsed_claims,
+                    event.event_type.as_str(),
+                    &event_data,
+                    event_digest_algorithm,
+                    event_digest,
+                )?;
             }
-
-            // Shim and Grub measurement (Authenticode)
-            // Parse EV_EFI_BOOT_SERVICES_APPLICATION for shim and grub measurement (Authenticode)
-            if event.event_type == "EV_EFI_BOOT_SERVICES_APPLICATION" {
-                let event_data_bytes = hex::decode(&event_data).map_err(|e| {
-                    anyhow!(
-                        "Failed to hex decode event data of EV_EFI_BOOT_SERVICES_APPLICATION: {e}"
-                    )
-                })?;
-                let image_load_event = UefiImageLoadEvent::from_bytes(&event_data_bytes)
-                    .map_err(|e| anyhow!("Failed to parse UefiImageLoadEvent: {e}"))?;
-                let device_path_str =
-                    String::from_utf8_lossy(&image_load_event.device_path).to_lowercase();
-
-                let device_path_str = device_path_str
-                    .chars()
-                    .filter(|c| c.is_ascii() && !c.is_ascii_control())
-                    .collect::<String>();
-
-                println!("device_path_str: {}", device_path_str);
-
-                if device_path_str.contains("shim") {
-                    parsed_claims.insert(
-                        format!("measurement.shim.{}", event_digest_algorithm),
-                        serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
-                    );
-                }
-                if device_path_str.contains("grub") {
-                    parsed_claims.insert(
-                        format!("measurement.grub.{}", event_digest_algorithm),
-                        serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
-                    );
-                }
-            }
-
-            // Kernel blob measurement
-            // Check if event_desc contains "Kernel" or starts with "/boot/vmlinuz"
-            if event_data.contains("Kernel") || event_data.starts_with("/boot/vmlinuz") {
-                let kernel_claim_key = format!("measurement.kernel.{}", event_digest_algorithm);
-                parsed_claims.insert(
-                    kernel_claim_key,
-                    serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
-                );
-            }
-
-            // Kernel command line measurement
-            // Check if event_desc starts with "grub_cmd linux", "kernel_cmdline", or "grub_kernel_cmdline"
-            if event_data.starts_with("grub_cmd linux")
-                || event_data.starts_with("kernel_cmdline")
-                || event_data.starts_with("grub_kernel_cmdline")
-            {
-                let kernel_cmdline_claim_key =
-                    format!("measurement.kernel_cmdline.{}", event_digest_algorithm);
-                parsed_claims.insert(
-                    kernel_cmdline_claim_key,
-                    serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
-                );
-                parsed_claims.insert(
-                    "kernel_cmdline".to_string(),
-                    serde_json::Value::String(event_data.clone()),
-                );
-            }
-
-            // Initrd blob measurement
-            // Check if event_desc contains "Initrd" or starts with "/boot/initramfs"
-            if event_data.contains("Initrd") || event_data.starts_with("/boot/initramfs") {
-                let initrd_claim_key = format!("measurement.initrd.{}", event_digest_algorithm);
-                parsed_claims.insert(
-                    initrd_claim_key,
-                    serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
-                );
-            }
+        } else {
+            return Err(anyhow!("Failed to parse eventlog"));
         }
     }
 
@@ -280,6 +245,102 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
     }
 
     Ok(Value::Object(parsed_claims) as TeeEvidenceParsedClaim)
+}
+
+// Parse EV_EFI_BOOT_SERVICES_APPLICATION events
+fn parse_boot_services_event(
+    parsed_claims: &mut Map<String, Value>,
+    event_data: &str,
+    event_digest_algorithm: &str,
+    event_digest: &[u8],
+) -> Result<()> {
+    let event_data_bytes = hex::decode(event_data).map_err(|e| {
+        anyhow!("Failed to hex decode event data of EV_EFI_BOOT_SERVICES_APPLICATION: {e}")
+    })?;
+
+    let image_load_event = UefiImageLoadEvent::from_bytes(&event_data_bytes)
+        .map_err(|e| anyhow!("Failed to parse UefiImageLoadEvent: {e}"))?;
+
+    let device_path_str = String::from_utf8_lossy(&image_load_event.device_path).to_lowercase();
+
+    let device_path_str = device_path_str
+        .chars()
+        .filter(|c| c.is_ascii() && !c.is_ascii_control())
+        .collect::<String>();
+
+    println!("device_path_str: {}", device_path_str);
+
+    if device_path_str.contains("shim") {
+        parsed_claims.insert(
+            format!("measurement.shim.{}", event_digest_algorithm),
+            serde_json::Value::String(hex::encode(event_digest)),
+        );
+    }
+    if device_path_str.contains("grub") {
+        parsed_claims.insert(
+            format!("measurement.grub.{}", event_digest_algorithm),
+            serde_json::Value::String(hex::encode(event_digest)),
+        );
+    }
+
+    Ok(())
+}
+
+fn parse_measurements_from_event(
+    parsed_claims: &mut Map<String, Value>,
+    event_type: &str,
+    event_data: &str,
+    event_digest_algorithm: &str,
+    event_digest: &[u8],
+) -> Result<()> {
+    if event_type == "EV_EFI_BOOT_SERVICES_APPLICATION" {
+        parse_boot_services_event(
+            parsed_claims,
+            event_data,
+            event_digest_algorithm,
+            event_digest,
+        )?;
+    }
+
+    // Kernel blob measurement
+    // Check if event_desc contains "Kernel" or starts with "/boot/vmlinuz"
+    if event_data.contains("Kernel") || event_data.starts_with("/boot/vmlinuz") {
+        let kernel_claim_key = format!("measurement.kernel.{}", event_digest_algorithm);
+        parsed_claims.insert(
+            kernel_claim_key,
+            serde_json::Value::String(hex::encode(event_digest)),
+        );
+    }
+
+    // Kernel command line measurement
+    // Check if event_desc starts with "grub_cmd linux", "kernel_cmdline", or "grub_kernel_cmdline"
+    if event_data.starts_with("grub_cmd linux")
+        || event_data.starts_with("kernel_cmdline")
+        || event_data.starts_with("grub_kernel_cmdline")
+    {
+        let kernel_cmdline_claim_key =
+            format!("measurement.kernel_cmdline.{}", event_digest_algorithm);
+        parsed_claims.insert(
+            kernel_cmdline_claim_key,
+            serde_json::Value::String(hex::encode(event_digest)),
+        );
+        parsed_claims.insert(
+            "kernel_cmdline".to_string(),
+            serde_json::Value::String(event_data.to_string()),
+        );
+    }
+
+    // Initrd blob measurement
+    // Check if event_desc contains "Initrd" or starts with "/boot/initramfs"
+    if event_data.contains("Initrd") || event_data.starts_with("/boot/initramfs") {
+        let initrd_claim_key = format!("measurement.initrd.{}", event_digest_algorithm);
+        parsed_claims.insert(
+            initrd_claim_key,
+            serde_json::Value::String(hex::encode(event_digest)),
+        );
+    }
+
+    Ok(())
 }
 
 impl TpmQuote {
