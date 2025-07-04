@@ -72,6 +72,7 @@ fn to_tee(tee: &str) -> anyhow::Result<Tee> {
         "aztdxvtpm" => Tee::AzTdxVtpm,
         "system" => Tee::System,
         "se" => Tee::Se,
+        "tpm" => Tee::Tpm,
         other => bail!("tee `{other} not supported`"),
     };
 
