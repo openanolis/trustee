@@ -30,7 +30,7 @@ images:
       path: Dockerfile.trustee-gateway
       scene:
         args: []
-        tags: [[1.1.4-alpha, latest]]
+        tags: [[1.4.4-alpha, latest]]
         registry: [*ACR_PROD]
       # 测试配置
       test_config: [*WORKSPACE, *PROJECT, *TEST_SUITE, *TEST_CONF, *TEST_CASE, *CLOUD_SERVER_TAG[0], ''] 
