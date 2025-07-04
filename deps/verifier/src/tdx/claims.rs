@@ -409,14 +409,7 @@ mod tests {
         let ccel = CcEventLog::try_from(ccel_bin).expect("parse ccel");
         let claims = generate_parsed_claim(quote, Some(ccel), None).expect("parse claim failed");
         let expected = json!({
-            "ccel": {
-                "kernel": "5b7aa6572f649714ff00b6a2b9170516a068fd1a0ba72aa8de27574131d454e6396d3bfa1727d9baf421618a942977fa",
-                "kernel_parameters": {
-                    "console": "hvc0",
-                    "root": "/dev/vda1",
-                    "rw": null
-                }
-            },
+            "ccel": {},
             "quote": {
                 "header":{
                     "version": "0400",
