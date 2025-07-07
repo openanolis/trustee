@@ -88,7 +88,7 @@ impl GpuEvidence {
 
             // Calculate SHA384 hash of all measurements combined
             let mut hasher = Sha384::new();
-            for (_, measurement) in &attestation_report.measurements {
+            for measurement in attestation_report.measurements.values() {
                 hasher.update(hex::decode(measurement)?);
             }
             let hash_result = hasher.finalize();

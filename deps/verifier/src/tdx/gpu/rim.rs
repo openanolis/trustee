@@ -265,6 +265,9 @@ impl RimParser {
             size: 0,
         };
 
+        // 在循环外部定义正则表达式
+        let hash_regex = Regex::new(r"Hash(\d+)$").unwrap();
+
         // Parse basic attributes
         for attr in element.attributes() {
             let attr = attr.map_err(|e| anyhow!("Attribute parsing error: {}", e))?;
@@ -300,8 +303,7 @@ impl RimParser {
                 _ => {
                     // Check if it's a hash value attribute
                     let key_str = String::from_utf8_lossy(attr.key.as_ref());
-                    let hash_regex = Regex::new(r"Hash(\d+)$").unwrap();
-
+                    
                     if let Some(caps) = hash_regex.captures(&key_str) {
                         let hash_index: usize = caps[1]
                             .parse()
