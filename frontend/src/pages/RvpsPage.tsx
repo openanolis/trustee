@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Tabs, Table, Button, Form, Input, Typography, message } from 'antd';
+import { Card, Tabs, Table, Button, Form, Input, Typography, message, Popconfirm } from 'antd';
+import { DeleteOutlined } from '@ant-design/icons';
 import { rvpsApi } from '@/api';
 import type { RvpsMessage } from '@/types/api';
 import { Base64 } from 'js-base64';
@@ -74,6 +75,17 @@ const RvpsPage: React.FC = () => {
     }
   };
 
+  const handleDelete = async (name: string) => {
+    try {
+      await rvpsApi.deleteReferenceValue(name);
+      message.success('参考值删除成功');
+      fetchReferenceValues();
+    } catch (error) {
+      message.error('参考值删除失败');
+      console.error('删除参考值失败:', error);
+    }
+  };
+
   useEffect(() => {
     fetchReferenceValues();
   }, []);
@@ -90,12 +102,35 @@ const RvpsPage: React.FC = () => {
       title: '值',
       dataIndex: 'value',
       key: 'value',
-      width: '70%',
+      width: '50%',
       ellipsis: true,
       render: (text: any) => (
         <Text style={{ wordBreak: 'break-all' }}>
           {typeof text === 'object' ? JSON.stringify(text) : text}
         </Text>
+      ),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: '20%',
+      render: (_, record) => (
+        <Popconfirm
+          title="确认删除"
+          description={`确定要删除参考值 "${record.key}" 吗？`}
+          onConfirm={() => handleDelete(record.key)}
+          okText="确定"
+          cancelText="取消"
+        >
+          <Button 
+            type="link" 
+            danger 
+            icon={<DeleteOutlined />}
+            size="small"
+          >
+            删除
+          </Button>
+        </Popconfirm>
       ),
     },
   ];

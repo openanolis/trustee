@@ -57,4 +57,7 @@ pub trait ReferenceValueStorage {
 
     // Retrieve reference values
     async fn get_values(&self) -> Result<Vec<ReferenceValue>>;
+
+    // Delete reference value by name. Return the deleted value if exists
+    async fn delete(&self, name: &str) -> Result<Option<ReferenceValue>>;
 }

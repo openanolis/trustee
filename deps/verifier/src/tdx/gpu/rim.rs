@@ -303,7 +303,7 @@ impl RimParser {
                 _ => {
                     // Check if it's a hash value attribute
                     let key_str = String::from_utf8_lossy(attr.key.as_ref());
-                    
+
                     if let Some(caps) = hash_regex.captures(&key_str) {
                         let hash_index: usize = caps[1]
                             .parse()

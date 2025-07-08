@@ -41,6 +41,10 @@ func (h *RVPSHandler) HandleRVPSRequest(c *gin.Context) {
 		case c.Request.Method == "POST" && path == "register":
 			h.handleRegisterReferenceValue(c)
 			return
+		case c.Request.Method == "DELETE" && strings.HasPrefix(path, "delete/"):
+			name := strings.TrimPrefix(path, "delete/")
+			h.handleDeleteReferenceValue(c, name)
+			return
 		}
 	}
 
@@ -89,6 +93,27 @@ func (h *RVPSHandler) handleRegisterReferenceValue(c *gin.Context) {
 	err = h.client.RegisterReferenceValue(ctx, message.Message)
 	if err != nil {
 		logrus.Errorf("Failed to register reference value: %v", err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func (h *RVPSHandler) handleDeleteReferenceValue(c *gin.Context, name string) {
+	if name == "" {
+		logrus.Errorf("Reference value name is empty")
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Reference value name is required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	logrus.Infof("Delete reference value: %s", name)
+	err := h.client.DeleteReferenceValue(ctx, name)
+	if err != nil {
+		logrus.Errorf("Failed to delete reference value: %v", err)
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

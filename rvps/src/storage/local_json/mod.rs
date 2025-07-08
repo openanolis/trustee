@@ -89,4 +89,19 @@ impl ReferenceValueStorage for LocalJson {
         let rvs: Vec<ReferenceValue> = serde_json::from_slice(&file)?;
         Ok(rvs)
     }
+
+    async fn delete(&self, name: &str) -> Result<Option<ReferenceValue>> {
+        let _ = self.lock.write().await;
+        let file = tokio::fs::read(&self.file_path).await?;
+        let mut rvs: Vec<ReferenceValue> = serde_json::from_slice(&file)?;
+
+        let mut deleted_rv = None;
+        if let Some(pos) = rvs.iter().position(|rv| rv.name == name) {
+            deleted_rv = Some(rvs.remove(pos));
+        }
+
+        let contents = serde_json::to_vec(&rvs)?;
+        tokio::fs::write(&self.file_path, contents).await?;
+        Ok(deleted_rv)
+    }
 }

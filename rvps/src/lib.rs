@@ -120,4 +120,20 @@ impl Rvps {
         }
         Ok(rv_map)
     }
+
+    pub async fn delete_reference_value(&mut self, name: &str) -> Result<bool> {
+        match self.storage.delete(name).await? {
+            Some(deleted_rv) => {
+                info!(
+                    "Reference value {} deleted successfully.",
+                    deleted_rv.name()
+                );
+                Ok(true)
+            }
+            None => {
+                warn!("Reference value {} not found for deletion.", name);
+                Ok(false)
+            }
+        }
+    }
 }

@@ -8,7 +8,7 @@ use anyhow::*;
 
 use crate::rvps_api::reference::{
     reference_value_provider_service_client::ReferenceValueProviderServiceClient,
-    ReferenceValueQueryRequest, ReferenceValueRegisterRequest,
+    ReferenceValueDeleteRequest, ReferenceValueQueryRequest, ReferenceValueRegisterRequest,
 };
 
 pub async fn register(address: String, message: String) -> Result<()> {
@@ -31,4 +31,13 @@ pub async fn query(address: String) -> Result<String> {
         .reference_value_results;
 
     Ok(rvs)
+}
+
+pub async fn delete(address: String, name: String) -> Result<()> {
+    let mut client = ReferenceValueProviderServiceClient::connect(address).await?;
+    let req = tonic::Request::new(ReferenceValueDeleteRequest { name });
+
+    client.delete_reference_value(req).await?;
+
+    Ok(())
 }

@@ -27,6 +27,12 @@ async fn query(addr: &str) -> Result<()> {
     Ok(())
 }
 
+async fn delete(addr: &str, name: &str) -> Result<()> {
+    client::delete(addr.to_string(), name.to_string()).await?;
+    info!("Delete reference value succeeded.");
+    Ok(())
+}
+
 /// RVPS command-line arguments.
 #[derive(Parser)]
 #[command(name = "rvps-tool")]
@@ -38,6 +44,9 @@ enum Cli {
 
     /// Query reference values
     Query(QueryArgs),
+
+    /// Delete reference value
+    Delete(DeleteArgs),
 }
 
 #[derive(Args)]
@@ -60,6 +69,18 @@ struct QueryArgs {
     addr: String,
 }
 
+#[derive(Args)]
+#[command(author, version, about, long_about = None)]
+struct DeleteArgs {
+    /// The address of target RVPS
+    #[arg(short, long, default_value = DEFAULT_ADDR)]
+    addr: String,
+
+    /// The name of the reference value to delete
+    #[arg(short, long)]
+    name: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -78,5 +99,6 @@ async fn main() -> Result<()> {
     match cli {
         Cli::Register(para) => register(&para.addr, &para.path).await,
         Cli::Query(para) => query(&para.addr).await,
+        Cli::Delete(para) => delete(&para.addr, &para.name).await,
     }
 }

@@ -55,6 +55,18 @@ func (c *GrpcClient) RegisterReferenceValue(ctx context.Context, message string)
 	return nil
 }
 
+// DeleteReferenceValue deletes a reference value from RVPS
+func (c *GrpcClient) DeleteReferenceValue(ctx context.Context, name string) error {
+	_, err := c.client.DeleteReferenceValue(ctx, &protos.ReferenceValueDeleteRequest{
+		Name: name,
+	})
+	if err != nil {
+		logrus.Errorf("Failed to delete reference value: %v", err)
+		return err
+	}
+	return nil
+}
+
 // Close closes the gRPC connection
 func (c *GrpcClient) Close() error {
 	if c.conn != nil {

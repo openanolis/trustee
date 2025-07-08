@@ -129,6 +129,7 @@ cd ../attestation-service && cargo run --bin as-grpc -- --config-file config.jso
 The `rvps-tool` tool is a command line client to interact with RVPS. It can:
 - Register reference values into the RVPS
 - Query reference values from the RVPS
+- Delete reference values from the RVPS
 
 ### Quick guide to interact with RVPS
 
@@ -182,4 +183,25 @@ The output should display something like the following:
 [2025-01-24T06:04:41Z INFO  rvps_tool] Get reference values succeeded:
      {"test-binary-1":["reference-value-1","reference-value-2"],
       "test-binary-2":["reference-value-3","reference-value-4"]}
+```
+
+Finally, let's delete a reference value
+```bash
+rvps-tool delete --name test-binary-1 --addr http://$RVPS_ADDR
+```
+
+It will say something like
+```
+[2025-01-24T06:05:15Z INFO  rvps_tool] Delete reference value succeeded.
+```
+
+Query again to verify the deletion:
+```bash
+rvps-tool query --addr http://$RVPS_ADDR
+```
+
+The output should now show that "test-binary-1" has been removed:
+```
+[2025-01-24T06:05:30Z INFO  rvps_tool] Get reference values succeeded:
+     {"test-binary-2":["reference-value-3","reference-value-4"]}
 ```

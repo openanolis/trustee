@@ -633,7 +633,7 @@ curl -k -X POST http://<gateway-host>:<port>/api/rvps/register \
 
 ```json
 {
-  "message": "string" // (必需) 需要传递给 RVPS gRPC 接口的参考值信息字符串。
+  "message": "string" // (必需) 需要传递给 RVPS gRPC 接口的参考值信息字符串。
 }
 ```
 
@@ -672,18 +672,57 @@ EOF
         
 *   **返回码:**
     
-    *   `200 OK`: 注册成功 (gRPC 调用成功)。
+    *   `200 OK`: 注册成功 (gRPC 调用成功)。
         
-    *   `400 Bad Request`: 请求体无法读取或解析为包含 `message` 字段的 JSON。响应体 `{"error": "Failed to read request body"}` 或 `{"error": "Invalid request format"}`。
+    *   `400 Bad Request`: 请求体无法读取或解析为包含 `message` 字段的 JSON。响应体 `{"error": "Failed to read request body"}` 或 `{"error": "Invalid request format"}`。
         
-    *   `500 Internal Server Error`: 调用 RVPS gRPC 失败。响应体 `{"error": "<gRPC 错误信息>"}`。
+    *   `500 Internal Server Error`: 调用 RVPS gRPC 失败。响应体 `{"error": "<gRPC 错误信息>"}`。
         
-    *   `404 Not Found`: 如果 Gateway 未配置 RVPS gRPC 客户端。
+    *   `404 Not Found`: 如果 Gateway 未配置 RVPS gRPC 客户端。
         
-*   **返回示例 (成功):**_状态码: 200 OK响应体: (空)_
+*   **返回示例 (成功):**_状态码: 200 OK响应体: (空)_
     
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/22b4361d-9b13-487a-bcb7-b0acee409517.png)
+
+#### 2.3 删除参考值 (Delete Reference Value)
+
+*   **端点:** `DELETE /api/rvps/delete/{name}`
+    
+*   **说明:** 通过 gRPC 向后端 RVPS 服务删除指定名称的参考值。
+    
+*   **调用方法:**
+    
+
+```shell
+# 删除名为 "test-binary-1" 的参考值
+curl -k -X DELETE http://<gateway-host>:<port>/api/rvps/delete/test-binary-1
+```
+
+*   **请求头:** 无特殊要求。
+    
+*   **请求参数:** 
+    *   `name` (路径参数): 要删除的参考值名称
+    
+*   **请求体:** 无。
+    
+*   **响应:**
+    
+    *   成功时，返回空响应体。
+        
+    *   失败时，返回错误信息。
+        
+*   **返回码:**
+    
+    *   `200 OK`: 删除成功 (gRPC 调用成功)。
+        
+    *   `400 Bad Request`: 参考值名称为空。响应体 `{"error": "Reference value name is required"}`。
+        
+    *   `500 Internal Server Error`: 调用 RVPS gRPC 失败。响应体 `{"error": "<gRPC 错误信息>"}`。
+        
+    *   `404 Not Found`: 如果 Gateway 未配置 RVPS gRPC 客户端。
+        
+*   **返回示例 (成功):**_状态码: 200 OK响应体: (空)_
 
 ### 审计 API (`**/api/audit**`)
 
@@ -764,7 +803,7 @@ curl -k http://<gateway-host>:<port>/api/audit/attestation?limit=50&offset=50
         "successful": false,
         "timestamp": "2024-01-10T12:35:10Z"
     }
-    // ... more records
+    // ... more records
 ]
 ```
 
@@ -874,7 +913,7 @@ curl -k http://<gateway-host>:<port>/api/audit/resources?method=POST&successful=
         "successful": false, // status != 200
         "timestamp": "2024-01-11T09:25:00Z"
     }
-    // ... more records
+    // ... more records
 ]
 ```
 
@@ -1105,4 +1144,3 @@ if __name__ == '__main__':
     except Exception as e:
         print(f'Error: {e}')
         sys.exit(1)
-```

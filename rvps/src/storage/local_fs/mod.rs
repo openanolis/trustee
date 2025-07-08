@@ -88,6 +88,17 @@ impl ReferenceValueStorage for LocalFs {
 
         Ok(values)
     }
+
+    async fn delete(&self, name: &str) -> Result<Option<ReferenceValue>> {
+        match self.engine.remove(name).context("remove from sled")? {
+            Some(v) => {
+                let rv = serde_json::from_slice(&v)?;
+                self.engine.flush()?;
+                Ok(Some(rv))
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 #[cfg(test)]
