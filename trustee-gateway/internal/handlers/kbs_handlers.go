@@ -146,7 +146,7 @@ func (h *KBSHandler) HandleAttest(c *gin.Context) {
 	record := &models.AttestationRecord{
 		ClientIP:      c.ClientIP(),
 		SessionID:     sessionID,
-		RequestBody:   string(requestBody),
+		RequestBody:   "", // Do not save evidence content
 		Claims:        claims,
 		Status:        resp.StatusCode,
 		Successful:    resp.StatusCode == http.StatusOK,
