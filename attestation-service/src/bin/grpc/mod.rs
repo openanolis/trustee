@@ -17,8 +17,9 @@ use tonic::{Request, Response, Status};
 use crate::as_api::attestation_service_server::{AttestationService, AttestationServiceServer};
 use crate::as_api::{
     list_policies_response::PolicyInfo, AttestationRequest, AttestationResponse, ChallengeRequest,
-    ChallengeResponse, DeletePolicyRequest, DeletePolicyResponse, GetPolicyRequest, GetPolicyResponse, ListPoliciesRequest,
-    ListPoliciesResponse, SetPolicyRequest, SetPolicyResponse,
+    ChallengeResponse, DeletePolicyRequest, DeletePolicyResponse, GetPolicyRequest,
+    GetPolicyResponse, ListPoliciesRequest, ListPoliciesResponse, SetPolicyRequest,
+    SetPolicyResponse,
 };
 
 use crate::rvps_api::reference_value_provider_service_server::{
@@ -26,8 +27,8 @@ use crate::rvps_api::reference_value_provider_service_server::{
 };
 
 use crate::rvps_api::{
-    ReferenceValueQueryRequest, ReferenceValueQueryResponse, ReferenceValueRegisterRequest,
-    ReferenceValueRegisterResponse,
+    ReferenceValueDeleteRequest, ReferenceValueDeleteResponse, ReferenceValueQueryRequest,
+    ReferenceValueQueryResponse, ReferenceValueRegisterRequest, ReferenceValueRegisterResponse,
 };
 
 fn to_kbs_tee(tee: &str) -> anyhow::Result<Tee> {
@@ -331,6 +332,26 @@ impl ReferenceValueProviderService for Arc<RwLock<AttestationServer>> {
             .map_err(|e| Status::aborted(format!("Register reference value: {e}")))?;
 
         let res = ReferenceValueRegisterResponse {};
+        Ok(Response::new(res))
+    }
+
+    async fn delete_reference_value(
+        &self,
+        request: Request<ReferenceValueDeleteRequest>,
+    ) -> Result<Response<ReferenceValueDeleteResponse>, Status> {
+        let request = request.into_inner();
+
+        info!("DeleteReferenceValue API called.");
+        debug!("Delete reference value: {}", request.name);
+
+        self.write()
+            .await
+            .attestation_service
+            .delete_reference_value(request.name)
+            .await
+            .map_err(|e| Status::aborted(format!("Delete reference value: {e}")))?;
+
+        let res = ReferenceValueDeleteResponse {};
         Ok(Response::new(res))
     }
 }

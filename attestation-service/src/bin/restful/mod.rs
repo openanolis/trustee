@@ -273,12 +273,14 @@ pub async fn delete_policy(
     cocoas: web::Data<Arc<RwLock<AttestationService>>>,
 ) -> Result<HttpResponse> {
     info!("delete policy API called.");
-    
-    let policy_id = request.match_info().get("policy_id")
+
+    let policy_id = request
+        .match_info()
+        .get("policy_id")
         .ok_or_else(|| anyhow!("Policy ID is required"))?;
 
     debug!("delete policy: {policy_id}");
-    
+
     cocoas
         .write()
         .await

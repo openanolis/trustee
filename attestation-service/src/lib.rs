@@ -228,6 +228,14 @@ impl AttestationService {
             .context("register reference value")
     }
 
+    /// Delete a reference value by name
+    pub async fn delete_reference_value(&mut self, name: String) -> Result<bool> {
+        self.rvps
+            .delete_reference_value(&name)
+            .await
+            .context("delete reference value")
+    }
+
     pub async fn generate_supplemental_challenge(
         &self,
         tee: Tee,

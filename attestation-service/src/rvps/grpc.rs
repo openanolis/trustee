@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 
 use self::rvps_api::{
     reference_value_provider_service_client::ReferenceValueProviderServiceClient,
-    ReferenceValueQueryRequest, ReferenceValueRegisterRequest,
+    ReferenceValueDeleteRequest, ReferenceValueQueryRequest, ReferenceValueRegisterRequest,
 };
 
 use super::{Result, RvpsApi};
@@ -74,5 +74,13 @@ impl RvpsApi for Agent {
             .into_inner();
         let trust_digest = serde_json::from_str(&res.reference_value_results)?;
         Ok(trust_digest)
+    }
+
+    async fn delete_reference_value(&mut self, name: &str) -> Result<bool> {
+        let req = tonic::Request::new(ReferenceValueDeleteRequest {
+            name: name.to_string(),
+        });
+        let _ = self.client.lock().await.delete_reference_value(req).await?;
+        Ok(true)
     }
 }
