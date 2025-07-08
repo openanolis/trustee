@@ -4,23 +4,19 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-ARG BASE_IMAGE=debian:stable-slim
+ARG BASE_IMAGE=alibaba-cloud-linux-3-registry.cn-hangzhou.cr.aliyuncs.com/alinux3/alinux3:latest
 
 FROM ${BASE_IMAGE} AS builder
 ARG ARCH=x86_64
 
 WORKDIR /tmp
-RUN apt update && apt install -y gcc perl wget make gnupg openssl curl protobuf-compiler git clang libtss2-dev libudev-dev pkg-config && \
-    curl -L https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | tee intel-sgx-deb.key | apt-key add - && \
-    echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
-    apt-get update && apt-get install -y libsgx-dcap-quote-verify-dev
+RUN yum install -y yum-utils
+RUN yum-config-manager --add-repo https://enclave-cn-beijing.oss-cn-beijing.aliyuncs.com/repo/alinux/enclave-expr.repo
+RUN yum install -y tar cargo curl clang perl protobuf-devel git libtdx-attest-devel libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel libsgx-dcap-quote-verify-devel
 
 WORKDIR /usr/src/attestation-service
 COPY . .
-
-# Install Rust
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
+RUN sed -i 's/version = 4/version = 3/g' Cargo.lock
 
 # Build and Install RESTful attestation-service
 RUN cargo install --path attestation-service --bin restful-as --features restful-bin,all-verifier --locked
@@ -28,11 +24,9 @@ RUN cargo install --path attestation-service --bin restful-as --features restful
 FROM ${BASE_IMAGE}
 ARG ARCH=x86_64
 
-WORKDIR /tmp
-RUN apt update && apt install -y libtss2-dev curl gnupg openssl && \
-    curl -L https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | tee intel-sgx-deb.key | apt-key add - && \
-    echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
-    apt-get update && apt-get install -y libsgx-dcap-default-qpl libsgx-dcap-quote-verify
+RUN yum install -y yum-utils
+RUN yum-config-manager --add-repo https://enclave-cn-beijing.oss-cn-beijing.aliyuncs.com/repo/alinux/enclave-expr.repo
+RUN yum install -y tar tpm2-tss tpm2-tss-devel curl openssl libsgx-dcap-default-qpl libsgx-dcap-quote-verify
 
 COPY --from=builder /root/.cargo/bin/restful-as /usr/local/bin/restful-as
 
