@@ -97,5 +97,7 @@ services:
     image: trustee-registry.cn-hangzhou.cr.aliyuncs.com/instance/frontend:latest
     ports:
       - "${FRONTEND_PORT:-8082}:8082"
+    volumes:
+      - ./configs/trustee-frontend.conf:/etc/nginx/conf.d/trustee-frontend.conf:rw
     depends_on:
     - gateway
