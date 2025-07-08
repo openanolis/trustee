@@ -47,6 +47,8 @@ pub enum PolicyError {
     JsonSerializationFailed(#[source] anyhow::Error),
     #[error("Policy claim value not valid (must be between -127 and 127)")]
     InvalidClaimValue,
+    #[error("Cannot delete default policy")]
+    CannotDeleteDefaultPolicy,
 }
 
 #[derive(Debug, EnumString, Deserialize)]

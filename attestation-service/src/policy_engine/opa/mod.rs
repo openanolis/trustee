@@ -196,6 +196,11 @@ impl PolicyEngine for OPA {
             return Err(PolicyError::InvalidPolicyId);
         }
 
+        // Prevent deletion of default policy
+        if policy_id == "default" {
+            return Err(PolicyError::CannotDeleteDefaultPolicy);
+        }
+
         let policy_file_path = self.policy_dir_path.join(format!("{policy_id}.rego"));
 
         if !policy_file_path.exists() {
