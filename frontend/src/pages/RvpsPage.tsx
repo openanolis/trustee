@@ -114,7 +114,7 @@ const RvpsPage: React.FC = () => {
       title: '操作',
       key: 'action',
       width: '20%',
-      render: (_, record) => (
+      render: (_: any, record: any) => (
         <Popconfirm
           title="确认删除"
           description={`确定要删除参考值 "${record.key}" 吗？`}
