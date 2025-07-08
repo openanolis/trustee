@@ -37,6 +37,7 @@ type Result<T> = std::result::Result<T, RvpsError>;
 /// * `verify_and_extract` is responsible for verify a message and
 /// store reference values from it.
 /// * `get_digests` gets trusted digests by the artifact's name.
+/// * `delete_reference_value` is responsible for deleting a reference value.
 #[async_trait::async_trait]
 pub trait RvpsApi {
     /// Verify the given message and register the reference value included.
@@ -44,6 +45,9 @@ pub trait RvpsApi {
 
     /// Get the reference values / golden values / expected digests in hex.
     async fn get_digests(&self) -> Result<HashMap<String, Vec<String>>>;
+
+    /// Delete a reference value by name.
+    async fn delete_reference_value(&mut self, name: &str) -> Result<bool>;
 }
 
 #[derive(Deserialize, Clone, Debug, PartialEq)]

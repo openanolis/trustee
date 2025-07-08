@@ -13,7 +13,9 @@ use strum::{AsRefStr, EnumString};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
-use crate::restful::{attestation, get_certificate, get_challenge, get_policies, set_policy, delete_policy};
+use crate::restful::{
+    attestation, delete_policy, get_certificate, get_challenge, get_policies, set_policy,
+};
 
 mod restful;
 

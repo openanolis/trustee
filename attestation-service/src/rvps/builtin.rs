@@ -27,4 +27,9 @@ impl RvpsApi for BuiltinRvps {
 
         Ok(hashes)
     }
+
+    async fn delete_reference_value(&mut self, name: &str) -> Result<bool> {
+        let result = self.rvps.delete_reference_value(name).await?;
+        Ok(result)
+    }
 }

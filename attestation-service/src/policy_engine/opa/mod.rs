@@ -197,7 +197,7 @@ impl PolicyEngine for OPA {
         }
 
         let policy_file_path = self.policy_dir_path.join(format!("{policy_id}.rego"));
-        
+
         if !policy_file_path.exists() {
             return Err(PolicyError::ReadPolicyFileFailed(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
