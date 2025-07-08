@@ -217,26 +217,16 @@ const AuditPage: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 200,
+      width: 120,
       render: (_: any, record: AttestationRecord) => (
-        <Space size="middle">
-          <Button
-            type="primary"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => handleShowDetail(record.request_body, 'evidence')}
-          >
-            evidence
-          </Button>
-          <Button
-            type="primary"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => handleShowDetail(record.claims, 'claims')}
-          >
-            claims
-          </Button>
-        </Space>
+        <Button
+          type="primary"
+          size="small"
+          icon={<EyeOutlined />}
+          onClick={() => handleShowDetail(record.claims, 'claims')}
+        >
+          详情
+        </Button>
       ),
     },
   ];

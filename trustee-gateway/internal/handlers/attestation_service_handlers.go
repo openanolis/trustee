@@ -103,7 +103,7 @@ func (h *AttestationServiceHandler) HandleAttestation(c *gin.Context) {
 	record := &models.AttestationRecord{
 		ClientIP:      c.ClientIP(),
 		SessionID:     sessionID, // Use extracted session ID if applicable
-		RequestBody:   string(requestBody),
+		RequestBody:   "", // Do not save evidence content
 		Claims:        claims,
 		Status:        resp.StatusCode,
 		Successful:    resp.StatusCode == http.StatusOK,
