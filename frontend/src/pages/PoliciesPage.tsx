@@ -189,19 +189,21 @@ const PoliciesPage: React.FC = () => {
           >
             编辑
           </Button>
-          <Popconfirm
-            title="确定删除该策略吗？"
-            onConfirm={() => handleDeleteAttestationPolicy(record.policy_id)}
-            okText="确认"
-            cancelText="取消"
-          >
-            <Button
-              type="primary"
-              icon={<DeleteOutlined />}
+          {record.policy_id !== 'default' && (
+            <Popconfirm
+              title="确定删除该策略吗？"
+              onConfirm={() => handleDeleteAttestationPolicy(record.policy_id)}
+              okText="确认"
+              cancelText="取消"
             >
-              删除
-            </Button>
-          </Popconfirm>
+              <Button
+                type="primary"
+                icon={<DeleteOutlined />}
+              >
+                删除
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
