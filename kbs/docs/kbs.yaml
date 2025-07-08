@@ -171,6 +171,39 @@ paths:
             type: string
           required: true
 
+    delete:
+      operationId: deleteSecretResource
+      summary: Delete a secret resource from the Key Broker Service.
+      parameters:
+        - name: repository
+          in: path
+          description: A parent path of resource.
+          schema:
+            type: string
+          required: true
+        - name: type
+          in: path
+          description: Resource type name
+          schema:
+            type: string
+          required: true
+        - name: tag
+          in: path
+          description: Resource instance tag
+          schema:
+            type: string
+          required: true
+      responses:
+        200:
+          description: Resource deleted successfully
+        204:
+          description: Resource deleted successfully (no content)
+        401:
+          description: Missing or invalid authentication
+        403:
+          description: Permission denied
+        404:
+          description: The requested resource does not exist
 
 components:
   schemas:

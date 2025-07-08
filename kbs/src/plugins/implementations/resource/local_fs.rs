@@ -73,6 +73,27 @@ impl StorageBackend for LocalFs {
             .context("write local fs")
     }
 
+    async fn delete_secret_resource(&self, resource_desc: ResourceDesc) -> Result<()> {
+        let mut resource_path = PathBuf::from(&self.repo_dir_path);
+
+        let ref_resource_path = format!(
+            "{}/{}/{}",
+            resource_desc.repository_name, resource_desc.resource_type, resource_desc.resource_tag
+        );
+        resource_path.push(ref_resource_path);
+
+        // Check if the resource file exists
+        if !resource_path.exists() {
+            return Err(anyhow::anyhow!("Resource not found: {}", resource_desc));
+        }
+
+        tokio::fs::remove_file(&resource_path)
+            .await
+            .context("delete resource from local fs")?;
+
+        Ok(())
+    }
+
     async fn list_secret_resources(&self) -> Result<Vec<ResourceDesc>> {
         let base_path = PathBuf::from(&self.repo_dir_path);
         let results = Self::scan_directory(&base_path, Vec::new()).await?;

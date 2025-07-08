@@ -140,6 +140,8 @@ export const resourceApi = {
     apiClient.get<any>(`/kbs/v0/resource/${repository}/${type}/${tag}`),
   setResource: (repository: string, type: string, tag: string, data: any) => 
     apiClient.post(`/kbs/v0/resource/${repository}/${type}/${tag}`, data),
+  deleteResource: (repository: string, type: string, tag: string) => 
+    apiClient.delete(`/kbs/v0/resource/${repository}/${type}/${tag}`),
   listResources: (params?: { repository?: string; type?: string }) => 
     apiClient.get<Resource[]>('/kbs/v0/resources', { params }),
   uploadResourceFile: async (repository: string, type: string, tag: string, file: File) => {

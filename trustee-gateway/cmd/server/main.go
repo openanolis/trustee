@@ -159,6 +159,7 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 		// Resource routes with explicit repository
 		kbs.GET("/resource/:repository/:type/:tag", kbsHandler.HandleGetResource)
 		kbs.POST("/resource/:repository/:type/:tag", kbsHandler.HandleSetResource)
+		kbs.DELETE("/resource/:repository/:type/:tag", kbsHandler.HandleDeleteResource)
 
 		kbs.GET("/resources", kbsHandler.ListResources)
 	}

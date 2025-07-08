@@ -22,6 +22,9 @@ pub trait StorageBackend: Send + Sync {
     /// Write secret resource into repository
     async fn write_secret_resource(&self, resource_desc: ResourceDesc, data: &[u8]) -> Result<()>;
 
+    /// Delete secret resource from repository
+    async fn delete_secret_resource(&self, resource_desc: ResourceDesc) -> Result<()>;
+
     /// List secret resources from repository
     async fn list_secret_resources(&self) -> Result<Vec<ResourceDesc>>;
 }
@@ -124,6 +127,10 @@ impl ResourceStorage {
 
     pub(crate) async fn get_secret_resource(&self, resource_desc: ResourceDesc) -> Result<Vec<u8>> {
         self.backend.read_secret_resource(resource_desc).await
+    }
+
+    pub(crate) async fn delete_secret_resource(&self, resource_desc: ResourceDesc) -> Result<()> {
+        self.backend.delete_secret_resource(resource_desc).await
     }
 
     pub(crate) async fn list_secret_resources(&self) -> Result<Vec<ResourceDesc>> {

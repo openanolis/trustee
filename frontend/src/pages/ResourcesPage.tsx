@@ -12,9 +12,10 @@ import {
   Col,
   Card,
   Radio,
-  Upload
+  Upload,
+  Popconfirm
 } from 'antd';
-import { PlusOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
+import { PlusOutlined, SearchOutlined, UploadOutlined, DeleteOutlined } from '@ant-design/icons';
 import { resourceApi } from '@/api';
 import type { Resource } from '@/types/api';
 import type { UploadFile, UploadProps } from 'antd/es/upload/interface';
@@ -104,6 +105,17 @@ const ResourcesPage: React.FC = () => {
     });
   };
 
+  const handleDeleteResource = async (repository: string, type: string, tag: string) => {
+    try {
+      await resourceApi.deleteResource(repository, type, tag);
+      message.success('资源删除成功');
+      fetchResources();
+    } catch (error) {
+      console.error('删除资源失败:', error);
+      message.error('删除资源失败');
+    }
+  };
+
   const handleUploadTypeChange = (e: any) => {
     setUploadType(e.target.value);
     if (e.target.value === 'text') {
@@ -149,6 +161,30 @@ const ResourcesPage: React.FC = () => {
       title: '标签',
       dataIndex: 'resource_tag',
       key: 'resource_tag',
+    },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_: any, record: Resource) => (
+        <Space size="middle">
+          <Popconfirm
+            title="确定删除这个资源吗？"
+            description="删除后无法恢复，请确认是否继续"
+            onConfirm={() => handleDeleteResource(record.repository_name, record.resource_type, record.resource_tag)}
+            okText="确认"
+            cancelText="取消"
+          >
+            <Button 
+              type="primary" 
+              danger 
+              icon={<DeleteOutlined />}
+              size="small"
+            >
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
+      ),
     },
   ];
 
