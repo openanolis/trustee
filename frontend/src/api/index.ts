@@ -180,7 +180,10 @@ export const rvpsApi = {
       })
     };
     return apiClient.post('/rvps/register', payload);
-  }
+  },
+
+  deleteReferenceValue: (name: string) => 
+    apiClient.delete(`/rvps/delete/${encodeURIComponent(name)}`)
 };
 
 export const aaInstanceApi = {
