@@ -588,6 +588,54 @@ curl -k http://<gateway-host>:<port>/api/kbs/v0/resources?repository=my-repo&typ
 ]
 ```
 
+#### 1.12 删除资源 (Delete Resource)
+
+*   **端点:** `DELETE /kbs/v0/resource/{repository}/{type}/{tag}`
+    
+*   **说明:** 从 KBS 中删除指定标识的资源。Gateway 会将请求转发给 KBS。如果 KBS 返回成功状态码 (`200 OK`, `204 No Content`)，表示资源删除成功。Gateway 会**异步记录一条资源请求审计日志**。最终将 KBS 的响应返回给客户端。
+    
+*   **调用方法:**
+    
+
+```shell
+curl -k -X DELETE http://<gateway-host>:<port>/api/kbs/v0/resource/my-repo/my-type/my-tag  \
+     -H "Authorization: Bearer <token>"
+```
+
+*   **请求头:**
+    
+    *   需要 KBS 要求的认证头（生成方法见附录）： `Authorization: Bearer <token>`
+        
+*   **请求参数:**
+    
+    *   `repository` (路径参数, string, 必需): 资源所属的仓库名。
+        
+    *   `type` (路径参数, string, 必需): 资源的类型。
+        
+    *   `tag` (路径参数, string, 必需): 资源的标签或版本。
+        
+*   **请求体:** 无
+    
+*   **响应:**
+    
+    *   响应体和状态码由后端 KBS 服务决定。
+        
+    *   无论成功失败，Gateway 都会**异步记录审计日志** (`ResourceRequest`)，包含客户端 IP、会话 ID、资源标识符 (repo, type, tag)、方法 ("DELETE")、KBS 返回的状态码、是否成功 (当 KBS 返回 200 或 204 时为 true) 以及时间戳。
+        
+*   **返回码:**
+    
+    *   `200 OK / 204 No Content`: 删除成功 (由 KBS 返回)。Gateway 会记录成功审计。
+        
+    *   `401 Unauthorized / 403 Forbidden`: 无权限 (由 KBS 返回)。Gateway 记录失败审计。
+        
+    *   `404 Not Found`: 资源不存在 (由 KBS 返回)。Gateway 记录失败审计。
+        
+    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法转发请求给 KBS、无法读取 KBS 响应)。响应体通常为 `{"error": "<错误信息>"}`。Gateway 记录失败审计。
+        
+    *   _其他由 KBS 返回的状态码_。Gateway 记录失败审计。
+        
+*   **返回示例 (成功 - KBS 返回空内容):**_状态码: 200 OK 或 204 No Content_
+
 ### ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/7066c995-d1a1-4d28-b709-013982722a26.png)
 
 ### RVPS API (`**/api/rvps**`)

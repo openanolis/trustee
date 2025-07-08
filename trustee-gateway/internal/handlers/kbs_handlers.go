@@ -439,6 +439,87 @@ func (h *KBSHandler) HandleSetResource(c *gin.Context) {
 	c.Writer.Write(responseBody)
 }
 
+// HandleDeleteResource handles deleting a resource
+func (h *KBSHandler) HandleDeleteResource(c *gin.Context) {
+	repository := c.Param("repository")
+	resourceType := c.Param("type")
+	tag := c.Param("tag")
+
+	// Record the request
+	sessionID := ""
+	for _, cookie := range c.Request.Cookies() {
+		if cookie.Name == "kbs-session-id" {
+			sessionID = cookie.Value
+			break
+		}
+	}
+
+	// Parse AAInstanceInfo from request header
+	aaInstanceInfo, err := parseAAInstanceInfo(c)
+	if err != nil {
+		logrus.Errorf("Failed to parse AAInstanceInfo: %v", err)
+		// Don't fail the request, just log the error
+		aaInstanceInfo = &models.InstanceInfo{}
+	}
+
+	// Create a record for this request
+	requestRecord := &models.ResourceRequest{
+		ClientIP:     c.ClientIP(),
+		SessionID:    sessionID,
+		Repository:   repository,
+		Type:         resourceType,
+		Tag:          tag,
+		Method:       c.Request.Method,
+		Timestamp:    time.Now(),
+		InstanceInfo: *aaInstanceInfo,
+	}
+
+	// Forward the request to KBS
+	resp, err := h.proxy.ForwardToKBS(c)
+	if err != nil {
+		logrus.Errorf("Failed to forward delete resource request to KBS: %v", err)
+		requestRecord.Status = http.StatusInternalServerError
+		requestRecord.Successful = false
+
+		// Save the record asynchronously
+		go func() {
+			if err := h.auditRepo.SaveResourceRequest(requestRecord); err != nil {
+				logrus.Errorf("Failed to save resource request record: %v", err)
+			}
+		}()
+
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to forward request to KBS"})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Update the record status
+	requestRecord.Status = resp.StatusCode
+	requestRecord.Successful = resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent
+
+	// Save the record asynchronously
+	go func() {
+		if err := h.auditRepo.SaveResourceRequest(requestRecord); err != nil {
+			logrus.Errorf("Failed to save resource request record: %v", err)
+		}
+	}()
+
+	// Read response body
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.Errorf("Failed to read KBS delete resource response: %v", err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to read KBS response"})
+		return
+	}
+
+	// Copy headers to the response
+	proxy.CopyHeaders(c, resp)
+
+	// Set status code and write response body
+	c.Status(resp.StatusCode)
+	c.Writer.Write(responseBody)
+}
+
 // GetAttestationPolicy handles retrieving an attestation policy
 func (h *KBSHandler) GetAttestationPolicy(c *gin.Context) {
 	policyID := c.Param("id")
