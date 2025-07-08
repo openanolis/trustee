@@ -151,6 +151,7 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 		kbs.POST("/attestation-policy", kbsHandler.HandleSetAttestationPolicy)
 		kbs.GET("/attestation-policy/:id", kbsHandler.GetAttestationPolicy)
 		kbs.GET("/attestation-policies", kbsHandler.ListAttestationPolicies)
+		kbs.DELETE("/attestation-policy/:id", kbsHandler.DeleteAttestationPolicy)
 
 		kbs.POST("/resource-policy", kbsHandler.HandleSetResourcePolicy)
 		kbs.GET("/resource-policy", kbsHandler.GetResourcePolicy)
@@ -168,6 +169,12 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 		attestationSvc.POST("/attestation", attestationServiceHandler.HandleAttestation)
 		attestationSvc.POST("/challenge", attestationServiceHandler.HandleGeneralRequest)
 		attestationSvc.GET("/certificate", attestationServiceHandler.HandleGeneralRequest)
+		
+		// Policy routes
+		attestationSvc.POST("/policy", attestationServiceHandler.HandleSetAttestationPolicy)
+		attestationSvc.GET("/policy/:id", attestationServiceHandler.GetAttestationPolicy)
+		attestationSvc.GET("/policies", attestationServiceHandler.ListAttestationPolicies)
+		attestationSvc.DELETE("/policy/:id", attestationServiceHandler.DeleteAttestationPolicy)
 	}
 
 	// RVPS API routes

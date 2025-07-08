@@ -261,7 +261,53 @@ curl -k http://<gateway-host>:<port>/api/kbs/v0/attestation-policy/my-policy-v1
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/aeb02d19-60d3-40cb-8e8d-7b4eb497ca84.png)
 
-#### 1.5 列出认证策略 (List Attestation Policies)
+#### 1.5 删除认证策略 (Delete Attestation Policy)
+
+*   **端点:** `DELETE /kbs/v0/attestation-policy/{id}`
+    
+*   **说明:** 删除指定ID的认证策略。Gateway会将请求转发给KBS，并将KBS的响应返回给客户端。
+    
+*   **调用方法:**
+    
+
+```shell
+curl -k -X DELETE http://<gateway-host>:<port>/api/kbs/v0/attestation-policy/my-policy-v1 \
+     -H "Authorization: Bearer <token>"
+```
+
+*   **请求头:**
+    
+    *   需要KBS要求的认证头（生成方法见附录）： `Authorization: Bearer <token>`
+        
+*   **请求参数:**
+    
+    *   `id` (路径参数, string, 必需): 要删除的策略ID。
+        
+*   **请求体:** 无
+    
+*   **响应:**
+    
+    *   成功时，通常返回空响应体和状态码204。
+        
+    *   失败时，返回错误信息。
+        
+*   **返回码:**
+    
+    *   `204 No Content`: 成功删除策略。
+        
+    *   `401 Unauthorized / 403 Forbidden`: 无权限删除该策略。
+        
+    *   `404 Not Found`: 指定ID的策略不存在。
+        
+    *   `500 Internal Server Error`: Gateway内部错误或转发请求失败。响应体通常为`{"error": "<错误信息>"}`。
+        
+*   **返回示例 (成功):**
+
+_状态码: 204 No Content_
+
+_响应体: (空)_
+
+#### 1.6 列出认证策略 (List Attestation Policies)
 
 *   **端点:** `GET /kbs/v0/attestation-policies`
     
@@ -302,7 +348,7 @@ curl -k http://<gateway-host>:<port>/api/kbs/v0/attestation-policies
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/c798e992-f0c4-41e3-809a-292e135f8f58.png)
 
-#### 1.6 设置资源策略 (Set Resource Policy)
+#### 1.7 设置资源策略 (Set Resource Policy)
 
 *   **端点:** `POST /kbs/v0/resource-policy`
     
@@ -337,7 +383,7 @@ curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/resource-policy \
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/9b5e911d-1731-417a-b539-295caec63556.png)
 
-#### 1.7 获取资源策略 (Get Resource Policy)
+#### 1.8 获取资源策略 (Get Resource Policy)
 
 *   **端点:** `GET /kbs/v0/resource-policy`
     
@@ -368,7 +414,7 @@ curl -k http://<gateway-host>:<port>/api/kbs/v0/resource-policy \
 *   ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/3b899bc4-8f3d-470e-8029-20dfccd54ead.png)
     
 
-#### 1.8 获取资源 (Get Resource)
+#### 1.9 获取资源 (Get Resource)
 
 *   **端点:** `GET /kbs/v0/resource/{repository}/{type}/{tag}`
     
@@ -425,7 +471,7 @@ curl -k -b "kbs-session-id=${SESSION_ID}" \
 *   **返回示例 (成功 - 由 KBS 返回 JWE):**_状态码: 200 OK响应头:_ `_Content-Type: application/jwe_`_响应体: (JWE 格式数据)_
     
 
-#### 1.9 设置资源 (Set Resource)
+#### 1.10 设置资源 (Set Resource)
 
 *   **端点:** `POST /kbs/v0/resource/{repository}/{type}/{tag}`
     
@@ -482,7 +528,7 @@ curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/resource/my-repo/my-type
 *   ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/9b3e85b8-8453-4787-8099-788408fe985c.png)
     
 
-#### 1.10 列出资源 (List Resources)
+#### 1.11 列出资源 (List Resources)
 
 *   **端点:** `GET /kbs/v0/resources`
     

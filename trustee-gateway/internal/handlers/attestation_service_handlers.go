@@ -185,3 +185,110 @@ func (h *AttestationServiceHandler) HandleGeneralRequest(c *gin.Context) {
 	c.Status(resp.StatusCode)
 	c.Writer.Write(responseBody)
 }
+
+// HandleSetAttestationPolicy handles setting an attestation policy in AttestationService
+func (h *AttestationServiceHandler) HandleSetAttestationPolicy(c *gin.Context) {
+	// Read the request body
+	requestBody, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		logrus.Errorf("Failed to read attestation policy request body: %v", err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to read request body"})
+		return
+	}
+
+	// Restore the request body for forwarding
+	c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
+
+	// Forward the request to Attestation Service
+	resp, err := h.proxy.ForwardToAttestationService(c)
+	if err != nil {
+		logrus.Errorf("Failed to forward attestation policy request to Attestation Service: %v", err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to forward request to Attestation Service"})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.Errorf("Failed to read Attestation Service attestation policy response: %v", err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to read Attestation Service response"})
+		return
+	}
+
+	// Copy headers to the response
+	proxy.CopyHeaders(c, resp)
+
+	// Set status code and write response body
+	c.Status(resp.StatusCode)
+	c.Writer.Write(responseBody)
+}
+
+// GetAttestationPolicy handles retrieving an attestation policy from AttestationService
+func (h *AttestationServiceHandler) GetAttestationPolicy(c *gin.Context) {
+	// Forward the request to Attestation Service
+	resp, err := h.proxy.ForwardToAttestationService(c)
+	if err != nil {
+		logrus.Errorf("Failed to get attestation policy from Attestation Service: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get attestation policy"})
+		return
+	}
+	defer resp.Body.Close()
+	
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.Errorf("Failed to read Attestation Service attestation policy response: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read Attestation Service response"})
+		return
+	}
+
+	proxy.CopyHeaders(c, resp)
+	c.Status(resp.StatusCode)
+	c.Writer.Write(responseBody)
+}
+
+// ListAttestationPolicies handles listing all attestation policies from AttestationService
+func (h *AttestationServiceHandler) ListAttestationPolicies(c *gin.Context) {
+	// Forward the request to Attestation Service
+	resp, err := h.proxy.ForwardToAttestationService(c)
+	if err != nil {
+		logrus.Errorf("Failed to list attestation policies from Attestation Service: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list attestation policies"})
+		return
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.Errorf("Failed to read Attestation Service attestation policies response: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read Attestation Service response"})
+		return
+	}
+
+	proxy.CopyHeaders(c, resp)
+	c.Status(resp.StatusCode)
+	c.Writer.Write(responseBody)
+}
+
+// DeleteAttestationPolicy handles deleting an attestation policy from AttestationService
+func (h *AttestationServiceHandler) DeleteAttestationPolicy(c *gin.Context) {
+	// Forward the request to Attestation Service
+	resp, err := h.proxy.ForwardToAttestationService(c)
+	if err != nil {
+		logrus.Errorf("Failed to delete attestation policy from Attestation Service: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete attestation policy"})
+		return
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.Errorf("Failed to read Attestation Service delete policy response: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read Attestation Service response"})
+		return
+	}
+
+	proxy.CopyHeaders(c, resp)
+	c.Status(resp.StatusCode)
+	c.Writer.Write(responseBody)
+}

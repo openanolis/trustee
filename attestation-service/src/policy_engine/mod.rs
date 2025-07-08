@@ -108,4 +108,6 @@ pub trait PolicyEngine: Send + Sync {
     async fn list_policies(&self) -> Result<HashMap<String, PolicyDigest>, PolicyError>;
 
     async fn get_policy(&self, policy_id: String) -> Result<String, PolicyError>;
+
+    async fn delete_policy(&self, policy_id: String) -> Result<(), PolicyError>;
 }

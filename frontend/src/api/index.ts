@@ -108,6 +108,8 @@ export const policyApi = {
     };
     return apiClient.post('/kbs/v0/attestation-policy', encodedPolicy);
   },
+  deleteAttestationPolicy: (policyId: string) => 
+    apiClient.delete(`/kbs/v0/attestation-policy/${encodeURIComponent(policyId)}`),
   
   getResourcePolicy: () => apiClient.get<ResourcePolicy>('/kbs/v0/resource-policy'),
   setResourcePolicy: (policy: { policy: string }) => {
@@ -116,6 +118,21 @@ export const policyApi = {
     };
     return apiClient.post('/kbs/v0/resource-policy', encodedPolicy);
   },
+};
+
+// Attestation Service Policy API
+export const attestationServicePolicyApi = {
+  getAttestationPolicy: (id: string) => apiClient.get<AttestationPolicy>(`/attestation-service/policy/${id}`),
+  listAttestationPolicies: () => apiClient.get<AttestationPolicyList>('/attestation-service/policies'),
+  setAttestationPolicy: (policy: { policy_id: string; policy: string }) => {
+    const encodedPolicy = {
+      ...policy,
+      policy: Base64.encode(policy.policy, true)
+    };
+    return apiClient.post('/attestation-service/policy', encodedPolicy);
+  },
+  deleteAttestationPolicy: (policyId: string) => 
+    apiClient.delete(`/attestation-service/policy/${encodeURIComponent(policyId)}`),
 };
 
 export const resourceApi = {

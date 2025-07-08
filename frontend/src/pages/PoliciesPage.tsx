@@ -10,9 +10,10 @@ import {
   Form, 
   Input, 
   message,
-  Card
+  Card,
+  Popconfirm
 } from 'antd';
-import { PlusOutlined, EditOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { policyApi } from '@/api';
 import type { ResourcePolicy } from '@/types/api';
 
@@ -159,6 +160,17 @@ const PoliciesPage: React.FC = () => {
     }
   };
 
+  const handleDeleteAttestationPolicy = async (policyId: string) => {
+    try {
+      await policyApi.deleteAttestationPolicy(policyId);
+      message.success('Attestation策略删除成功');
+      fetchAttestationPolicies();
+    } catch (error) {
+      console.error('删除Attestation策略失败:', error);
+      message.error('删除Attestation策略失败');
+    }
+  };
+
   const attestationColumns = [
     {
       title: '策略ID',
@@ -177,6 +189,19 @@ const PoliciesPage: React.FC = () => {
           >
             编辑
           </Button>
+          <Popconfirm
+            title="确定删除该策略吗？"
+            onConfirm={() => handleDeleteAttestationPolicy(record.policy_id)}
+            okText="确认"
+            cancelText="取消"
+          >
+            <Button
+              type="primary"
+              icon={<DeleteOutlined />}
+            >
+              删除
+            </Button>
+          </Popconfirm>
         </Space>
       ),
     },
