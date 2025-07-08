@@ -486,6 +486,31 @@ func (h *KBSHandler) ListAttestationPolicies(c *gin.Context) {
 	c.Writer.Write(responseBody)
 }
 
+// DeleteAttestationPolicy handles deleting an attestation policy
+func (h *KBSHandler) DeleteAttestationPolicy(c *gin.Context) {
+	policyID := c.Param("id")
+
+	c.Request.URL.Path = fmt.Sprintf("/kbs/v0/attestation-policy/%s", policyID)
+	resp, err := h.proxy.ForwardToKBS(c)
+	if err != nil {
+		logrus.Errorf("Failed to delete attestation policy from KBS: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete attestation policy"})
+		return
+	}
+	defer resp.Body.Close()
+	
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.Errorf("Failed to read KBS delete attestation policy response: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read KBS response"})
+		return
+	}
+
+	proxy.CopyHeaders(c, resp)
+	c.Status(resp.StatusCode)
+	c.Writer.Write(responseBody)
+}
+
 // GetResourcePolicy handles retrieving the resource policy
 func (h *KBSHandler) GetResourcePolicy(c *gin.Context) {
 	requestBody, err := io.ReadAll(c.Request.Body)

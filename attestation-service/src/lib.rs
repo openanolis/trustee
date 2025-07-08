@@ -140,6 +140,14 @@ impl AttestationService {
             .context("Cannot Get Policy")
     }
 
+    /// Delete a single Policy.
+    pub async fn delete_policy(&self, policy_id: String) -> Result<()> {
+        self.token_broker
+            .delete_policy(policy_id)
+            .await
+            .context("Cannot Delete Policy")
+    }
+
     /// Evaluate Attestation Evidence.
     /// Issue an attestation results token which contain TCB status and TEE public key. Input parameters:
     /// - `evidence`: TEE evidence bytes. This might not be the raw hardware evidence bytes. Definitions

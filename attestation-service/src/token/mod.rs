@@ -46,6 +46,10 @@ pub trait AttestationTokenBroker: Send + Sync {
     async fn get_policy(&self, _policy_id: String) -> Result<String> {
         bail!("Get Policy not support")
     }
+
+    async fn delete_policy(&self, _policy_id: String) -> Result<()> {
+        bail!("Delete Policy not support")
+    }
 }
 
 #[derive(Deserialize, Debug, Clone, Display, PartialEq)]

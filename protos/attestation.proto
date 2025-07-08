@@ -84,6 +84,11 @@ message GetPolicyResponse {
     string policy = 1;
 }
 
+message DeletePolicyRequest {
+    string policy_id = 1;
+}
+message DeletePolicyResponse {}
+
 message ListPoliciesRequest {}
 message ListPoliciesResponse {
     message PolicyInfo {
@@ -107,6 +112,7 @@ service AttestationService {
     rpc SetAttestationPolicy(SetPolicyRequest) returns (SetPolicyResponse) {};
     rpc GetAttestationPolicy(GetPolicyRequest) returns (GetPolicyResponse) {};
     rpc ListAttestationPolicies(ListPoliciesRequest) returns (ListPoliciesResponse) {};
+    rpc DeleteAttestationPolicy(DeletePolicyRequest) returns (DeletePolicyResponse) {};
     rpc GetAttestationChallenge(ChallengeRequest) returns (ChallengeResponse) {};
     // Get the GetPolicyRequest.user and GetPolicyRequest.tee specified Policy(.rego)
 }

@@ -190,6 +190,27 @@ impl PolicyEngine for OPA {
         let base64_policy = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(policy);
         Ok(base64_policy)
     }
+
+    async fn delete_policy(&self, policy_id: String) -> Result<(), PolicyError> {
+        if !Self::is_valid_policy_id(&policy_id) {
+            return Err(PolicyError::InvalidPolicyId);
+        }
+
+        let policy_file_path = self.policy_dir_path.join(format!("{policy_id}.rego"));
+        
+        if !policy_file_path.exists() {
+            return Err(PolicyError::ReadPolicyFileFailed(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Policy {} not found", policy_id),
+            )));
+        }
+
+        tokio::fs::remove_file(policy_file_path)
+            .await
+            .map_err(PolicyError::IOError)?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

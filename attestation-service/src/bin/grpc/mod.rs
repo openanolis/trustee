@@ -17,7 +17,7 @@ use tonic::{Request, Response, Status};
 use crate::as_api::attestation_service_server::{AttestationService, AttestationServiceServer};
 use crate::as_api::{
     list_policies_response::PolicyInfo, AttestationRequest, AttestationResponse, ChallengeRequest,
-    ChallengeResponse, GetPolicyRequest, GetPolicyResponse, ListPoliciesRequest,
+    ChallengeResponse, DeletePolicyRequest, DeletePolicyResponse, GetPolicyRequest, GetPolicyResponse, ListPoliciesRequest,
     ListPoliciesResponse, SetPolicyRequest, SetPolicyResponse,
 };
 
@@ -278,6 +278,25 @@ impl AttestationService for Arc<RwLock<AttestationServer>> {
             .collect();
 
         Ok(Response::new(ListPoliciesResponse { policies }))
+    }
+
+    async fn delete_attestation_policy(
+        &self,
+        request: Request<DeletePolicyRequest>,
+    ) -> Result<Response<DeletePolicyResponse>, Status> {
+        let request: DeletePolicyRequest = request.into_inner();
+
+        info!("DeleteAttestationPolicy API called.");
+        debug!("DeletePolicyInput: {request:#?}");
+
+        self.write()
+            .await
+            .attestation_service
+            .delete_policy(request.policy_id)
+            .await
+            .map_err(|e| Status::aborted(format!("Delete Attestation Policy Failed: {e}")))?;
+
+        Ok(Response::new(DeletePolicyResponse {}))
     }
 }
 
