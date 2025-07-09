@@ -16,22 +16,27 @@
 - [1.11 列出资源 (List Resources)](#111-列出资源-list-resources)
 - [1.12 删除资源 (Delete Resource)](#112-删除资源-delete-resource)
 
-### [2. RVPS API (`/api/rvps`)](#rvps-api-apirvps)
-- [2.1 查询参考值 (Query Reference Value)](#21-查询参考值-query-reference-value)
-- [2.2 注册参考值 (Register Reference Value)](#22-注册参考值-register-reference-value)
-- [2.3 删除参考值 (Delete Reference Value)](#23-删除参考值-delete-reference-value)
+### [2. AS API (`/api/attestation-service`)](#as-api-apiattestation-service)
+- [2.1 证明 (Attestation)](#21-证明-attestation-1)
+- [2.2 挑战 (Challenge)](#22-挑战-challenge)
+- [2.3 获取证书 (Get Certificate)](#23-获取证书-get-certificate)
 
-### [3. 审计 API (`/api/audit`)](#审计-api-apiaudit)
-- [3.1 列出认证记录 (List Attestation Records)](#31-列出认证记录-list-attestation-records)
-- [3.2 列出资源请求记录 (List Resource Requests)](#32-列出资源请求记录-list-resource-requests)
+### [3. RVPS API (`/api/rvps`)](#rvps-api-apirvps)
+- [3.1 查询参考值 (Query Reference Value)](#31-查询参考值-query-reference-value)
+- [3.2 注册参考值 (Register Reference Value)](#32-注册参考值-register-reference-value)
+- [3.3 删除参考值 (Delete Reference Value)](#33-删除参考值-delete-reference-value)
 
-### [4. 健康检查 API (`/api`)](#4-健康检查-api-api)
-- [4.1 基本健康检查](#41-基本健康检查)
-- [4.2 服务健康检查](#42-服务健康检查)
+### [4. 审计 API (`/api/audit`)](#审计-api-apiaudit)
+- [4.1 列出认证记录 (List Attestation Records)](#41-列出认证记录-list-attestation-records)
+- [4.2 列出资源请求记录 (List Resource Requests)](#42-列出资源请求记录-list-resource-requests)
 
-### [5. 实例API (`/api/aa-instance`)](#5-实例api-apiaa-instance)
-- [5.1 AA实例心跳](#51-aa实例心跳)
-- [5.2 实例列表](#52-实例列表)
+### [5. 健康检查 API (`/api`)](#5-健康检查-api-api)
+- [5.1 基本健康检查](#51-基本健康检查)
+- [5.2 服务健康检查](#52-服务健康检查)
+
+### [6. 实例API (`/api/aa-instance`)](#6-实例api-apiaa-instance)
+- [6.1 AA实例心跳](#61-aa实例心跳)
+- [6.2 实例列表](#62-实例列表)
 
 ### [附录](#附录)
 - [KBS认证头生成方法](#kbs认证头生成方法)
@@ -672,11 +677,188 @@ curl -k -X DELETE http://<gateway-host>:<port>/api/kbs/v0/resource/my-repo/my-ty
 
 ### ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/7066c995-d1a1-4d28-b709-013982722a26.png)
 
+---
+
+### AS API (`**/api/attestation-service**`)
+
+这部分 API 用于处理与 Attestation Service (AS) 相关的操作。Gateway 作为代理将请求转发给后端 AS 服务，并将响应返回给客户端。证明操作会异步记录审计日志到 Gateway 数据库。
+
+#### 2.1 证明 (Attestation)
+
+*   **端点:** `POST /attestation-service/attestation`
+    
+*   **说明:** 用于向后端 AS 服务提交 TEE 证据以进行验证。Gateway 会将请求转发给 AS，并将 AS 的响应返回给客户端。之后，Gateway 会**异步记录一条证明审计日志**到其数据库。
+    
+*   **调用方法:**
+    
+
+```shell
+curl -k -X POST http://<gateway-host>:<port>/api/attestation-service/attestation \
+     -H 'Content-Type: application/json' \
+     -H 'AAInstanceInfo: {"image_id":"aliyun_3_9_x64_20G_uefi_alibase_20231219.vhd","instance_id":"i-bp13wqyr5ik6l669424n","instance_name":"test-cc","owner_account_id":"1242424451954755"}' \
+     -d '{
+             "tee-pubkey": {
+                 "alg": "RSA",
+                 "k-mod": "base64_modulus",
+                 "k-exp": "base64_exponent"
+             },
+             "tee-evidence": { ... }
+         }'
+```
+
+*   **请求头:**
+    
+    *   `Content-Type: application/json`
+        
+    *   `AAInstanceInfo: '{"image_id":"aliyun_3_9_x64_20G_uefi_alibase_20231219.vhd","instance_id":"i-bp13wqyr5ik6l669424n","instance_name":"test-cc","owner_account_id":"1242424451954755"}'` (可选，但建议提供)
+        
+*   **请求体 (JSON - 由 AS 定义):**
+    
+
+```json
+{
+    "tee-pubkey": {       // (必需) TEE 公钥信息
+        "alg": "string",   // 例如 "RSA", "ECDSA"
+        "k-mod": "string", // Base64 编码的 RSA 模数 (如果 alg="RSA")
+        "k-exp": "string"  // Base64 编码的 RSA 公钥指数 (如果 alg="RSA")
+    },
+    "tee-evidence": {}     // (必需) TEE 生成的证据 (具体结构取决于 TEE 类型)
+}
+```
+
+*   **响应:**
+    
+    *   成功时，响应体、状态码和头由后端 AS 服务决定。
+        
+        *   通常 AS 返回 `200 OK`。
+            
+        *   响应体格式由 AS 决定，可能是 JWT 格式的证明令牌或其他格式。
+            
+    *   失败时，可能由 AS 或 Gateway 返回错误。
+        
+    *   无论成功失败，Gateway 都会**异步记录审计日志** (`AttestationRecord`)，包含客户端 IP、请求的声明 (claims)、AS 返回的状态码、是否成功 (`仅当 AS 返回 200 时为 true`)、来源服务标识以及时间戳。
+        
+*   **返回码:**
+    
+    *   `200 OK`: 证明成功 (由 AS 返回)。
+        
+    *   `400 Bad Request`: 请求格式错误 (由 AS 返回)。
+        
+    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法读取请求体、无法转发请求给 AS、无法读取 AS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
+        
+    *   _其他由 AS 返回的状态码 (例如 4xx 证据验证失败, 5xx)_
+        
+*   **返回示例 (成功 - 返回证明结果):**
+
+```json
+{
+    "token": "jwt_or_other_format_attestation_result"
+}
+```
+
+#### 2.2 挑战 (Challenge)
+
+*   **端点:** `POST /attestation-service/challenge`
+    
+*   **说明:** 用于向后端 AS 服务请求证明挑战。Gateway 会将请求**直接转发**给配置的 AS 服务，并将 AS 的响应返回给客户端。
+    
+*   **调用方法:**
+    
+
+```shell
+curl -k -X POST http://<gateway-host>:<port>/api/attestation-service/challenge \
+     -H 'Content-Type: application/json' \
+     -d '{
+             "tee": "tdx",
+             "extra-params": "..."
+         }'
+```
+
+*   **请求头:**
+    
+    *   `Content-Type: application/json`
+        
+*   **请求体 (JSON - 由 AS 定义):**
+    
+
+```json
+{
+    "tee": "string",        // (必需) TEE 类型，例如 "tdx", "sgx", "snp"
+    "extra-params": "string" // (可选) 额外参数
+}
+```
+
+*   **响应:** 响应体和状态码由后端 AS 服务决定。
+    
+*   **返回码:**
+    
+    *   `200 OK`: 挑战生成成功 (由 AS 返回)。
+        
+    *   `400 Bad Request`: 请求格式错误 (由 AS 返回)。
+        
+    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法读取请求体、无法转发请求给 AS、无法读取 AS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
+        
+    *   _其他状态码完全由 AS 决定 (例如 5xx)_。
+        
+*   **返回示例 (成功):**
+
+```json
+{
+    "nonce": "base64_encoded_challenge_nonce",
+    "extra-params": { ... }
+}
+```
+
+#### 2.3 获取证书 (Get Certificate)
+
+*   **端点:** `GET /attestation-service/certificate`
+    
+*   **说明:** 用于从后端 AS 服务获取认证证书或证书链。Gateway 会将请求**直接转发**给配置的 AS 服务，并将 AS 的响应返回给客户端。
+    
+*   **调用方法:**
+    
+
+```shell
+curl -k http://<gateway-host>:<port>/api/attestation-service/certificate
+```
+
+*   **请求头:** 无特殊要求。
+    
+*   **请求参数:** 无 (具体参数由 AS 定义)。
+    
+*   **请求体:** 无。
+    
+*   **响应:** 响应体和状态码由后端 AS 服务决定。
+    
+    *   成功时 AS 通常返回 `200 OK`，响应体可能是 PEM 格式的证书内容。
+        
+*   **返回码:**
+    
+    *   `200 OK`: 成功获取证书 (由 AS 返回)。
+        
+    *   `404 Not Found`: 证书不存在 (由 AS 返回)。
+        
+    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法转发请求给 AS、无法读取 AS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
+        
+    *   _其他由 AS 返回的状态码 (例如 5xx)_
+        
+*   **返回示例 (成功 - 由 AS 返回证书内容):**
+
+```plaintext
+-----BEGIN CERTIFICATE-----
+MIIBkTCB+wIJAMlyFqk69v+9MA0GCSqGSIb3DQEBCwUAMBQxEjAQBgNVBAMMCWxv
+Y2FsaG9zdDAeFw0xNTEyMjkxNTI2NDdaFw0yNTEyMjYxNTI2NDdaMBQxEjAQBgNV
+...
+-----END CERTIFICATE-----
+```
+
+---
+
 ### RVPS API (`**/api/rvps**`)
 
 这部分 API 用于与参考值提供服务 (Reference Value Provider Service - RVPS) 进行交互。Gateway 仅在配置了 RVPS gRPC 客户端的情况下处理这些请求，否则将返回 404。
 
-#### 2.1 查询参考值 (Query Reference Value)
+#### 3.1 查询参考值 (Query Reference Value)
 
 *   **端点:** `GET /api/rvps/query`
     
@@ -731,7 +913,7 @@ curl -k http://<gateway-host>:<port>/api/rvps/query
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/ad6f5cea-87c0-4e21-a85d-ab1b3314e969.png)
 
-#### 2.2 注册参考值 (Register Reference Value)
+#### 3.2 注册参考值 (Register Reference Value)
 
 *   **端点:** `POST /api/rvps/register`
     
@@ -813,7 +995,7 @@ EOF
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/22b4361d-9b13-487a-bcb7-b0acee409517.png)
 
-#### 2.3 删除参考值 (Delete Reference Value)
+#### 3.3 删除参考值 (Delete Reference Value)
 
 *   **端点:** `DELETE /api/rvps/delete/{name}`
     
@@ -856,7 +1038,7 @@ curl -k -X DELETE http://<gateway-host>:<port>/api/rvps/delete/test-binary-1
 
 这部分 API 用于查询 **Gateway 数据库中**记录的审计日志。
 
-#### 3.1 列出认证记录 (List Attestation Records)
+#### 4.1 列出认证记录 (List Attestation Records)
 
 *   **端点:** `GET /api/audit/attestation`
     
@@ -940,7 +1122,7 @@ curl -k http://<gateway-host>:<port>/api/audit/attestation?limit=50&offset=50
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/1a9e39fe-2b91-4d75-a0f2-f54d1967ea40.png)
 
-#### 3.2 列出资源请求记录 (List Resource Requests)
+#### 4.2 列出资源请求记录 (List Resource Requests)
 
 *   **端点:** `GET /api/audit/resources`
     
@@ -1053,9 +1235,9 @@ curl -k http://<gateway-host>:<port>/api/audit/resources?method=POST&successful=
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/e8d72305-e3ba-423e-ae65-ead7d7c9e252.png)
 
-### 4. 健康检查 API (`**/api**`)
+### 5. 健康检查 API (`**/api**`)
 
-#### 4.1 基本健康检查
+#### 5.1 基本健康检查
 
 *   **端点:** `GET /api/health`
     
@@ -1091,7 +1273,7 @@ curl -k http://<gateway-host>:<port>/api/health
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/a9973c16-7a40-49d4-a011-da007cc3c555.png)
 
-#### 4.2 服务健康检查
+#### 5.2 服务健康检查
 
 *   **端点:** `GET /api/services-health`
     
@@ -1151,9 +1333,9 @@ curl -k http://<gateway-host>:<port>/api/services-health
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/6d64d513-4484-4048-b042-59588a420f67.png)
 
-### 5. 实例API (`**/api/aa-instance**`)
+### 6. 实例API (`**/api/aa-instance**`)
 
-#### 5.1 AA实例心跳
+#### 6.1 AA实例心跳
 
 *   **端点:** `POST /api/aa-instance/heartbeat`
     
@@ -1190,7 +1372,7 @@ curl -X POST http://<gateway-host>:<port>/api/aa-instance/heartbeat \
 {"status":"ok","timestamp":"2025-06-10T11:58:42+08:00"}
 ```
 
-#### 5.2 实例列表
+#### 6.2 实例列表
 
 *   **端点:** `GET /api/aa-instance/list`
     
