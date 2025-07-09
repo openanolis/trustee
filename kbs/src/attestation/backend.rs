@@ -89,6 +89,11 @@ pub trait Attest: Send + Sync {
         Err(anyhow!("List Policies API is unimplemented"))
     }
 
+    /// Delete Attestation Policy
+    async fn delete_policy(&self, _policy_id: &str) -> anyhow::Result<()> {
+        Err(anyhow!("Delete Policy API is unimplemented"))
+    }
+
     /// Verify Attestation Evidence
     /// Return Attestation Results Token
     async fn verify(&self, tee: Tee, nonce: &str, attestation: &str) -> anyhow::Result<String>;
@@ -186,6 +191,13 @@ impl AttestationService {
             .list_policies()
             .await
             .map_err(|e| Error::ListPolicies { source: e })
+    }
+
+    pub async fn delete_policy(&self, policy_id: &str) -> Result<()> {
+        self.inner
+            .delete_policy(policy_id)
+            .await
+            .map_err(|e| Error::DeletePolicy { source: e })
     }
 
     pub async fn auth(&self, request: &[u8]) -> Result<HttpResponse> {

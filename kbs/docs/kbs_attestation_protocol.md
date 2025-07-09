@@ -538,6 +538,7 @@ party service API, then the symmetric key used to encrypt the output payload can
 be wrapped with the provided `tee-pubkey`.
 
 ### Set Attestation Policy
+
 User of KBS can set an attestation verification policy through the following endpoint:
 
 ```
@@ -559,7 +560,29 @@ and `policy` is the base64 encoded policy content.
 Only authenticated users can send a POST request to this endpoint.
 KBS verifies the user identity with the user's private key signed JSON Web Token (JWT) that must be included in the request.
 
+### Get Attestation Policy
+
+User can get a specific attestation verification policy through the following endpoint:
+
+```
+/kbs/v0/attestation-policy/{policy_id}
+```
+
+This is a GET request where `{policy_id}` is the ID of the policy to retrieve.
+
+### Delete Attestation Policy
+
+User can delete a specific attestation verification policy through the following endpoint:
+
+```
+/kbs/v0/attestation-policy/{policy_id}
+```
+
+This is a DELETE request where `{policy_id}` is the ID of the policy to delete.
+Only authenticated users can send a DELETE request to this endpoint.
+
 ### Set Resource Policy
+
 User of KBS can set an resource policy through the following endpoint:
 
 ```

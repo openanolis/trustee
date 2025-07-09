@@ -85,6 +85,40 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AttestationPolicy'
+
+  /attestation-policy/{policy_id}:
+    get:
+      operationId: getAttestationPolicy
+      summary: Get attestation verification policy
+      parameters:
+        - in: path
+          name: policy_id
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: The attestation policy
+          content:
+            application/json:
+              schema:
+                type: string
+        404:
+          description: Policy not found
+    delete:
+      operationId: deleteAttestationPolicy
+      summary: Delete attestation verification policy
+      parameters:
+        - in: path
+          name: policy_id
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Policy deleted successfully
+        404:
+          description: Policy not found
   
   /resource-policy:
     post:

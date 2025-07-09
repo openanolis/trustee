@@ -190,6 +190,15 @@ pub(crate) async fn api(
                 .body(policy))
         }
         #[cfg(feature = "as")]
+        "attestation-policy"
+            if request.method() == Method::DELETE && !additional_path.is_empty() =>
+        {
+            let policy_id = additional_path.strip_prefix('/').unwrap_or(additional_path);
+
+            core.attestation_service.delete_policy(policy_id).await?;
+            Ok(HttpResponse::Ok().finish())
+        }
+        #[cfg(feature = "as")]
         "attestation-policies" if request.method() == Method::GET => {
             let policies = core.attestation_service.list_policies().await?;
             let policies_json = serde_json::to_string(&policies)?;
