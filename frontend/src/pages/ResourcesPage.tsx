@@ -148,6 +148,11 @@ const ResourcesPage: React.FC = () => {
 
   const columns = [
     {
+      title: '索引',
+      key: 'index',
+      render: (_: any, record: Resource) => `kbs:///${record.repository_name}/${record.resource_type}/${record.resource_tag}`,
+    },
+    {
       title: '仓库',
       dataIndex: 'repository_name',
       key: 'repository_name',
