@@ -18,7 +18,8 @@ use crate::attestation::backend::{make_nonce, Attest};
 
 use self::attestation::{
     attestation_request::RuntimeData, attestation_service_client::AttestationServiceClient,
-    AttestationRequest, ChallengeRequest, GetPolicyRequest, ListPoliciesRequest, SetPolicyRequest,
+    AttestationRequest, ChallengeRequest, DeletePolicyRequest, GetPolicyRequest,
+    ListPoliciesRequest, SetPolicyRequest,
 };
 
 mod attestation {
@@ -123,6 +124,21 @@ impl Attest for GrpcClientPool {
         }
 
         Ok(policies_map)
+    }
+
+    async fn delete_policy(&self, policy_id: &str) -> Result<()> {
+        let req = tonic::Request::new(DeletePolicyRequest {
+            policy_id: policy_id.to_string(),
+        });
+
+        let mut client = { self.pool.lock().await.get().await? };
+
+        client
+            .delete_attestation_policy(req)
+            .await
+            .map_err(|e| anyhow!("Delete Policy Failed: {:?}", e))?;
+
+        Ok(())
     }
 
     async fn verify(&self, tee: Tee, nonce: &str, attestation: &str) -> Result<String> {

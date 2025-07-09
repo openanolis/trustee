@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use attestation_service::{config::Config as AsConfig, AttestationService, Data, HashAlgorithm};
 use kbs_types::{Attestation, Challenge, Tee};
 use serde_json::json;
+use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 use crate::attestation::backend::{make_nonce, Attest};
@@ -22,6 +23,26 @@ impl Attest for BuiltInCoCoAs {
             .write()
             .await
             .set_policy(policy_id.to_string(), policy.to_string())
+            .await
+    }
+
+    async fn get_policy(&self, policy_id: &str) -> Result<String> {
+        self.inner
+            .read()
+            .await
+            .get_policy(policy_id.to_string())
+            .await
+    }
+
+    async fn list_policies(&self) -> Result<HashMap<String, String>> {
+        self.inner.read().await.list_policies().await
+    }
+
+    async fn delete_policy(&self, policy_id: &str) -> Result<()> {
+        self.inner
+            .write()
+            .await
+            .delete_policy(policy_id.to_string())
             .await
     }
 

@@ -51,4 +51,10 @@ pub enum Error {
         #[source]
         source: anyhow::Error,
     },
+
+    #[error("Delete Attestation Policy failed")]
+    DeletePolicy {
+        #[source]
+        source: anyhow::Error,
+    },
 }
