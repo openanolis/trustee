@@ -9,18 +9,6 @@ Trustee 可以广泛应用于多种应用程序和硬件平台。
 
 ## 组件
 
-- [Key Broker Service](kbs)
-  用于协助远程证明和机密数据下发。其角色类似于 RATS 模型中的 [Rely Party](https://www.ietf.org/archive/id/draft-ietf-rats-architecture-22.html#name-relying-party)。
-
-- [Attestation Service](attestation-service)
-  用于验证 TEE 证据。在 RATS 模型中，这是 [Verfier](https://www.ietf.org/archive/id/draft-ietf-rats-architecture-22.html#name-verifier)。
-
-- [参考值提供服务 (RVPS)](rvps)
-  RVPS 管理用于验证 TEE 证据的参考值。这与 RATS 文档中 [第 7.5 节](https://www.ietf.org/archive/id/draft-ietf-rats-architecture-22.html#name-endorser-reference-value-pr) 的讨论相关。
-
-- [KBS 客户端工具](tools/kbs-client/)
-  一个简单的客户端工具，可用于测试或配置 KBS 和 AS，一些场合下又称作Trustee Client。
-
 Trustee项目采用微服务架构，主要包含以下核心模块组件：
 
 ### 服务层组件
