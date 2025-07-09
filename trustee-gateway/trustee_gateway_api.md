@@ -864,41 +864,44 @@ curl -k http://<gateway-host>:<port>/api/audit/attestation?limit=50&offset=50
         
 *   **响应:**
     
-    *   成功时，返回包含认证记录列表的 JSON 数组 (`[]models.AttestationRecord`)。
+    *   成功时，返回包含认证记录列表和总数的 JSON 对象，包含 `data` (记录数组) 和 `total` (当前返回的记录数量)。
         
     *   失败时，返回错误信息。
         
 *   **返回码:**
     
-    *   `200 OK`: 成功。
+    *   `200 OK`: 成功。
         
-    *   `500 Internal Server Error`: 查询 Gateway 数据库出错。响应体 `{"error": "Failed to list attestation records"}`。
+    *   `500 Internal Server Error`: 查询 Gateway 数据库出错。响应体 `{"error": "Failed to list attestation records"}`。
         
-*   **返回示例 (成功):**
+*   **返回示例 (成功):**
     
 
 ```json
-[
-    {
-        "id": 1, // 数据库自增 ID
-        "client_ip": "192.168.1.101",
-        "session_id": "session-abc",
-        "request_body": "{\"tee-pubkey\":{...},\"tee-evidence\":{...}}", // 原始请求体
-        "status": 200, // KBS 返回的状态码
-        "successful": true, // 是否 status == 200
-        "timestamp": "2024-01-10T12:34:56Z" // Gateway 记录时间
-    },
-    {
-        "id": 2,
-        "client_ip": "10.0.0.5",
-        "session_id": "session-xyz",
-        "request_body": "{\"tee-pubkey\":{...},\"tee-evidence\":{...}}",
-        "status": 403,
-        "successful": false,
-        "timestamp": "2024-01-10T12:35:10Z"
-    }
-    // ... more records
-]
+{
+    "data": [
+        {
+            "id": 1, // 数据库自增 ID
+            "client_ip": "192.168.1.101",
+            "session_id": "session-abc",
+            "request_body": "{\"tee-pubkey\":{...},\"tee-evidence\":{...}}", // 原始请求体
+            "status": 200, // KBS 返回的状态码
+            "successful": true, // 是否 status == 200
+            "timestamp": "2024-01-10T12:34:56Z" // Gateway 记录时间
+        },
+        {
+            "id": 2,
+            "client_ip": "10.0.0.5",
+            "session_id": "session-xyz",
+            "request_body": "{\"tee-pubkey\":{...},\"tee-evidence\":{...}}",
+            "status": 403,
+            "successful": false,
+            "timestamp": "2024-01-10T12:35:10Z"
+        }
+        // ... more records
+    ],
+    "total": 2 // 当前返回的记录数量
+}
 ```
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/1a9e39fe-2b91-4d75-a0f2-f54d1967ea40.png)
@@ -956,20 +959,21 @@ curl -k http://<gateway-host>:<port>/api/audit/resources?method=POST&successful=
     
 *   **响应:**
     
-    *   成功时，返回包含资源请求记录列表的 JSON 数组 (`[]models.ResourceRequest`)。
+    *   成功时，返回包含资源请求记录列表和总数的 JSON 对象，包含 `data` (记录数组) 和 `total` (当前返回的记录数量)。
         
     *   失败时，返回错误信息。
         
 *   **返回码:**
     
-    *   `200 OK`: 成功。
+    *   `200 OK`: 成功。
         
-    *   `500 Internal Server Error`: 查询 Gateway 数据库出错。响应体 `{"error": "Failed to list resource requests"}`。
+    *   `500 Internal Server Error`: 查询 Gateway 数据库出错。响应体 `{"error": "Failed to list resource requests"}`。
         
-*   **返回示例 (成功):**
+*   **返回示例 (成功):**
     
 
 ```json
+<<<<<<< HEAD
 [
     {
         "id": 1, // 数据库自增 ID
@@ -1009,6 +1013,50 @@ curl -k http://<gateway-host>:<port>/api/audit/resources?method=POST&successful=
     }
     // ... more records
 ]
+=======
+{
+    "data": [
+        {
+            "id": 1, // 数据库自增 ID
+            "client_ip": "192.168.1.102",
+            "session_id": "session-def", // 可能为空
+            "repository": "my-repo",
+            "type": "key",
+            "tag": "latest",
+            "method": "GET",
+            "status": 200, // KBS 返回的状态码
+            "successful": true, // 对 GET 来说 status == 200
+            "timestamp": "2024-01-11T09:15:00Z" // Gateway 记录时间
+        },
+        {
+            "id": 2,
+            "client_ip": "10.0.0.6",
+            "session_id": "",
+            "repository": "my-repo",
+            "type": "config",
+            "tag": "prod",
+            "method": "POST",
+            "status": 201, // KBS 返回的状态码
+            "successful": true, // 对 POST 来说 status in (200, 201, 204)
+            "timestamp": "2024-01-11T09:20:00Z"
+        },
+        {
+            "id": 3,
+            "client_ip": "10.0.0.7",
+            "session_id": "",
+            "repository": "my-repo",
+            "type": "data",
+            "tag": "v1",
+            "method": "GET",
+            "status": 404, // KBS 返回的状态码
+            "successful": false, // status != 200
+            "timestamp": "2024-01-11T09:25:00Z"
+        }
+        // ... more records
+    ],
+    "total": 3 // 当前返回的记录数量
+}
+>>>>>>> 5bcfa30 (Gateway: add record total number)
 ```
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/e8d72305-e3ba-423e-ae65-ead7d7c9e252.png)

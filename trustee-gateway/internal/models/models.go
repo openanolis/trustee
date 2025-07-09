@@ -75,3 +75,15 @@ type AAInstanceHeartbeat struct {
 	ClientIP      string            `json:"client_ip"`
 	LastHeartbeat time.Time         `json:"last_heartbeat"`
 }
+
+// AttestationRecordsResponse represents the response for listing attestation records
+type AttestationRecordsResponse struct {
+	Data  []AttestationRecord `json:"data"`
+	Total int64               `json:"total"`
+}
+
+// ResourceRequestsResponse represents the response for listing resource requests
+type ResourceRequestsResponse struct {
+	Data  []ResourceRequest `json:"data"`
+	Total int64             `json:"total"`
+}

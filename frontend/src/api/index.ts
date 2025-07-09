@@ -4,8 +4,8 @@ import type {
   AttestationPolicyList,
   ResourcePolicy, 
   Resource, 
-  AttestationRecord, 
-  ResourceRequest,
+  AttestationRecordsResponse,
+  ResourceRequestsResponse,
   HealthStatus,
   RvpsMessage,
   AAInstanceHeartbeat
@@ -169,7 +169,7 @@ export const auditApi = {
     instance_id?: string;
     limit?: number;
     offset?: number;
-  }) => apiClient.get<AttestationRecord[]>('/audit/attestation', { params }),
+  }) => apiClient.get<AttestationRecordsResponse>('/audit/attestation', { params }),
   
   listResourceRequests: (params?: {
     session_id?: string;
@@ -183,7 +183,7 @@ export const auditApi = {
     instance_id?: string;
     limit?: number;
     offset?: number;
-  }) => apiClient.get<ResourceRequest[]>('/audit/resources', { params }),
+  }) => apiClient.get<ResourceRequestsResponse>('/audit/resources', { params }),
 };
 
 export const rvpsApi = {
