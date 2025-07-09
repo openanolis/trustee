@@ -111,6 +111,12 @@ graph TB
     style VER fill:#fce4ec
 ```
 
+## API
+
+Trustee当前所有的API均通过Trustee Gateway对外暴露，详情请参阅Trustee Gateway API文档：
+
+- [Trustee Gateway API](trustee-gateway/trustee_gateway_api.md)
+
 ## 构建
 
 使用如下命令，在本地构建Trustee组件的容器镜像：
