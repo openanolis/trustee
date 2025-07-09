@@ -11,7 +11,7 @@ services:
     ports:
       - "${KBS_PORT:-8080}:8080"
     volumes:
-      - ./kbs-repository:/opt/trustee/kbs/repository:rw
+      - ./kbs:/opt/trustee/kbs:rw
       - ./kbs-public.pub:/etc/trustee/public.pub
       - ./configs/kbs-config.toml:/etc/trustee/kbs-config.toml
     depends_on:
