@@ -81,6 +81,17 @@ export interface ResourceRequest {
   owner_account_id?: string;
 }
 
+// audit API的响应结构
+export interface AttestationRecordsResponse {
+  data: AttestationRecord[];
+  total: number;
+}
+
+export interface ResourceRequestsResponse {
+  data: ResourceRequest[];
+  total: number;
+}
+
 // 认证相关类型
 export interface AuthState {
   isAuthenticated: boolean;

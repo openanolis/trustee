@@ -25,6 +25,8 @@ const { TabPane } = Tabs;
 const AuditPage: React.FC = () => {
   const [attestationRecords, setAttestationRecords] = useState<AttestationRecord[]>([]);
   const [resourceRequests, setResourceRequests] = useState<ResourceRequest[]>([]);
+  const [attestationTotal, setAttestationTotal] = useState<number>(0);
+  const [resourceTotal, setResourceTotal] = useState<number>(0);
   const [attestationLoading, setAttestationLoading] = useState(false);
   const [resourceLoading, setResourceLoading] = useState(false);
   const [attestationForm] = Form.useForm();
@@ -46,7 +48,8 @@ const AuditPage: React.FC = () => {
     setAttestationLoading(true);
     try {
       const response = await auditApi.listAttestationRecords(params);
-      setAttestationRecords(response.data);
+      setAttestationRecords(response.data.data);
+      setAttestationTotal(response.data.total);
     } catch (error) {
       console.error('获取Attestation记录失败:', error);
       message.error('获取Attestation记录失败');
@@ -59,7 +62,8 @@ const AuditPage: React.FC = () => {
     setResourceLoading(true);
     try {
       const response = await auditApi.listResourceRequests(params);
-      setResourceRequests(response.data);
+      setResourceRequests(response.data.data);
+      setResourceTotal(response.data.total);
     } catch (error) {
       console.error('获取Resource请求记录失败:', error);
       message.error('获取Resource请求记录失败');
@@ -333,7 +337,7 @@ const AuditPage: React.FC = () => {
       <Title level={2}>审计查询</Title>
 
       <Tabs activeKey={activeTab} onChange={setActiveTab}>
-        <TabPane tab="Attestation 审计" key="attestation">
+        <TabPane tab={`Attestation 审计 (当前: ${attestationTotal})`} key="attestation">
           <Card style={{ marginBottom: 16 }}>
             <Form
               form={attestationForm}
@@ -387,11 +391,11 @@ const AuditPage: React.FC = () => {
             rowKey="ID"
             loading={attestationLoading}
             scroll={{ x: 1100 }}
-            pagination={{ pageSize: 10 }}
+            pagination={{ pageSize: 10, showSizeChanger: true }}
           />
         </TabPane>
 
-        <TabPane tab="Resource 审计" key="resource">
+        <TabPane tab={`Resource 审计 (当前: ${resourceTotal})`} key="resource">
           <Card style={{ marginBottom: 16 }}>
             <Form
               form={resourceForm}
@@ -457,7 +461,7 @@ const AuditPage: React.FC = () => {
             rowKey="ID"
             loading={resourceLoading}
             scroll={{ x: 1300 }}
-            pagination={{ pageSize: 10 }}
+            pagination={{ pageSize: 10, showSizeChanger: true }}
           />
         </TabPane>
       </Tabs>

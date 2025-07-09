@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openanolis/trustee/gateway/internal/models"
 	"github.com/openanolis/trustee/gateway/internal/persistence/repository"
 	"github.com/sirupsen/logrus"
 )
@@ -80,7 +81,12 @@ func (h *AuditHandler) ListAttestationRecords(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, records)
+	response := models.AttestationRecordsResponse{
+		Data:  records,
+		Total: int64(len(records)),
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // ListResourceRequests handles retrieving resource request records
@@ -147,5 +153,10 @@ func (h *AuditHandler) ListResourceRequests(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, records)
+	response := models.ResourceRequestsResponse{
+		Data:  records,
+		Total: int64(len(records)),
+	}
+
+	c.JSON(http.StatusOK, response)
 }
