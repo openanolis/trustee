@@ -159,7 +159,7 @@ mod test {
     use chrono::{TimeZone, Utc};
     use serde_json::json;
 
-    use super::ReferenceValue;
+    use super::{HashValuePair, ReferenceValue, TrustedDigest};
 
     #[test]
     fn reference_value_serialize() {
@@ -207,5 +207,138 @@ mod test {
         }"#;
         let deserialized_rf: ReferenceValue = serde_json::from_str(&rv_json).unwrap();
         assert_eq!(deserialized_rf, rv);
+    }
+
+    #[test]
+    fn test_hash_value_pair_getters() {
+        let pair = HashValuePair::new("sha256".to_string(), "abcdef".to_string());
+        assert_eq!(pair.alg(), "sha256");
+        assert_eq!(pair.value(), "abcdef");
+    }
+
+    #[test]
+    fn test_reference_value_new() {
+        let rv = ReferenceValue::new().expect("Failed to create ReferenceValue");
+        assert_eq!(rv.version, crate::reference_value::REFERENCE_VALUE_VERSION);
+        assert_eq!(rv.name, "");
+        assert!(rv.hash_value.is_empty());
+    }
+
+    #[test]
+    fn test_reference_value_set_version() {
+        let rv = ReferenceValue::new()
+            .expect("Failed to create ReferenceValue")
+            .set_version("2.0.0");
+        assert_eq!(rv.version(), "2.0.0");
+    }
+
+    #[test]
+    fn test_reference_value_set_name() {
+        let rv = ReferenceValue::new()
+            .expect("Failed to create ReferenceValue")
+            .set_name("test_artifact");
+        assert_eq!(rv.name(), "test_artifact");
+    }
+
+    #[test]
+    fn test_reference_value_set_expiration() {
+        let expiration = Utc.with_ymd_and_hms(2025, 12, 31, 23, 59, 59).unwrap();
+        let rv = ReferenceValue::new()
+            .expect("Failed to create ReferenceValue")
+            .set_expiration(expiration);
+        assert_eq!(rv.expiration, expiration);
+    }
+
+    #[test]
+    fn test_reference_value_expired() {
+        // Create a reference value that is already expired
+        let past = Utc::now() - chrono::Duration::days(1);
+        let rv_expired = ReferenceValue::new()
+            .expect("Failed to create ReferenceValue")
+            .set_expiration(past);
+        assert!(rv_expired.expired(), "Reference value should be expired");
+
+        // Create a reference value that is not yet expired
+        let future = Utc::now() + chrono::Duration::days(1);
+        let rv_valid = ReferenceValue::new()
+            .expect("Failed to create ReferenceValue")
+            .set_expiration(future);
+        assert!(!rv_valid.expired(), "Reference value should not be expired");
+    }
+
+    #[test]
+    fn test_reference_value_add_hash_value() {
+        let rv = ReferenceValue::new()
+            .expect("Failed to create ReferenceValue")
+            .add_hash_value("sha256".to_string(), "abc123".to_string())
+            .add_hash_value("sha384".to_string(), "def456".to_string());
+
+        assert_eq!(rv.hash_values().len(), 2);
+        assert_eq!(rv.hash_values()[0].alg(), "sha256");
+        assert_eq!(rv.hash_values()[0].value(), "abc123");
+        assert_eq!(rv.hash_values()[1].alg(), "sha384");
+        assert_eq!(rv.hash_values()[1].value(), "def456");
+    }
+
+    #[test]
+    fn test_reference_value_deserialize_invalid_date() {
+        // Test with invalid date format
+        let invalid_date_json = r#"{
+            "expiration": "not-a-date",
+            "name": "artifact",
+            "version": "1.0.0",
+            "hash-value": []
+        }"#;
+
+        let result: Result<ReferenceValue, _> = serde_json::from_str(invalid_date_json);
+        assert!(result.is_err(), "Should fail to deserialize invalid date");
+    }
+
+    #[test]
+    fn test_reference_value_deserialize_missing_date() {
+        // Test with missing date
+        let missing_date_json = r#"{
+            "name": "artifact",
+            "version": "1.0.0",
+            "hash-value": []
+        }"#;
+
+        let result: Result<ReferenceValue, _> = serde_json::from_str(missing_date_json);
+        assert!(result.is_err(), "Should fail to deserialize missing date");
+    }
+
+    #[test]
+    fn test_trusted_digest() {
+        let digest = TrustedDigest {
+            name: "test_artifact".to_string(),
+            hash_values: vec!["hash1".to_string(), "hash2".to_string()],
+        };
+
+        assert_eq!(digest.name, "test_artifact");
+        assert_eq!(digest.hash_values.len(), 2);
+        assert_eq!(digest.hash_values[0], "hash1");
+        assert_eq!(digest.hash_values[1], "hash2");
+    }
+
+    #[test]
+    fn test_trusted_digest_default() {
+        let digest = TrustedDigest::default();
+        assert_eq!(digest.name, "");
+        assert!(digest.hash_values.is_empty());
+    }
+
+    #[test]
+    fn test_trusted_digest_serialize_deserialize() {
+        let digest = TrustedDigest {
+            name: "test_artifact".to_string(),
+            hash_values: vec!["hash1".to_string(), "hash2".to_string()],
+        };
+
+        let serialized = serde_json::to_string(&digest).expect("Failed to serialize");
+        let deserialized: TrustedDigest =
+            serde_json::from_str(&serialized).expect("Failed to deserialize");
+
+        assert_eq!(deserialized.name, digest.name);
+        assert_eq!(deserialized.hash_values, digest.hash_values);
     }
 }

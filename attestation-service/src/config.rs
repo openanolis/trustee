@@ -78,15 +78,147 @@ impl TryFrom<&Path> for Config {
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
+    use std::env;
+    use std::fs::File;
+    use std::io::Write;
     use std::path::PathBuf;
+    use tempfile::tempdir;
 
-    use super::Config;
+    use super::{default_work_dir, Config, ConfigError, AS_WORK_DIR, DEFAULT_WORK_DIR};
     use crate::rvps::RvpsCrateConfig;
     use crate::{
         rvps::RvpsConfig,
         token::{ear_broker, simple, AttestationTokenConfig},
     };
     use reference_value_provider_service::storage::{local_fs, ReferenceValueStorageConfig};
+
+    #[test]
+    fn test_default_work_dir_with_env_var() {
+        // Set environment variable
+        env::set_var(AS_WORK_DIR, "/custom/path");
+
+        // Get default work directory
+        let work_dir = default_work_dir();
+
+        // Verify result
+        assert_eq!(work_dir, PathBuf::from("/custom/path"));
+
+        // Clean up
+        env::remove_var(AS_WORK_DIR);
+    }
+
+    #[test]
+    fn test_default_work_dir_without_env_var() {
+        // Ensure environment variable is not set
+        env::remove_var(AS_WORK_DIR);
+
+        // Get default work directory
+        let work_dir = default_work_dir();
+
+        // Verify result
+        assert_eq!(work_dir, PathBuf::from(DEFAULT_WORK_DIR));
+    }
+
+    #[test]
+    fn test_config_default() {
+        // Ensure environment variable is not set
+        env::remove_var(AS_WORK_DIR);
+
+        // Create default config
+        let config = Config::default();
+
+        // Verify default values
+        assert_eq!(config.work_dir, PathBuf::from(DEFAULT_WORK_DIR));
+        assert_eq!(config.rvps_config, RvpsConfig::default());
+        assert_eq!(
+            config.attestation_token_broker,
+            AttestationTokenConfig::default()
+        );
+    }
+
+    #[test]
+    fn test_config_try_from_invalid_path() {
+        // Try to load config from non-existent file
+        let result = Config::try_from(PathBuf::from("/non/existent/file").as_path());
+
+        // Verify error
+        assert!(result.is_err());
+        if let Err(err) = result {
+            match err {
+                ConfigError::IO(_) => {} // Expected error type
+                _ => panic!("Unexpected error type: {:?}", err),
+            }
+        }
+    }
+
+    #[test]
+    fn test_config_try_from_invalid_json() {
+        // Create temporary directory
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("invalid.json");
+
+        // Create file with invalid JSON
+        let mut file = File::create(&file_path).unwrap();
+        file.write_all(b"{invalid json}").unwrap();
+
+        // Try to load config from invalid JSON file
+        let result = Config::try_from(file_path.as_path());
+
+        // Verify error
+        assert!(result.is_err());
+        if let Err(err) = result {
+            match err {
+                ConfigError::JsonFileParse(_) => {} // Expected error type
+                _ => panic!("Unexpected error type: {:?}", err),
+            }
+        }
+    }
+
+    #[test]
+    fn test_config_try_from_valid_json() {
+        // Create temporary directory
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("valid.json");
+
+        // Create file with valid JSON
+        let mut file = File::create(&file_path).unwrap();
+        file.write_all(
+            br#"{
+            "work_dir": "/test/path",
+            "rvps_config": {
+                "type": "BuiltIn",
+                "storage": {
+                    "type": "LocalFs"
+                }
+            },
+            "attestation_token_broker": {
+                "type": "Simple",
+                "duration_min": 10,
+                "issuer_name": "test-issuer",
+                "policy_dir": "/test/policies"
+            }
+        }"#,
+        )
+        .unwrap();
+
+        // Load config from valid JSON file
+        let result = Config::try_from(file_path.as_path());
+
+        // Verify result
+        assert!(result.is_ok());
+        if let Ok(config) = result {
+            assert_eq!(config.work_dir, PathBuf::from("/test/path"));
+
+            // Check attestation_token_broker
+            if let AttestationTokenConfig::Simple(simple_config) = config.attestation_token_broker {
+                assert_eq!(simple_config.duration_min, 10);
+                assert_eq!(simple_config.issuer_name, "test-issuer");
+                assert_eq!(simple_config.policy_dir, "/test/policies".to_string());
+            } else {
+                panic!("Expected Simple token config");
+            }
+        }
+    }
 
     #[rstest]
     #[case("./tests/configs/example1.json", Config {

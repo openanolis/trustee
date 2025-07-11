@@ -79,3 +79,92 @@ impl AttestationTokenConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_attestation_token_config_default() {
+        let config = AttestationTokenConfig::default();
+        match config {
+            AttestationTokenConfig::Ear(_) => {} // Expected default
+            _ => panic!("Expected Ear config as default"),
+        }
+    }
+
+    #[test]
+    fn test_attestation_token_config_display() {
+        let simple_config = AttestationTokenConfig::Simple(simple::Configuration::default());
+        let ear_config = AttestationTokenConfig::Ear(ear_broker::Configuration::default());
+
+        assert_eq!(format!("{}", simple_config), "Simple");
+        assert_eq!(format!("{}", ear_config), "Ear");
+    }
+
+    // Mock implementation of AttestationTokenBroker for testing
+    struct MockTokenBroker;
+
+    #[async_trait::async_trait]
+    impl AttestationTokenBroker for MockTokenBroker {
+        async fn issue(
+            &self,
+            _tcb_claims: TeeEvidenceParsedClaim,
+            _policy_ids: Vec<String>,
+            _init_data_claims: serde_json::Value,
+            _runtime_data_claims: serde_json::Value,
+            _reference_data_map: HashMap<String, Vec<String>>,
+            _tee: Tee,
+        ) -> Result<String> {
+            Ok("mock_token".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_default_policy_methods() {
+        let broker = MockTokenBroker;
+
+        // Test default set_policy implementation
+        let result = broker
+            .set_policy("policy_id".to_string(), "policy_content".to_string())
+            .await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Set Policy not support");
+
+        // Test default list_policies implementation
+        let result = broker.list_policies().await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "List Policies not support");
+
+        // Test default get_policy implementation
+        let result = broker.get_policy("policy_id".to_string()).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Get Policy not support");
+
+        // Test default delete_policy implementation
+        let result = broker.delete_policy("policy_id".to_string()).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Delete Policy not support");
+    }
+
+    #[tokio::test]
+    async fn test_mock_token_broker() {
+        let broker = MockTokenBroker;
+
+        // Test issue method
+        let result = broker
+            .issue(
+                TeeEvidenceParsedClaim::default(),
+                vec!["policy1".to_string()],
+                json!({}),
+                json!({}),
+                HashMap::new(),
+                Tee::Tdx,
+            )
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "mock_token");
+    }
+}

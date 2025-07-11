@@ -223,6 +223,7 @@ mod tests {
     use ear::TrustVector;
     use rstest::rstest;
     use serde_json::json;
+    use std::io::ErrorKind;
 
     use super::*;
 
@@ -321,5 +322,137 @@ default allow = true"
         let test_policy = opa.get_policy("test".to_string()).await.unwrap();
         assert_eq!(test_policy, get_policy_output);
         assert!(opa.list_policies().await.is_ok());
+    }
+
+    #[test]
+    fn test_is_valid_policy_id() {
+        // Valid policy IDs
+        assert!(OPA::is_valid_policy_id("valid"));
+        assert!(OPA::is_valid_policy_id("valid_policy"));
+        assert!(OPA::is_valid_policy_id("valid-policy"));
+        assert!(OPA::is_valid_policy_id("valid123"));
+        assert!(OPA::is_valid_policy_id("123valid"));
+        assert!(OPA::is_valid_policy_id("VALID"));
+        assert!(OPA::is_valid_policy_id("Valid_Policy_123"));
+
+        // Invalid policy IDs
+        assert!(!OPA::is_valid_policy_id("invalid policy")); // Contains space
+        assert!(!OPA::is_valid_policy_id("invalid.policy")); // Contains dot
+        assert!(!OPA::is_valid_policy_id("invalid/policy")); // Contains slash
+        assert!(!OPA::is_valid_policy_id("invalid\\policy")); // Contains backslash
+        assert!(!OPA::is_valid_policy_id("invalid:policy")); // Contains colon
+        assert!(!OPA::is_valid_policy_id("invalid@policy")); // Contains at sign
+    }
+
+    #[tokio::test]
+    async fn test_delete_policy() {
+        // Create a temporary directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        let policy_dir = temp_dir.path().to_path_buf();
+
+        // Create OPA instance with a default policy
+        let default_policy = "package policy\ndefault allow = true";
+        let opa = OPA::new(policy_dir.clone(), default_policy).unwrap();
+
+        // Create a test policy
+        let policy = "package policy\ndefault deny = true";
+        let policy_id = "test_policy";
+        let encoded_policy = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(policy);
+
+        // Set the policy
+        opa.set_policy(policy_id.to_string(), encoded_policy)
+            .await
+            .unwrap();
+
+        // Verify policy exists
+        let policies = opa.list_policies().await.unwrap();
+        assert!(policies.contains_key(policy_id));
+
+        // Delete the policy
+        let result = opa.delete_policy(policy_id.to_string()).await;
+        assert!(result.is_ok());
+
+        // Verify policy no longer exists
+        let policies = opa.list_policies().await.unwrap();
+        assert!(!policies.contains_key(policy_id));
+    }
+
+    #[tokio::test]
+    async fn test_delete_default_policy() {
+        // Create a temporary directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        let policy_dir = temp_dir.path().to_path_buf();
+
+        // Create OPA instance with a default policy
+        let default_policy = "package policy\ndefault allow = true";
+        let opa = OPA::new(policy_dir.clone(), default_policy).unwrap();
+
+        // Try to delete the default policy
+        let result = opa.delete_policy("default".to_string()).await;
+
+        // Verify error
+        assert!(result.is_err());
+        match result {
+            Err(PolicyError::CannotDeleteDefaultPolicy) => {} // Expected error
+            _ => panic!("Unexpected error: {:?}", result),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_policy() {
+        // Create a temporary directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        let policy_dir = temp_dir.path().to_path_buf();
+
+        // Create OPA instance with a default policy
+        let default_policy = "package policy\ndefault allow = true";
+        let opa = OPA::new(policy_dir.clone(), default_policy).unwrap();
+
+        // Try to delete a non-existent policy
+        let result = opa.delete_policy("nonexistent".to_string()).await;
+
+        // Verify error
+        assert!(result.is_err());
+        match result {
+            Err(PolicyError::ReadPolicyFileFailed(e)) => {
+                assert_eq!(e.kind(), ErrorKind::NotFound);
+            }
+            _ => panic!("Unexpected error: {:?}", result),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_invalid_policy_id() {
+        // Create a temporary directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        let policy_dir = temp_dir.path().to_path_buf();
+
+        // Create OPA instance with a default policy
+        let default_policy = "package policy\ndefault allow = true";
+        let opa = OPA::new(policy_dir.clone(), default_policy).unwrap();
+
+        // Try to set a policy with an invalid ID
+        let policy = "package policy\ndefault allow = true";
+        let encoded_policy = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(policy);
+        let result = opa
+            .set_policy("invalid policy".to_string(), encoded_policy)
+            .await;
+
+        // Verify error
+        assert!(result.is_err());
+        match result {
+            Err(PolicyError::InvalidPolicyId) => {} // Expected error
+            _ => panic!("Unexpected error: {:?}", result),
+        }
+
+        // Try to delete a policy with an invalid ID
+        let result = opa.delete_policy("invalid policy".to_string()).await;
+
+        // Verify error
+        assert!(result.is_err());
+        match result {
+            Err(PolicyError::InvalidPolicyId) => {} // Expected error
+            _ => panic!("Unexpected error: {:?}", result),
+        }
     }
 }

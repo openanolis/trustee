@@ -61,3 +61,62 @@ pub trait ReferenceValueStorage {
     // Delete reference value by name. Return the deleted value if exists
     async fn delete(&self, name: &str) -> Result<Option<ReferenceValue>>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_reference_value_storage_config_default() {
+        let config = ReferenceValueStorageConfig::default();
+        assert!(matches!(config, ReferenceValueStorageConfig::LocalFs(_)));
+    }
+
+    #[test]
+    fn test_reference_value_storage_config_display() {
+        let fs_config = ReferenceValueStorageConfig::LocalFs(local_fs::Config::default());
+        let json_config = ReferenceValueStorageConfig::LocalJson(local_json::Config::default());
+
+        assert_eq!(format!("{}", fs_config), "LocalFs");
+        assert_eq!(format!("{}", json_config), "LocalJson");
+    }
+
+    #[test]
+    fn test_to_storage_local_fs() {
+        // Create a temporary directory for storage
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let dir_path = temp_dir.path().to_string_lossy().to_string();
+
+        // Create LocalFs config
+        let fs_config = local_fs::Config {
+            file_path: dir_path,
+        };
+        let config = ReferenceValueStorageConfig::LocalFs(fs_config);
+
+        // Convert to storage
+        let storage = config.to_storage();
+        assert!(storage.is_ok(), "to_storage should succeed for LocalFs");
+    }
+
+    #[test]
+    fn test_to_storage_local_json() {
+        // Create a temporary directory for storage
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let dir_path = temp_dir
+            .path()
+            .join("test.json")
+            .to_string_lossy()
+            .to_string();
+
+        // Create LocalJson config
+        let json_config = local_json::Config {
+            file_path: dir_path,
+        };
+        let config = ReferenceValueStorageConfig::LocalJson(json_config);
+
+        // Convert to storage
+        let storage = config.to_storage();
+        assert!(storage.is_ok(), "to_storage should succeed for LocalJson");
+    }
+}

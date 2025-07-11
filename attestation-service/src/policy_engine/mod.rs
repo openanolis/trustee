@@ -113,3 +113,95 @@ pub trait PolicyEngine: Send + Sync {
 
     async fn delete_policy(&self, policy_id: String) -> Result<(), PolicyError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_policy_error_display() {
+        // Test various PolicyError variants for their display implementation
+
+        // CreatePolicyDirFailed
+        let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "permission denied");
+        let err = PolicyError::CreatePolicyDirFailed(io_err);
+        assert_eq!(
+            format!("{}", err),
+            "Failed to create policy directory: permission denied"
+        );
+
+        // PolicyDirPathToStringFailed
+        let err = PolicyError::PolicyDirPathToStringFailed;
+        assert_eq!(
+            format!("{}", err),
+            "Failed to convert policy directory path to string"
+        );
+
+        // PolicyDenied
+        let err = PolicyError::PolicyDenied {
+            policy_id: "test_policy".to_string(),
+        };
+        assert_eq!(
+            format!("{}", err),
+            "Policy evaluation denied for test_policy"
+        );
+
+        // InvalidPolicyId
+        let err = PolicyError::InvalidPolicyId;
+        assert_eq!(
+            format!("{}", err),
+            "Illegal policy id. Only support alphabet, numeric, `-` or `_`"
+        );
+
+        // CannotDeleteDefaultPolicy
+        let err = PolicyError::CannotDeleteDefaultPolicy;
+        assert_eq!(format!("{}", err), "Cannot delete default policy");
+    }
+
+    #[test]
+    fn test_policy_engine_type_from_str() {
+        // Test case-insensitive parsing of PolicyEngineType
+
+        // Lowercase
+        let engine_type = PolicyEngineType::from_str("opa").unwrap();
+        match engine_type {
+            PolicyEngineType::OPA => {} // Expected
+        }
+
+        // Uppercase
+        let engine_type = PolicyEngineType::from_str("OPA").unwrap();
+        match engine_type {
+            PolicyEngineType::OPA => {} // Expected
+        }
+
+        // Mixed case
+        let engine_type = PolicyEngineType::from_str("OpA").unwrap();
+        match engine_type {
+            PolicyEngineType::OPA => {} // Expected
+        }
+
+        // Invalid value
+        let result = PolicyEngineType::from_str("invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_evaluation_result() {
+        // Create a simple EvaluationResult
+        let mut rules_result = HashMap::new();
+        rules_result.insert("rule1".to_string(), Value::Bool(true));
+        rules_result.insert("rule2".to_string(), Value::Bool(false));
+
+        let result = EvaluationResult {
+            rules_result,
+            policy_hash: "abc123".to_string(),
+        };
+
+        // Verify fields
+        assert_eq!(result.rules_result.len(), 2);
+        assert_eq!(result.rules_result.get("rule1"), Some(&Value::Bool(true)));
+        assert_eq!(result.rules_result.get("rule2"), Some(&Value::Bool(false)));
+        assert_eq!(result.policy_hash, "abc123");
+    }
+}

@@ -50,6 +50,16 @@ pub struct JwkAttestationTokenVerifier {
     insecure_key: bool,
 }
 
+impl Default for JwkAttestationTokenVerifier {
+    fn default() -> Self {
+        Self {
+            trusted_jwk_sets: jwk::JwkSet { keys: Vec::new() },
+            trusted_certs: Vec::new(),
+            insecure_key: false,
+        }
+    }
+}
+
 async fn get_jwks_from_file_or_url(p: &str) -> Result<jwk::JwkSet, JwksGetError> {
     let mut url = Url::parse(p).map_err(|e| JwksGetError::InvalidSourcePath(e.to_string()))?;
     match url.scheme() {
