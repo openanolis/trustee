@@ -99,3 +99,190 @@ impl TokenVerifier {
         Err(Error::NoTeePubKeyClaimFound)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_extract_tee_public_key_coco_path() {
+        // Create a TokenVerifier with default paths
+        let verifier = TokenVerifier {
+            verifier: jwk::JwkAttestationTokenVerifier::default(),
+            extra_teekey_paths: vec![
+                TOKEN_TEE_PUBKEY_PATH_COCO.to_string(),
+                TOKEN_TEE_PUBKEY_PATH_EAR.to_string(),
+            ],
+        };
+
+        // Create a claim with a tee public key at the COCO path
+        let claim = json!({
+            "customized_claims": {
+                "runtime_data": {
+                    "tee-pubkey": {
+                        "kty": "RSA",
+                        "alg": "RSA1_5",
+                        "n": "mod123",
+                        "e": "exp123"
+                    }
+                }
+            }
+        });
+
+        // Extract the tee public key
+        let result = verifier.extract_tee_public_key(claim);
+        assert!(result.is_ok());
+
+        let key = result.unwrap();
+        assert_eq!(key.alg, "RSA1_5");
+        assert_eq!(key.k_mod, "mod123");
+        assert_eq!(key.k_exp, "exp123");
+        assert_eq!(key.kty, "RSA");
+    }
+
+    #[test]
+    fn test_extract_tee_public_key_ear_path() {
+        // Create a TokenVerifier with default paths
+        let verifier = TokenVerifier {
+            verifier: jwk::JwkAttestationTokenVerifier::default(),
+            extra_teekey_paths: vec![
+                TOKEN_TEE_PUBKEY_PATH_COCO.to_string(),
+                TOKEN_TEE_PUBKEY_PATH_EAR.to_string(),
+            ],
+        };
+
+        // Create a claim with a tee public key at the EAR path
+        let claim = json!({
+            "submods": {
+                "cpu": {
+                    "ear.veraison.annotated-evidence": {
+                        "runtime_data_claims": {
+                            "tee-pubkey": {
+                                "kty": "RSA",
+                                "alg": "RSA1_5",
+                                "n": "mod456",
+                                "e": "exp456"
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Extract the tee public key
+        let result = verifier.extract_tee_public_key(claim);
+        assert!(result.is_ok());
+
+        let key = result.unwrap();
+        assert_eq!(key.alg, "RSA1_5");
+        assert_eq!(key.k_mod, "mod456");
+        assert_eq!(key.k_exp, "exp456");
+        assert_eq!(key.kty, "RSA");
+    }
+
+    #[test]
+    fn test_extract_tee_public_key_custom_path() {
+        // Create a TokenVerifier with a custom path
+        let verifier = TokenVerifier {
+            verifier: jwk::JwkAttestationTokenVerifier::default(),
+            extra_teekey_paths: vec![
+                "/custom/path/tee-pubkey".to_string(),
+                TOKEN_TEE_PUBKEY_PATH_COCO.to_string(),
+                TOKEN_TEE_PUBKEY_PATH_EAR.to_string(),
+            ],
+        };
+
+        // Create a claim with a tee public key at the custom path
+        let claim = json!({
+            "custom": {
+                "path": {
+                    "tee-pubkey": {
+                        "kty": "RSA",
+                        "alg": "RSA1_5",
+                        "n": "mod789",
+                        "e": "exp789"
+                    }
+                }
+            }
+        });
+
+        // Extract the tee public key
+        let result = verifier.extract_tee_public_key(claim);
+        assert!(result.is_ok());
+
+        let key = result.unwrap();
+        assert_eq!(key.alg, "RSA1_5");
+        assert_eq!(key.k_mod, "mod789");
+        assert_eq!(key.k_exp, "exp789");
+        assert_eq!(key.kty, "RSA");
+    }
+
+    #[test]
+    fn test_extract_tee_public_key_not_found() {
+        // Create a TokenVerifier with default paths
+        let verifier = TokenVerifier {
+            verifier: jwk::JwkAttestationTokenVerifier::default(),
+            extra_teekey_paths: vec![
+                TOKEN_TEE_PUBKEY_PATH_COCO.to_string(),
+                TOKEN_TEE_PUBKEY_PATH_EAR.to_string(),
+            ],
+        };
+
+        // Create a claim without a tee public key
+        let claim = json!({
+            "some": "other",
+            "data": "here"
+        });
+
+        // Extract the tee public key
+        let result = verifier.extract_tee_public_key(claim);
+        assert!(result.is_err());
+
+        match result {
+            Err(Error::NoTeePubKeyClaimFound) => {} // Expected error
+            _ => panic!("Expected NoTeePubKeyClaimFound error"),
+        }
+    }
+
+    #[test]
+    fn test_extract_tee_public_key_invalid_format() {
+        // Create a TokenVerifier with default paths
+        let verifier = TokenVerifier {
+            verifier: jwk::JwkAttestationTokenVerifier::default(),
+            extra_teekey_paths: vec![TOKEN_TEE_PUBKEY_PATH_COCO.to_string()],
+        };
+
+        // Create a claim with an invalid tee public key format
+        let claim = json!({
+            "customized_claims": {
+                "runtime_data": {
+                    "tee-pubkey": {
+                        // Missing required fields
+                        "alg": "RSA1_5"
+                        // n and e are missing
+                    }
+                }
+            }
+        });
+
+        // Extract the tee public key
+        let result = verifier.extract_tee_public_key(claim);
+        assert!(result.is_err());
+
+        match result {
+            Err(Error::TeePubKeyParseFailed) => {} // Expected error
+            _ => panic!("Expected TeePubKeyParseFailed error"),
+        }
+    }
+
+    #[test]
+    fn test_attestation_token_verifier_config_default() {
+        let config = AttestationTokenVerifierConfig::default();
+
+        assert!(config.extra_teekey_paths.is_empty());
+        assert!(config.trusted_certs_paths.is_empty());
+        assert!(config.trusted_jwk_sets.is_empty());
+        assert!(!config.insecure_key);
+    }
+}

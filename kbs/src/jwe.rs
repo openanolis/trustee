@@ -59,3 +59,118 @@ pub fn jwe(tee_pub_key: TeePubKey, payload_data: Vec<u8>) -> Result<Response> {
         tag: "".to_string(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rsa::traits::PublicKeyParts;
+    use rsa::RsaPrivateKey;
+    use serde_json::Value;
+
+    #[test]
+    fn test_jwe_invalid_algorithm() {
+        // Create a TeePubKey with an invalid algorithm
+        let tee_pub_key = TeePubKey {
+            kty: "RSA".to_string(),
+            alg: "INVALID_ALG".to_string(),
+            k_mod: "".to_string(),
+            k_exp: "".to_string(),
+        };
+
+        // Test with some payload data
+        let payload_data = b"test payload data".to_vec();
+
+        // Attempt to encrypt
+        let result = jwe(tee_pub_key, payload_data);
+
+        // Verify error
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("algorithm is not RSA1_5 but INVALID_ALG"));
+    }
+
+    #[test]
+    fn test_jwe_invalid_key_mod() {
+        // Create a TeePubKey with invalid base64 modulus
+        let tee_pub_key = TeePubKey {
+            kty: "RSA".to_string(),
+            alg: RSA_ALGORITHM.to_string(),
+            k_mod: "invalid-base64".to_string(),
+            k_exp: "AQAB".to_string(), // Standard RSA exponent 65537 in base64
+        };
+
+        // Test with some payload data
+        let payload_data = b"test payload data".to_vec();
+
+        // Attempt to encrypt
+        let result = jwe(tee_pub_key, payload_data);
+
+        // Verify error
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("base64 decode k_mod failed"));
+    }
+
+    #[test]
+    fn test_jwe_invalid_key_exp() {
+        // Create a TeePubKey with valid modulus but invalid exponent
+        let tee_pub_key = TeePubKey {
+            kty: "RSA".to_string(),
+            alg: RSA_ALGORITHM.to_string(),
+            // This is a valid base64 string but not a real key modulus
+            k_mod: URL_SAFE_NO_PAD.encode([0u8; 32]),
+            k_exp: "invalid-base64".to_string(),
+        };
+
+        // Test with some payload data
+        let payload_data = b"test payload data".to_vec();
+
+        // Attempt to encrypt
+        let result = jwe(tee_pub_key, payload_data);
+
+        // Verify error
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("base64 decode k_exp failed"));
+    }
+
+    #[test]
+    fn test_jwe_valid_encryption() {
+        // Skip the RSA key generation part and use a simpler approach for testing
+        let mut rng = rand::thread_rng();
+
+        // Create a simpler RSA key
+        let bits = 2048; // Use smaller key size for test
+        let private_key = RsaPrivateKey::new(&mut rng, bits).expect("Failed to generate key");
+
+        // Create a TeePubKey from the public key components
+        let public_key = private_key.to_public_key();
+        let k_mod = URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be());
+        let k_exp = URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be());
+
+        let tee_pub_key = TeePubKey {
+            kty: "RSA".to_string(),
+            alg: RSA_ALGORITHM.to_string(),
+            k_mod,
+            k_exp,
+        };
+
+        // Test with some payload data
+        let payload_data = b"test payload data".to_vec();
+
+        // Encrypt the data
+        let response = jwe(tee_pub_key, payload_data).unwrap();
+
+        // Verify response structure
+        assert!(!response.protected.is_empty());
+        assert!(!response.encrypted_key.is_empty());
+        assert!(!response.iv.is_empty());
+        assert!(!response.ciphertext.is_empty());
+        assert_eq!(response.tag, "");
+
+        // Parse protected header
+        let protected_header: Value = serde_json::from_str(&response.protected).unwrap();
+        assert_eq!(protected_header["alg"], RSA_ALGORITHM);
+        assert_eq!(protected_header["enc"], AES_GCM_256_ALGORITHM);
+    }
+}

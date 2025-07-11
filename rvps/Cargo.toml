@@ -41,6 +41,7 @@ sled = "0.34.7"
 strum.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, optional = true }
+tokio-stream = "0.1"
 tonic = { workspace = true, optional = true }
 
 [build-dependencies]
@@ -52,4 +53,5 @@ assert-json-diff.workspace = true
 rstest.workspace = true
 serial_test.workspace = true
 tokio.workspace = true
+tokio-stream = "0.1"
 walkdir = "2.3.2"
