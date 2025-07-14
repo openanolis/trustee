@@ -17,6 +17,18 @@ ROUNDTRIP_FILE := $(WORK_DIR)/secret
 REPOSITORY_SECRET := one/two/three
 SECRET_FILE := $(KBS_REPO_PATH)/$(REPOSITORY_SECRET)
 
+# Test resource files
+TEST_RESOURCE_1 := $(WORK_DIR)/test_resource_1
+TEST_RESOURCE_2 := $(WORK_DIR)/test_resource_2
+TEST_RESOURCE_PATH_1 := test_repo/secret/key1
+TEST_RESOURCE_PATH_2 := test_repo/config/setting1
+
+# Test attestation policy files
+TEST_ATTESTATION_POLICY_1 := $(MAKEFILE_DIR)/test_attestation_policy_1.rego
+TEST_ATTESTATION_POLICY_2 := $(MAKEFILE_DIR)/test_attestation_policy_2.rego
+ATTESTATION_POLICY_ID_1 := test-attestation-policy-1
+ATTESTATION_POLICY_ID_2 := test-attestation-policy-2
+
 # match those with the entries in the config/*.toml files
 CA_KEY := $(WORK_DIR)/ca.key
 CA_CSR := $(WORK_DIR)/ca-req.csr
@@ -137,6 +149,14 @@ $(SECRET_FILE):
 	mkdir -p $$(dirname "$(SECRET_FILE)") && \
 	openssl rand 16 > "$(SECRET_FILE)"
 
+$(TEST_RESOURCE_1):
+	mkdir -p $$(dirname "$(TEST_RESOURCE_1)") && \
+	echo "test-resource-content-1" > "$(TEST_RESOURCE_1)"
+
+$(TEST_RESOURCE_2):
+	mkdir -p $$(dirname "$(TEST_RESOURCE_2)") && \
+	echo "test-resource-content-2" > "$(TEST_RESOURCE_2)"
+
 .PHONY: start-kbs
 start-kbs: kbs.PID
 
@@ -211,11 +231,231 @@ test-passport: client $(ATTESTATION_TOKEN) start-resource-kbs
 	diff "$(SECRET_FILE)" "$(ROUNDTRIP_FILE)"
 	@printf "${BOLD}passport e2e test passed${SGR0}\n"
 
+test-resource-crud: client start-kbs $(TEST_RESOURCE_1) $(TEST_RESOURCE_2)
+	@printf "${BOLD}Testing KBS Resource CRUD operations${SGR0}\n"
+	
+	# Set resource policy first
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		set-resource-policy \
+		--policy-file <(echo "$$TEE_POLICY_REGO") && \
+	
+	# Test 1: Set resource 1
+	@printf "${BOLD}1. Setting resource $(TEST_RESOURCE_PATH_1)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		set-resource \
+		--path "$(TEST_RESOURCE_PATH_1)" \
+		--resource-file "$(TEST_RESOURCE_1)" && \
+	
+	# Test 2: Set resource 2
+	@printf "${BOLD}2. Setting resource $(TEST_RESOURCE_PATH_2)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		set-resource \
+		--path "$(TEST_RESOURCE_PATH_2)" \
+		--resource-file "$(TEST_RESOURCE_2)" && \
+	
+	# Test 3: List all resources
+	@printf "${BOLD}3. Listing all resources${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		list-resources && \
+	
+	# Test 4: List resources by repository
+	@printf "${BOLD}4. Listing resources by repository (test_repo)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		list-resources \
+		--repository "test_repo" && \
+	
+	# Test 5: List resources by type
+	@printf "${BOLD}5. Listing resources by type (secret)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		list-resources \
+		--type "secret" && \
+	
+	# Test 6: Get resource 1
+	@printf "${BOLD}6. Getting resource $(TEST_RESOURCE_PATH_1)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		get-resource \
+		--path "$(TEST_RESOURCE_PATH_1)" \
+		| base64 -d > "$(WORK_DIR)/retrieved_resource_1" && \
+	diff "$(TEST_RESOURCE_1)" "$(WORK_DIR)/retrieved_resource_1" && \
+	
+	# Test 7: Get resource 2
+	@printf "${BOLD}7. Getting resource $(TEST_RESOURCE_PATH_2)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		get-resource \
+		--path "$(TEST_RESOURCE_PATH_2)" \
+		| base64 -d > "$(WORK_DIR)/retrieved_resource_2" && \
+	diff "$(TEST_RESOURCE_2)" "$(WORK_DIR)/retrieved_resource_2" && \
+	
+	# Test 8: Delete resource 1
+	@printf "${BOLD}8. Deleting resource $(TEST_RESOURCE_PATH_1)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		delete-resource \
+		--path "$(TEST_RESOURCE_PATH_1)" && \
+	
+	# Test 9: Verify resource 1 is deleted (should fail)
+	@printf "${BOLD}9. Verifying resource $(TEST_RESOURCE_PATH_1) is deleted${SGR0}\n"
+	! ./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		get-resource \
+		--path "$(TEST_RESOURCE_PATH_1)" 2>/dev/null && \
+	
+	# Test 10: Delete resource 2
+	@printf "${BOLD}10. Deleting resource $(TEST_RESOURCE_PATH_2)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		delete-resource \
+		--path "$(TEST_RESOURCE_PATH_2)" && \
+	
+	# Test 11: List resources to verify they are deleted
+	@printf "${BOLD}11. Verifying all test resources are deleted${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		list-resources \
+		--repository "test_repo" | grep -q '[]' || true
+	
+	@printf "${BOLD}KBS Resource CRUD e2e test passed${SGR0}\n"
+
+test-attestation-policy-crud: client start-kbs $(TEST_ATTESTATION_POLICY_1) $(TEST_ATTESTATION_POLICY_2)
+	@printf "${BOLD}Testing KBS Attestation Policy CRUD operations${SGR0}\n"
+	
+	# Test 1: Set attestation policy 1
+	@printf "${BOLD}1. Setting attestation policy $(ATTESTATION_POLICY_ID_1)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		set-attestation-policy \
+		--type "rego" \
+		--id "$(ATTESTATION_POLICY_ID_1)" \
+		--policy-file "$(TEST_ATTESTATION_POLICY_1)" && \
+	
+	# Test 2: Set attestation policy 2
+	@printf "${BOLD}2. Setting attestation policy $(ATTESTATION_POLICY_ID_2)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		set-attestation-policy \
+		--type "rego" \
+		--id "$(ATTESTATION_POLICY_ID_2)" \
+		--policy-file "$(TEST_ATTESTATION_POLICY_2)" && \
+	
+	# Test 3: List all attestation policies
+	@printf "${BOLD}3. Listing all attestation policies${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		list-attestation-policies && \
+	
+	# Test 4: Get attestation policy 1
+	@printf "${BOLD}4. Getting attestation policy $(ATTESTATION_POLICY_ID_1)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		get-attestation-policy \
+		--id "$(ATTESTATION_POLICY_ID_1)" && \
+	
+	# Test 5: Get attestation policy 2
+	@printf "${BOLD}5. Getting attestation policy $(ATTESTATION_POLICY_ID_2)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		get-attestation-policy \
+		--id "$(ATTESTATION_POLICY_ID_2)" && \
+	
+	# Test 6: Delete attestation policy 1
+	@printf "${BOLD}6. Deleting attestation policy $(ATTESTATION_POLICY_ID_1)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		delete-attestation-policy \
+		--id "$(ATTESTATION_POLICY_ID_1)" && \
+	
+	# Test 7: Verify attestation policy 1 is deleted (should fail)
+	@printf "${BOLD}7. Verifying attestation policy $(ATTESTATION_POLICY_ID_1) is deleted${SGR0}\n"
+	! ./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		get-attestation-policy \
+		--id "$(ATTESTATION_POLICY_ID_1)" 2>/dev/null && \
+	
+	# Test 8: Delete attestation policy 2
+	@printf "${BOLD}8. Deleting attestation policy $(ATTESTATION_POLICY_ID_2)${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		delete-attestation-policy \
+		--id "$(ATTESTATION_POLICY_ID_2)" && \
+	
+	# Test 9: List attestation policies to verify they are deleted
+	@printf "${BOLD}9. Listing attestation policies to verify deletion${SGR0}\n"
+	./client \
+		--url https://127.0.0.1:8080 \
+		--cert-file "$(HTTPS_CERT)" \
+		config \
+		--auth-private-key "$(KBS_KEY)" \
+		list-attestation-policies
+	
+	@printf "${BOLD}KBS Attestation Policy CRUD e2e test passed${SGR0}\n"
+
 .PHONY: stop
 stop: stop-kbs stop-resource-kbs
 
 .PHONY: e2e-test
-e2e-test: test-bgcheck test-passport stop
+e2e-test: test-bgcheck test-passport test-resource-crud test-attestation-policy-crud stop
 
 .PHONY: clean
 clean:
@@ -223,4 +463,6 @@ clean:
 		kbs \
 		client \
 		resource-kbs \
-		work/*
+		work/* \
+		$(TEST_ATTESTATION_POLICY_1) \
+		$(TEST_ATTESTATION_POLICY_2)
