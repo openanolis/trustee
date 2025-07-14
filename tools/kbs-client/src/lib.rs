@@ -215,6 +215,41 @@ pub async fn list_attestation_policies(
     }
 }
 
+/// Delete attestation policy by id
+/// Input parameters:
+/// - url: KBS server root URL.
+/// - auth_key: KBS owner's authenticate private key (PEM string).
+/// - policy_id: Policy ID to delete.
+/// - kbs_root_certs_pem: Custom HTTPS root certificate of KBS server. It can be left blank.
+pub async fn delete_attestation_policy(
+    url: &str,
+    auth_key: String,
+    policy_id: &str,
+    kbs_root_certs_pem: Vec<String>,
+) -> Result<()> {
+    let auth_private_key = Ed25519KeyPair::from_pem(&auth_key)?;
+    let claims = Claims::create(Duration::from_hours(2));
+    let token = auth_private_key.sign(claims)?;
+
+    let http_client = build_http_client(kbs_root_certs_pem)?;
+
+    let delete_policy_url = format!("{}/{KBS_URL_PREFIX}/attestation-policy/{policy_id}", url);
+
+    let res = http_client
+        .delete(delete_policy_url)
+        .header("Content-Type", "application/json")
+        .bearer_auth(token)
+        .send()
+        .await?;
+
+    match res.status() {
+        reqwest::StatusCode::OK | reqwest::StatusCode::NO_CONTENT => Ok(()),
+        _ => {
+            bail!("Request Failed, Response: {:?}", res.text().await?)
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 struct ResourcePolicyData {
     pub policy: String,
@@ -305,4 +340,81 @@ fn build_http_client(kbs_root_certs_pem: Vec<String>) -> Result<reqwest::Client>
     client_builder
         .build()
         .map_err(|e| anyhow!("Build KBS http client failed: {:?}", e))
+}
+
+/// List all resources
+/// Input parameters:
+/// - url: KBS server root URL.
+/// - repository: Optional repository filter.
+/// - resource_type: Optional resource type filter.
+/// - kbs_root_certs_pem: Custom HTTPS root certificate of KBS server. It can be left blank.
+pub async fn list_resources(
+    url: &str,
+    repository: Option<String>,
+    resource_type: Option<String>,
+    kbs_root_certs_pem: Vec<String>,
+) -> Result<String> {
+    let http_client = build_http_client(kbs_root_certs_pem)?;
+
+    let mut list_resources_url = format!("{}/{KBS_URL_PREFIX}/resources", url);
+    let mut params = Vec::new();
+    if let Some(repo) = repository {
+        params.push(format!("repository={}", repo));
+    }
+    if let Some(rtype) = resource_type {
+        params.push(format!("type={}", rtype));
+    }
+    if !params.is_empty() {
+        list_resources_url.push('?');
+        list_resources_url.push_str(&params.join("&"));
+    }
+
+    let res = http_client
+        .get(list_resources_url)
+        .header("Content-Type", "application/json")
+        .send()
+        .await?;
+
+    match res.status() {
+        reqwest::StatusCode::OK => {
+            let resources_json = res.text().await?;
+            Ok(resources_json)
+        }
+        _ => {
+            bail!("Request Failed, Response: {:?}", res.text().await?)
+        }
+    }
+}
+
+/// Delete a resource from KBS.
+/// Input parameters:
+/// - url: KBS server root URL.
+/// - auth_key: KBS owner's authenticate private key (PEM string).
+/// - path: Resource path, format must be `<top>/<middle>/<tail>`, e.g. `alice/key/example`.
+/// - kbs_root_certs_pem: Custom HTTPS root certificate of KBS server. It can be left blank.
+pub async fn delete_resource(
+    url: &str,
+    auth_key: String,
+    path: &str,
+    kbs_root_certs_pem: Vec<String>,
+) -> Result<()> {
+    let auth_private_key = Ed25519KeyPair::from_pem(&auth_key)?;
+    let claims = Claims::create(Duration::from_hours(2));
+    let token = auth_private_key.sign(claims)?;
+
+    let http_client = build_http_client(kbs_root_certs_pem)?;
+
+    let resource_url = format!("{}/{KBS_URL_PREFIX}/resource/{}", url, path);
+    let res = http_client
+        .delete(resource_url)
+        .header("Content-Type", "application/json")
+        .bearer_auth(token)
+        .send()
+        .await?;
+    match res.status() {
+        reqwest::StatusCode::OK | reqwest::StatusCode::NO_CONTENT => Ok(()),
+        _ => {
+            bail!("Request Failed, Response: {:?}", res.text().await?)
+        }
+    }
 }

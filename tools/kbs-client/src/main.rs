@@ -108,6 +108,13 @@ enum ConfigCommands {
     /// List all attestation verification policies
     ListAttestationPolicies {},
 
+    /// Delete attestation verification policy
+    DeleteAttestationPolicy {
+        /// Policy ID, e.g "default"
+        #[clap(long, value_parser)]
+        id: String,
+    },
+
     /// Set resource policy
     SetResourcePolicy {
         /// Policy file path
@@ -125,6 +132,25 @@ enum ConfigCommands {
         /// Resource file path
         #[clap(long, value_parser)]
         resource_file: PathBuf,
+    },
+
+    /// List all confidential resources
+    ListResources {
+        /// Filter by repository name (optional)
+        #[clap(long, value_parser)]
+        repository: Option<String>,
+
+        /// Filter by resource type (optional)
+        #[clap(long, value_parser)]
+        r#type: Option<String>,
+    },
+
+    /// Delete confidential resource
+    DeleteResource {
+        /// KBS Resource path, e.g my_repo/resource_type/123abc
+        /// Document: https://github.com/confidential-containers/attestation-agent/blob/main/docs/KBS_URI.md
+        #[clap(long, value_parser)]
+        path: String,
     },
 }
 
@@ -251,6 +277,32 @@ async fn main() -> Result<()> {
                     let policies =
                         kbs_client::list_attestation_policies(&cli.url, kbs_cert.clone()).await?;
                     println!("{}", policies);
+                }
+                ConfigCommands::DeleteAttestationPolicy { id } => {
+                    kbs_client::delete_attestation_policy(
+                        &cli.url,
+                        auth_key.clone(),
+                        &id,
+                        kbs_cert.clone(),
+                    )
+                    .await?;
+                    println!("Delete attestation policy success: {}", id);
+                }
+                ConfigCommands::ListResources { repository, r#type } => {
+                    let resources =
+                        kbs_client::list_resources(&cli.url, repository, r#type, kbs_cert.clone())
+                            .await?;
+                    println!("{}", resources);
+                }
+                ConfigCommands::DeleteResource { path } => {
+                    kbs_client::delete_resource(
+                        &cli.url,
+                        auth_key.clone(),
+                        &path,
+                        kbs_cert.clone(),
+                    )
+                    .await?;
+                    println!("Delete resource success: {}", path);
                 }
             }
         }
