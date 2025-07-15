@@ -136,6 +136,11 @@ func main() {
 	logrus.Info("Shutting down audit cleanup service...")
 	auditCleanupService.Stop()
 
+	logrus.Info("Shutting down database...")
+	if err := db.Close(); err != nil {
+		logrus.Errorf("Database shutdown failed: %v", err)
+	}
+
 	logrus.Info("Server shutdown complete")
 }
 
@@ -170,7 +175,7 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 		attestationSvc.POST("/attestation", attestationServiceHandler.HandleAttestation)
 		attestationSvc.POST("/challenge", attestationServiceHandler.HandleGeneralRequest)
 		attestationSvc.GET("/certificate", attestationServiceHandler.HandleGeneralRequest)
-		
+
 		// Policy routes
 		attestationSvc.POST("/policy", attestationServiceHandler.HandleSetAttestationPolicy)
 		attestationSvc.GET("/policy/:id", attestationServiceHandler.GetAttestationPolicy)

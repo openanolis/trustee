@@ -11,6 +11,17 @@ rvps:
 database:
   type: "sqlite"
   path: "/opt/trustee/gateway/app/data/trustee-gateway.db"
+  use_memory: true
+  backup_interval: "1m"
+  enable_backup_on_shutdown: true
 
 logging:
   level: "debug"
+
+audit:
+  max_records: 1000
+  retention_days: 3
+  cleanup_interval_hours: 24
+
+attestation_agent_instance_info:
+  heartbeat_timeout_minutes: 10

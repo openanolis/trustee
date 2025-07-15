@@ -14,31 +14,6 @@ type InstanceInfo struct {
 	OwnerAccountID string `json:"owner_account_id" gorm:"column:owner_account_id"` // AA owner account ID
 }
 
-// Resource represents a resource in the KBS system
-type Resource struct {
-	gorm.Model
-	Repository string `json:"repository"`
-	Type       string `json:"type"`
-	Tag        string `json:"tag"`
-	Metadata   string `json:"metadata"`
-}
-
-// AttestationPolicy represents an attestation policy in the KBS
-type AttestationPolicy struct {
-	gorm.Model
-	PolicyID string `json:"policy_id"`
-	Type     string `json:"type"`
-	Policy   []byte `json:"policy"`
-	Metadata string `json:"metadata"`
-}
-
-// ResourcePolicy represents a resource policy in the KBS
-type ResourcePolicy struct {
-	gorm.Model
-	Policy   []byte `json:"policy"`
-	Metadata string `json:"metadata"`
-}
-
 // AttestationRecord represents a record of an attestation request
 type AttestationRecord struct {
 	gorm.Model

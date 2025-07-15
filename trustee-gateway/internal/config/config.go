@@ -45,8 +45,11 @@ type RVPSConfig struct {
 
 // DatabaseConfig holds database configuration
 type DatabaseConfig struct {
-	Type string `mapstructure:"type"`
-	Path string `mapstructure:"path"`
+	Type                   string `mapstructure:"type"`
+	Path                   string `mapstructure:"path"`
+	UseMemory              bool   `mapstructure:"use_memory"`
+	BackupInterval         string `mapstructure:"backup_interval"`
+	EnableBackupOnShutdown bool   `mapstructure:"enable_backup_on_shutdown"`
 }
 
 // LoggingConfig holds logging configuration
@@ -79,6 +82,9 @@ func LoadConfig(configPath string) (*Config, error) {
 	viper.SetDefault("rvps.grpc_addr", "localhost:50003")
 	viper.SetDefault("database.type", "sqlite")
 	viper.SetDefault("database.path", "./trustee-gateway.db")
+	viper.SetDefault("database.use_memory", true)
+	viper.SetDefault("database.backup_interval", "2m")
+	viper.SetDefault("database.enable_backup_on_shutdown", true)
 	viper.SetDefault("logging.level", "info")
 	viper.SetDefault("audit.max_records", 1000)
 	viper.SetDefault("audit.retention_days", 3)
