@@ -56,11 +56,13 @@ func (d *Database) initialize() error {
 	switch d.config.Type {
 	case "sqlite":
 		if d.config.UseMemory {
-			d.DB, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			// Use a shared-cache in-memory database. This is crucial for preventing "no such table" errors
+			// as GORM uses a connection pool, and each connection needs to access the same database.
+			d.DB, err = gorm.Open(sqlite.Open("file:trustee_gateway?mode=memory&cache=shared"), &gorm.Config{})
 			if err != nil {
 				return fmt.Errorf("failed to create in-memory database: %w", err)
 			}
-			logrus.Info("Created in-memory SQLite database")
+			logrus.Info("Created in-memory SQLite database with shared cache")
 
 			// Restore from backup if it exists
 			if err := d.restoreFromBackup(); err != nil {
