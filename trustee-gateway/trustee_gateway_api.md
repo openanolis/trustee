@@ -1042,7 +1042,7 @@ curl -k -X DELETE http://<gateway-host>:<port>/api/rvps/delete/test-binary-1
 
 *   **端点:** `GET /api/audit/attestation`
     
-*   **说明:** 查询 `/api/kbs/v0/attest` 端点的调用记录 (存储在 Gateway 数据库中)。
+*   **说明:** 查询 `/api/kbs/v0/attest` 和 `/api/attestation-service/attestation` 端点的调用记录 (存储在 Gateway 数据库中)。
     
 *   **调用方法:**
     
@@ -1052,8 +1052,10 @@ curl -k -X DELETE http://<gateway-host>:<port>/api/rvps/delete/test-binary-1
 curl -k http://<gateway-host>:<port>/api/audit/attestation
 # 按 session_id 过滤
 curl -k http://<gateway-host>:<port>/api/audit/attestation?session_id=your-session-id
-# 按请求类型过滤 (注意: Gateway 代码接收此参数，但可能未在 DB 查询中有效使用)
-curl -k http://<gateway-host>:<port>/api/audit/attestation?request_type=some_type
+# 按来源服务过滤
+curl -k http://<gateway-host>:<port>/api/audit/attestation?source_service=kbs
+# 按 AA 实例 ID 过滤
+curl -k http://<gateway-host>:<port>/api/audit/attestation?instance_id=i-12345
 # 查询成功的记录 (基于 KBS 返回的状态码是否为 200)
 curl -k http://<gateway-host>:<port>/api/audit/attestation?successful=true
 # 查询某个时间段的记录 (RFC3339 格式)
@@ -1066,7 +1068,9 @@ curl -k http://<gateway-host>:<port>/api/audit/attestation?limit=50&offset=50
     
     *   `session_id` (查询参数, string, 可选): 按 KBS 会话 ID 过滤。
         
-    *   `request_type` (查询参数, string, 可选): 按请求类型过滤 (Gateway 代码读取此参数，但后端存储库可能未使用)。
+    *   `source_service` (查询参数, string, 可选): 按来源服务过滤 (例如 "kbs", "attestation-service")。
+        
+    *   `instance_id` (查询参数, string, 可选): 按 AA 实例 ID 过滤。
         
     *   `successful` (查询参数, boolean, 可选): 按请求是否成功过滤 (`true` 或 `false`)。无效值将被忽略。
         
@@ -1097,26 +1101,37 @@ curl -k http://<gateway-host>:<port>/api/audit/attestation?limit=50&offset=50
 {
     "data": [
         {
-            "id": 1, // 数据库自增 ID
+            "id": 1,
             "client_ip": "192.168.1.101",
             "session_id": "session-abc",
-            "request_body": "{\"tee-pubkey\":{...},\"tee-evidence\":{...}}", // 原始请求体
-            "status": 200, // KBS 返回的状态码
-            "successful": true, // 是否 status == 200
-            "timestamp": "2024-01-10T12:34:56Z" // Gateway 记录时间
+            "request_body": "{\"tee-pubkey\":{...},\"tee-evidence\":{...}}",
+            "claims": "{\"customized_claims\":{\"init_data\":null,\"runtime_data\":{\"nonce\":\"DfnnB6Geop0ymdqQQg88oR+hjNKe7NzWIqzssBqdVe0=\",\"tee-pubkey\":{\"alg\":\"RSA1_5\",\"e\":\"AQAB\",\"kty\":\"RSA\",\"n\":\"uOoYePWev5VF9uUzHlkED6MB-n5bS-iCoIIoBJsfEqYt9mHda-mhN0iPK91gYcC33ilHWDaGqMveevsJ9n8-e-qgu3r4-SpMdURxsuQY8RmUjxcStFhfH56ZEaziASyVi9G94kBIpS3ApOIMf-oOdgoOft2eCYnMzuY0dplQKNGS6rB_78SD9F0gaMQ_Q0JaxlXKXK8OhiaoFOjFMlVtEnrk5FI_WsWWMOitinBT9jng-JRRqCHihicF16_iAmktPPEn3MeY6NiLDxNhoQYw-72u_nhdfMwO2KXsjUwFTF_06wTeiGfiqNcR1sRco_H8_X-iFbZS4DZxxBos5KWHuQ\"}}},\"evaluation-reports\":[{\"policy-hash\":\"f5abdc02716d85a5ab28cf43500201591bbe4e5600751039462e5ec2e0ae2698d637c1f487f58bca182244eefdf3b4b1\",\"policy-id\":\"default\"}],\"exp\":1752589512,\"iat\":1752589212,\"iss\":\"CoCo-Attestation-Service\",\"jti\":\"BDbHikXUMj\",\"nbf\":1752589212,\"tcb-status\":\"{\\\"init_data\\\":\\\"\\\",\\\"report_data\\\":\\\"zQU7fRqrb5gE+NLN0bVOWkYZGZvNzTIkStwALFtpX5wawbYY4J6CCV7PC2TvfFFn\\\",\\\"sample.svn\\\":\\\"1\\\"}\",\"tee\":\"sample\"}",
+            "status": 200,
+            "successful": true,
+            "timestamp": "2024-01-10T12:34:56Z",
+            "source_service": "kbs",
+            "instance_id": "i-12345",
+            "image_id": "img-abc",
+            "instance_name": "my-instance",
+            "owner_account_id": "123456789"
         },
         {
             "id": 2,
             "client_ip": "10.0.0.5",
             "session_id": "session-xyz",
-            "request_body": "{\"tee-pubkey\":{...},\"tee-evidence\":{...}}",
+            "request_body": "",
+            "claims": "{\"tee-pubkey\":{...},\"tee-evidence\":{...}}",
             "status": 403,
             "successful": false,
-            "timestamp": "2024-01-10T12:35:10Z"
+            "timestamp": "2024-01-10T12:35:10Z",
+            "source_service": "attestation-service",
+            "instance_id": "i-67890",
+            "image_id": "img-def",
+            "instance_name": "another-instance",
+            "owner_account_id": "987654321"
         }
-        // ... more records
     ],
-    "total": 2 // 当前返回的记录数量
+    "total": 2
 }
 ```
 
@@ -1138,6 +1153,8 @@ curl -k http://<gateway-host>:<port>/api/audit/resources
 curl -k http://<gateway-host>:<port>/api/audit/resources?repository=my-repo&type=key
 # 按方法过滤 (GET 请求)
 curl -k http://<gateway-host>:<port>/api/audit/resources?method=GET
+# 按 AA 实例 ID 过滤
+curl -k http://<gateway-host>:<port>/api/audit/resources?instance_id=i-12345
 # 查询失败的 POST 请求 (基于 KBS 返回的状态码)
 curl -k http://<gateway-host>:<port>/api/audit/resources?method=POST&successful=false
 # 其他参数同 /audit/attestation (session_id, tag, start_time, end_time, limit, offset)
@@ -1154,6 +1171,8 @@ curl -k http://<gateway-host>:<port>/api/audit/resources?method=POST&successful=
     *   `tag` (查询参数, string, 可选): 按资源标签过滤。
         
     *   `method` (查询参数, string, 可选): 按 HTTP 方法过滤 (e.g., "GET", "POST")。
+        
+    *   `instance_id` (查询参数, string, 可选): 按 AA 实例 ID 过滤。
         
     *   `successful` (查询参数, boolean, 可选): 按请求是否成功过滤 (`true` 或 `false`)。
         
@@ -1192,16 +1211,20 @@ curl -k http://<gateway-host>:<port>/api/audit/resources?method=POST&successful=
 {
     "data": [
         {
-            "id": 1, // 数据库自增 ID
+            "id": 1,
             "client_ip": "192.168.1.102",
-            "session_id": "session-def", // 可能为空
+            "session_id": "session-def",
             "repository": "my-repo",
             "type": "key",
             "tag": "latest",
             "method": "GET",
-            "status": 200, // KBS 返回的状态码
-            "successful": true, // 对 GET 来说 status == 200
-            "timestamp": "2024-01-11T09:15:00Z" // Gateway 记录时间
+            "status": 200,
+            "successful": true,
+            "timestamp": "2024-01-11T09:15:00Z",
+            "instance_id": "i-abcde",
+            "image_id": "img-123",
+            "instance_name": "resource-getter",
+            "owner_account_id": "1122334455"
         },
         {
             "id": 2,
@@ -1211,9 +1234,13 @@ curl -k http://<gateway-host>:<port>/api/audit/resources?method=POST&successful=
             "type": "config",
             "tag": "prod",
             "method": "POST",
-            "status": 201, // KBS 返回的状态码
-            "successful": true, // 对 POST 来说 status in (200, 201, 204)
-            "timestamp": "2024-01-11T09:20:00Z"
+            "status": 201,
+            "successful": true,
+            "timestamp": "2024-01-11T09:20:00Z",
+            "instance_id": "i-fghij",
+            "image_id": "img-456",
+            "instance_name": "resource-setter",
+            "owner_account_id": "6677889900"
         },
         {
             "id": 3,
@@ -1223,13 +1250,16 @@ curl -k http://<gateway-host>:<port>/api/audit/resources?method=POST&successful=
             "type": "data",
             "tag": "v1",
             "method": "GET",
-            "status": 404, // KBS 返回的状态码
-            "successful": false, // status != 200
-            "timestamp": "2024-01-11T09:25:00Z"
+            "status": 404,
+            "successful": false,
+            "timestamp": "2024-01-11T09:25:00Z",
+            "instance_id": "i-klmno",
+            "image_id": "img-789",
+            "instance_name": "resource-failed",
+            "owner_account_id": "123123123"
         }
-        // ... more records
     ],
-    "total": 3 // 当前返回的记录数量
+    "total": 3
 }
 ```
 
