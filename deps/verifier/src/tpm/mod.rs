@@ -50,11 +50,11 @@ pub struct TpmVerifier {}
 impl Verifier for TpmVerifier {
     async fn evaluate(
         &self,
-        evidence: &[u8],
+        evidence: TeeEvidence,
         expected_report_data: &ReportData,
         _expected_init_data_hash: &InitDataHash,
-    ) -> Result<TeeEvidenceParsedClaim> {
-        let tpm_evidence = serde_json::from_slice::<TpmEvidence>(evidence)
+    ) -> Result<(TeeEvidenceParsedClaim, TeeClass)> {
+        let tpm_evidence = serde_json::from_value::<TpmEvidence>(evidence)
             .context("Deserialize TPM Evidence failed.")?;
 
         // Verify Quote and PCRs
@@ -69,7 +69,8 @@ impl Verifier for TpmVerifier {
         // TODO: Verify integrity of Eventlogs
 
         // Parse Evidence
-        parse_tpm_evidence(tpm_evidence)
+        let claims = parse_tpm_evidence(tpm_evidence)?;
+        Ok((claims, "cpu".to_string()))
     }
 }
 

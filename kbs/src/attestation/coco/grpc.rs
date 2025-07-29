@@ -4,26 +4,29 @@
 
 use anyhow::*;
 use async_trait::async_trait;
+use attestation::{
+    reference_value_provider_service_client::ReferenceValueProviderServiceClient,
+    ReferenceValueQueryRequest, ReferenceValueQueryResponse, ReferenceValueRegisterRequest,
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use kbs_types::{Attestation, Challenge, Tee};
+use kbs_types::{Challenge, Tee};
 use log::info;
 use mobc::{Manager, Pool};
 use serde::Deserialize;
-use serde_json::json;
 use std::collections::HashMap;
-use tokio::sync::Mutex;
 use tonic::transport::Channel;
 
-use crate::attestation::backend::{make_nonce, Attest};
+use crate::attestation::backend::{make_nonce, Attest, IndependentEvidence};
 
 use self::attestation::{
-    attestation_request::RuntimeData, attestation_service_client::AttestationServiceClient,
-    AttestationRequest, ChallengeRequest, DeletePolicyRequest, GetPolicyRequest,
-    ListPoliciesRequest, SetPolicyRequest,
+    attestation_service_client::AttestationServiceClient,
+    individual_attestation_request::RuntimeData, AttestationRequest, ChallengeRequest,
+    IndividualAttestationRequest, SetPolicyRequest,
 };
 
 mod attestation {
     tonic::include_proto!("attestation");
+    tonic::include_proto!("reference");
 }
 
 pub const DEFAULT_AS_ADDR: &str = "http://127.0.0.1:50004";
@@ -34,9 +37,9 @@ pub const COCO_AS_HASH_ALGORITHM: &str = "sha384";
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct GrpcConfig {
     #[serde(default = "default_as_addr")]
-    pub(crate) as_addr: String,
+    pub as_addr: String,
     #[serde(default = "default_pool_size")]
-    pub(crate) pool_size: u64,
+    pub pool_size: u64,
 }
 
 fn default_as_addr() -> String {
@@ -57,7 +60,7 @@ impl Default for GrpcConfig {
 }
 
 pub struct GrpcClientPool {
-    pool: Mutex<Pool<GrpcManager>>,
+    pool: Pool<GrpcManager>,
 }
 
 impl GrpcClientPool {
@@ -69,7 +72,7 @@ impl GrpcClientPool {
         let manager = GrpcManager {
             as_addr: config.as_addr,
         };
-        let pool = Mutex::new(Pool::builder().max_open(config.pool_size).build(manager));
+        let pool = Pool::builder().max_open(config.pool_size).build(manager);
 
         Ok(Self { pool })
     }
@@ -83,9 +86,9 @@ impl Attest for GrpcClientPool {
             policy: policy.to_string(),
         });
 
-        let mut client = { self.pool.lock().await.get().await? };
-
+        let mut client = self.pool.get().await?;
         client
+            .as_rpc
             .set_attestation_policy(req)
             .await
             .map_err(|e| anyhow!("Set Policy Failed: {:?}", e))?;
@@ -93,81 +96,38 @@ impl Attest for GrpcClientPool {
         Ok(())
     }
 
-    async fn get_policy(&self, policy_id: &str) -> Result<String> {
-        let req = tonic::Request::new(GetPolicyRequest {
-            policy_id: policy_id.to_string(),
-        });
+    async fn verify(&self, evidence_to_verify: Vec<IndependentEvidence>) -> Result<String> {
+        let mut verification_requests: Vec<IndividualAttestationRequest> = vec![];
 
-        let mut client = { self.pool.lock().await.get().await? };
+        for evidence in evidence_to_verify {
+            let tee = serde_json::to_string(&evidence.tee)
+                .context("CoCo AS client: serialize tee type failed.")?
+                .trim_end_matches('"')
+                .trim_start_matches('"')
+                .to_string();
 
-        let resp = client
-            .get_attestation_policy(req)
-            .await
-            .map_err(|e| anyhow!("Get Policy Failed: {:?}", e))?;
-
-        Ok(resp.into_inner().policy)
-    }
-
-    async fn list_policies(&self) -> Result<HashMap<String, String>> {
-        let req = tonic::Request::new(ListPoliciesRequest {});
-
-        let mut client = { self.pool.lock().await.get().await? };
-
-        let resp = client
-            .list_attestation_policies(req)
-            .await
-            .map_err(|e| anyhow!("List Policies Failed: {:?}", e))?;
-
-        let mut policies_map = HashMap::new();
-        for policy_info in resp.into_inner().policies {
-            policies_map.insert(policy_info.policy_id, policy_info.policy_hash);
+            verification_requests.push(IndividualAttestationRequest {
+                tee,
+                evidence: URL_SAFE_NO_PAD.encode(evidence.tee_evidence.to_string()),
+                runtime_data_hash_algorithm: COCO_AS_HASH_ALGORITHM.into(),
+                init_data_hash_algorithm: COCO_AS_HASH_ALGORITHM.into(),
+                runtime_data: Some(RuntimeData::StructuredRuntimeData(
+                    evidence.runtime_data.to_string(),
+                )),
+                init_data: None,
+            });
         }
 
-        Ok(policies_map)
-    }
-
-    async fn delete_policy(&self, policy_id: &str) -> Result<()> {
-        let req = tonic::Request::new(DeletePolicyRequest {
-            policy_id: policy_id.to_string(),
-        });
-
-        let mut client = { self.pool.lock().await.get().await? };
-
-        client
-            .delete_attestation_policy(req)
-            .await
-            .map_err(|e| anyhow!("Delete Policy Failed: {:?}", e))?;
-
-        Ok(())
-    }
-
-    async fn verify(&self, tee: Tee, nonce: &str, attestation: &str) -> Result<String> {
-        let attestation: Attestation = serde_json::from_str(attestation)?;
-
-        // TODO: align with the guest-components/kbs-protocol side.
-        let runtime_data_plaintext = json!({"tee-pubkey": attestation.tee_pubkey, "nonce": nonce});
-        let runtime_data_plaintext = serde_json::to_string(&runtime_data_plaintext)
-            .context("CoCo AS client: serialize runtime data failed")?;
-
-        let tee = serde_json::to_string(&tee)
-            .context("CoCo AS client: serialize tee type failed.")?
-            .trim_end_matches('"')
-            .trim_start_matches('"')
-            .to_string();
-        let req = tonic::Request::new(AttestationRequest {
-            tee,
-            evidence: URL_SAFE_NO_PAD.encode(attestation.tee_evidence.to_string()),
-            runtime_data_hash_algorithm: COCO_AS_HASH_ALGORITHM.into(),
-            init_data_hash_algorithm: COCO_AS_HASH_ALGORITHM.into(),
-            runtime_data: Some(RuntimeData::StructuredRuntimeData(runtime_data_plaintext)),
-            init_data: None,
+        let attestation_request = tonic::Request::new(AttestationRequest {
+            verification_requests,
             policy_ids: vec!["default".to_string()],
         });
 
-        let mut client = { self.pool.lock().await.get().await? };
+        let mut client = self.pool.get().await?;
 
         let token = client
-            .attestation_evaluate(req)
+            .as_rpc
+            .attestation_evaluate(attestation_request)
             .await?
             .into_inner()
             .attestation_token;
@@ -175,17 +135,21 @@ impl Attest for GrpcClientPool {
         Ok(token)
     }
 
-    async fn generate_challenge(&self, tee: Tee, tee_parameters: String) -> Result<Challenge> {
+    async fn generate_challenge(
+        &self,
+        tee: Tee,
+        tee_parameters: serde_json::Value,
+    ) -> Result<Challenge> {
         let nonce = match tee {
             Tee::Se => {
                 let mut inner = HashMap::new();
                 inner.insert(String::from("tee"), String::from("se"));
-                inner.insert(String::from("tee_params"), tee_parameters);
+                inner.insert(String::from("tee_params"), tee_parameters.to_string());
                 let req = tonic::Request::new(ChallengeRequest { inner });
 
-                let mut client = { self.pool.lock().await.get().await? };
-
+                let mut client = self.pool.get().await?;
                 client
+                    .as_rpc
                     .get_attestation_challenge(req)
                     .await?
                     .into_inner()
@@ -201,23 +165,65 @@ impl Attest for GrpcClientPool {
 
         Ok(challenge)
     }
+
+    async fn register_reference_value(&self, message: &str) -> anyhow::Result<()> {
+        let req = tonic::Request::new(ReferenceValueRegisterRequest {
+            message: message.to_string(),
+        });
+
+        let mut client = self.pool.get().await?;
+
+        client
+            .rvps_rpc
+            .register_reference_value(req)
+            .await
+            .map_err(|e| anyhow!("Failed to set reference values: {:?}", e))?;
+
+        Ok(())
+    }
+
+    async fn query_reference_values(&self) -> anyhow::Result<HashMap<String, Vec<String>>> {
+        let req = tonic::Request::new(ReferenceValueQueryRequest {});
+
+        let mut client = self.pool.get().await?;
+
+        let ReferenceValueQueryResponse {
+            reference_value_results,
+        } = client
+            .rvps_rpc
+            .query_reference_value(req)
+            .await
+            .map_err(|e| anyhow!("Failed to get reference values: {:?}", e))?
+            .into_inner();
+
+        Ok(serde_json::from_str(&reference_value_results)?)
+    }
 }
 
 pub struct GrpcManager {
     as_addr: String,
 }
 
+pub struct AsConnection {
+    as_rpc: AttestationServiceClient<Channel>,
+    rvps_rpc: ReferenceValueProviderServiceClient<Channel>,
+}
+
 #[async_trait]
 impl Manager for GrpcManager {
-    type Connection = AttestationServiceClient<Channel>;
-    type Error = tonic::transport::Error;
+    type Connection = AsConnection;
+    type Error = Error;
 
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
-        let connection = AttestationServiceClient::connect(self.as_addr.clone()).await?;
-        std::result::Result::Ok(connection)
+        let connection = Channel::from_shared(self.as_addr.clone())?
+            .connect()
+            .await?;
+        let as_rpc = AttestationServiceClient::new(connection.clone());
+        let rvps_rpc = ReferenceValueProviderServiceClient::new(connection);
+        Ok(AsConnection { as_rpc, rvps_rpc })
     }
 
     async fn check(&self, conn: Self::Connection) -> Result<Self::Connection, Self::Error> {
-        std::result::Result::Ok(conn)
+        Ok(conn)
     }
 }

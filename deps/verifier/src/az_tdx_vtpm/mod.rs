@@ -3,16 +3,17 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-use super::az_snp_vtpm::extend_claim_with_tpm_quote;
+use super::az_snp_vtpm::{extend_claim, verify_init_data};
 use super::tdx::claims::generate_parsed_claim;
-use super::tdx::quote::{ecdsa_quote_verification, parse_tdx_quote, Quote as TdQuote};
-use super::{TeeEvidenceParsedClaim, Verifier};
+use super::tdx::quote::{parse_tdx_quote, Quote as TdQuote};
+use super::{TeeClass, TeeEvidence, TeeEvidenceParsedClaim, Verifier};
+use crate::intel_dcap::{ecdsa_quote_verification, extend_using_custom_claims};
 use crate::{InitDataHash, ReportData};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use az_tdx_vtpm::hcl::HclReport;
 use az_tdx_vtpm::vtpm::Quote as TpmQuote;
-use log::{debug, warn};
+use log::debug;
 use openssl::pkey::PKey;
 use serde::{Deserialize, Serialize};
 
@@ -34,21 +35,18 @@ impl Verifier for AzTdxVtpm {
     /// 3. TPM PCRs' digest matches the digest in the Quote
     /// 4. TD Quote is genuine
     /// 5. TD Report's report_data field matches hashed HCL variable data
+    /// 6. Init data hash matches TPM PCR[INITDATA_PCR]
     async fn evaluate(
         &self,
-        evidence: &[u8],
+        evidence: TeeEvidence,
         expected_report_data: &ReportData,
         expected_init_data_hash: &InitDataHash,
-    ) -> Result<TeeEvidenceParsedClaim> {
+    ) -> Result<(TeeEvidenceParsedClaim, TeeClass)> {
         let ReportData::Value(expected_report_data) = expected_report_data else {
             bail!("unexpected empty report data");
         };
 
-        if let InitDataHash::Value(_) = expected_init_data_hash {
-            warn!("Azure TDX vTPM verifier does not support verify init data hash, will ignore the input `init_data_hash`");
-        }
-
-        let evidence = serde_json::from_slice::<Evidence>(evidence)
+        let evidence = serde_json::from_value::<Evidence>(evidence)
             .context("Failed to deserialize Azure vTPM TDX evidence")?;
 
         let hcl_report = HclReport::new(evidence.hcl_report)?;
@@ -58,15 +56,19 @@ impl Verifier for AzTdxVtpm {
 
         verify_pcrs(&evidence.tpm_quote)?;
 
-        ecdsa_quote_verification(&evidence.td_quote).await?;
+        let custom_claims = ecdsa_quote_verification(&evidence.td_quote).await?;
         let td_quote = parse_tdx_quote(&evidence.td_quote)?;
 
         verify_hcl_var_data(&hcl_report, &td_quote)?;
 
-        let mut claim = generate_parsed_claim(td_quote, None, None)?;
-        extend_claim_with_tpm_quote(&mut claim, &evidence.tpm_quote)?;
+        let pcrs: Vec<&[u8; 32]> = evidence.tpm_quote.pcrs_sha256().collect();
+        verify_init_data(expected_init_data_hash, &pcrs)?;
 
-        Ok(claim)
+        let mut claim = generate_parsed_claim(td_quote, None, None)?;
+        extend_claim(&mut claim, &evidence.tpm_quote)?;
+        extend_using_custom_claims(&mut claim, custom_claims)?;
+
+        Ok((claim, "cpu".to_string()))
     }
 }
 

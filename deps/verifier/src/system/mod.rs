@@ -31,11 +31,11 @@ pub struct SystemVerifier {}
 impl Verifier for SystemVerifier {
     async fn evaluate(
         &self,
-        evidence: &[u8],
+        evidence: TeeEvidence,
         expected_report_data: &ReportData,
         expected_init_data_hash: &InitDataHash,
-    ) -> Result<TeeEvidenceParsedClaim> {
-        let evidence = serde_json::from_slice::<SystemEvidence>(evidence)
+    ) -> Result<(TeeEvidenceParsedClaim, TeeClass)> {
+        let evidence = serde_json::from_value::<SystemEvidence>(evidence)
             .context("Deserialize Quote failed.")?;
 
         verify_evidence(expected_report_data, expected_init_data_hash, &evidence)
@@ -47,7 +47,8 @@ impl Verifier for SystemVerifier {
             serde_json::to_string_pretty(&evidence)?
         );
 
-        parse_evidence(&evidence)
+        let claims = parse_evidence(&evidence)?;
+        Ok((claims, "cpu".to_string()))
     }
 }
 
