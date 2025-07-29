@@ -27,7 +27,7 @@ use super::{
 
 static KBS_MAJOR_VERSION: u64 = 0;
 static KBS_MINOR_VERSION: u64 = 1;
-static KBS_PATCH_VERSION: u64 = 0;
+static KBS_PATCH_VERSION: u64 = 1;
 
 lazy_static! {
     static ref VERSION_REQ: VersionReq = {
@@ -59,13 +59,13 @@ pub async fn make_nonce() -> anyhow::Result<String> {
 
 pub(crate) async fn generic_generate_challenge(
     _tee: Tee,
-    _tee_parameters: String,
+    _tee_parameters: serde_json::Value,
 ) -> anyhow::Result<Challenge> {
     let nonce = make_nonce().await?;
 
     Ok(Challenge {
         nonce,
-        extra_params: String::new(),
+        extra_params: serde_json::Value::String(String::new()),
     })
 }
 
@@ -101,9 +101,9 @@ pub trait Attest: Send + Sync {
     /// generate the Challenge to pass to attester based on Tee and nonce
     async fn generate_challenge(
         &self,
-        tee: Tee,
-        tee_parameters: String,
-    ) -> anyhow::Result<Challenge> {
+        _tee: Tee,
+        _tee_parameters: serde_json::Value,
+    ) -> Result<Challenge> {
         generic_generate_challenge(tee, tee_parameters).await
     }
 }

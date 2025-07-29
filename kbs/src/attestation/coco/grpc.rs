@@ -156,7 +156,7 @@ impl Attest for GrpcClientPool {
             .to_string();
         let req = tonic::Request::new(AttestationRequest {
             tee,
-            evidence: URL_SAFE_NO_PAD.encode(attestation.tee_evidence),
+            evidence: URL_SAFE_NO_PAD.encode(attestation.tee_evidence.to_string()),
             runtime_data_hash_algorithm: COCO_AS_HASH_ALGORITHM.into(),
             init_data_hash_algorithm: COCO_AS_HASH_ALGORITHM.into(),
             runtime_data: Some(RuntimeData::StructuredRuntimeData(runtime_data_plaintext)),
@@ -196,7 +196,7 @@ impl Attest for GrpcClientPool {
 
         let challenge = Challenge {
             nonce,
-            extra_params: String::new(),
+            extra_params: serde_json::Value::String(String::new()),
         };
 
         Ok(challenge)
