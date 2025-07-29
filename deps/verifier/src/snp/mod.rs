@@ -75,14 +75,14 @@ pub(crate) struct VendorCertificates {
 impl Verifier for Snp {
     async fn evaluate(
         &self,
-        evidence: &[u8],
+        evidence: TeeEvidence,
         expected_report_data: &ReportData,
         expected_init_data_hash: &InitDataHash,
-    ) -> Result<TeeEvidenceParsedClaim> {
+    ) -> Result<(TeeEvidenceParsedClaim, TeeClass)> {
         let SnpEvidence {
             attestation_report: report,
             cert_chain,
-        } = serde_json::from_slice(evidence).context("Deserialize Quote failed.")?;
+        } = serde_json::from_value(evidence).context("Deserialize Quote failed.")?;
 
         let Some(cert_chain) = cert_chain else {
             bail!("Cert chain is unset");
@@ -124,7 +124,7 @@ impl Verifier for Snp {
 
         let claims_map = parse_tee_evidence(&report);
         let json = json!(claims_map);
-        Ok(json)
+        Ok((json, "cpu".to_string()))
     }
 }
 

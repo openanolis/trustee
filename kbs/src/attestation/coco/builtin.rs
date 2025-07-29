@@ -4,13 +4,14 @@
 
 use anyhow::*;
 use async_trait::async_trait;
-use attestation_service::{config::Config as AsConfig, AttestationService, Data, HashAlgorithm};
-use kbs_types::{Attestation, Challenge, Tee};
-use serde_json::json;
+use attestation_service::{
+    config::Config as AsConfig, AttestationService, Data, HashAlgorithm, VerificationRequest,
+};
+use kbs_types::{Challenge, Tee};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
-use crate::attestation::backend::{make_nonce, Attest};
+use crate::attestation::backend::{make_nonce, Attest, IndependentEvidence};
 
 pub struct BuiltInCoCoAs {
     inner: RwLock<AttestationService>,
@@ -26,44 +27,25 @@ impl Attest for BuiltInCoCoAs {
             .await
     }
 
-    async fn get_policy(&self, policy_id: &str) -> Result<String> {
+    async fn verify(&self, evidence_to_verify: Vec<IndependentEvidence>) -> Result<String> {
+        let mut verification_requests = vec![];
+
+        for evidence in evidence_to_verify {
+            verification_requests.push(VerificationRequest {
+                evidence: evidence.tee_evidence,
+                tee: evidence.tee,
+                runtime_data: Some(Data::Structured(evidence.runtime_data)),
+                runtime_data_hash_algorithm: HashAlgorithm::Sha384,
+                init_data: None,
+                init_data_hash_algorithm: HashAlgorithm::Sha384,
+            });
+        }
+
+        let policy_ids = vec!["default".to_string()];
         self.inner
             .read()
             .await
-            .get_policy(policy_id.to_string())
-            .await
-    }
-
-    async fn list_policies(&self) -> Result<HashMap<String, String>> {
-        self.inner.read().await.list_policies().await
-    }
-
-    async fn delete_policy(&self, policy_id: &str) -> Result<()> {
-        self.inner
-            .write()
-            .await
-            .delete_policy(policy_id.to_string())
-            .await
-    }
-
-    async fn verify(&self, tee: Tee, nonce: &str, attestation: &str) -> Result<String> {
-        let attestation: Attestation = serde_json::from_str(attestation)?;
-
-        // TODO: align with the guest-components/kbs-protocol side.
-        let runtime_data_plaintext = json!({"tee-pubkey": attestation.tee_pubkey, "nonce": nonce});
-
-        self.inner
-            .read()
-            .await
-            .evaluate(
-                attestation.tee_evidence.to_string().into_bytes(),
-                tee,
-                Some(Data::Structured(runtime_data_plaintext)),
-                HashAlgorithm::Sha384,
-                None,
-                HashAlgorithm::Sha384,
-                vec!["default".to_string()],
-            )
+            .evaluate(verification_requests, policy_ids)
             .await
     }
 
@@ -89,6 +71,18 @@ impl Attest for BuiltInCoCoAs {
         };
 
         Ok(challenge)
+    }
+
+    async fn register_reference_value(&self, message: &str) -> anyhow::Result<()> {
+        self.inner
+            .write()
+            .await
+            .register_reference_value(message)
+            .await
+    }
+
+    async fn query_reference_values(&self) -> anyhow::Result<HashMap<String, Vec<String>>> {
+        self.inner.read().await.query_reference_values().await
     }
 }
 

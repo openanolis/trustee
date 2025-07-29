@@ -14,7 +14,7 @@ pub use error::*;
 
 pub const TOKEN_TEE_PUBKEY_PATH_COCO: &str = "/customized_claims/runtime_data/tee-pubkey";
 pub const TOKEN_TEE_PUBKEY_PATH_EAR: &str =
-    "/submods/cpu/ear.veraison.annotated-evidence/runtime_data_claims/tee-pubkey";
+    "/submods/cpu0/ear.veraison.annotated-evidence/runtime_data_claims/tee-pubkey";
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct AttestationTokenVerifierConfig {

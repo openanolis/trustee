@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-use crate::TeeEvidenceParsedClaim;
+use crate::{TeeEvidence, TeeEvidenceParsedClaim};
 use anyhow::{anyhow, bail, Context, Result};
 use core::result::Result::Ok;
 use log::{debug, info, warn};
@@ -90,7 +90,7 @@ pub struct SeAttestationResponse {
 pub struct SeAttestationClaims {
     #[serde_as(as = "Hex")]
     cuid: ConfigUid,
-    user_data: String,
+    report_data: String,
     version: u32,
     #[serde_as(as = "Hex")]
     image_phkh: Vec<u8>,
@@ -168,11 +168,11 @@ impl SeVerifierImpl {
         Ok(encrypted)
     }
 
-    pub fn evaluate(&self, evidence: &[u8]) -> Result<TeeEvidenceParsedClaim> {
+    pub fn evaluate(&self, evidence: TeeEvidence) -> Result<TeeEvidenceParsedClaim> {
         info!("IBM SE verify API called.");
 
         // evidence is serialized SeAttestationResponse String bytes
-        let se_response: SeAttestationResponse = serde_json::from_slice(evidence)?;
+        let se_response: SeAttestationResponse = serde_json::from_value(evidence)?;
 
         let meas_key = self
             .decrypt(&se_response.encr_measurement_key)
@@ -217,7 +217,7 @@ impl SeVerifierImpl {
 
         let claims = SeAttestationClaims {
             cuid: se_response.cuid,
-            user_data: String::from_utf8(se_response.user_data.clone())?,
+            report_data: String::from_utf8(se_response.user_data.clone())?,
             version: AttestationVersion::One as u32,
             image_phkh: image_phkh.to_vec(),
             attestation_phkh: attestation_phkh.to_vec(),
