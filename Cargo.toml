@@ -39,6 +39,7 @@ confidential-data-hub = { git = "https://github.com/inclavare-containers/guest-c
 jsonwebtoken = { version = "9", default-features = false }
 log = "0.4.17"
 openssl = "0.10.46"
+p256 = "0.13.2"
 prost = "0.13"
 regorus = { version = "0.2.6", default-features = false, features = [
     "regex",
