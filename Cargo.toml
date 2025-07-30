@@ -34,9 +34,9 @@ hex = "0.4.3"
 jwt-simple = { version = "0.12", default-features = false, features = [
     "pure-rust",
 ] }
-kbs_protocol = { git = "https://github.com/inclavare-containers/guest-components.git", rev = "39dd161", default-features = false }
-kbs-types = { git = "https://github.com/inclavare-containers/kbs-types.git", rev = "1b4217f" }
-confidential-data-hub = { git = "https://github.com/inclavare-containers/guest-components.git", rev = "39dd161", default-features = false, features = ["aliyun", "kbs", "bin", "ttrpc", "cli"] }
+kbs_protocol = { git = "https://github.com/inclavare-containers/guest-components.git", branch = "main", default-features = false }
+kbs-types = { git = "https://github.com/inclavare-containers/kbs-types.git", rev = "d411727" }
+confidential-data-hub = { git = "https://github.com/inclavare-containers/guest-components.git", branch = "main", default-features = false, features = ["aliyun", "kbs", "bin", "ttrpc", "cli"] }
 jsonwebtoken = { version = "9", default-features = false }
 log = "0.4.17"
 openssl = "0.10.46"
