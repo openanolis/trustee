@@ -31,8 +31,8 @@ pub mod csv;
 #[cfg(feature = "hygon-dcu-verifier")]
 pub mod hygon_dcu;
 
-#[cfg(feature = "cca-verifier")]
-pub mod cca;
+// #[cfg(feature = "cca-verifier")]
+// pub mod cca;
 
 #[cfg(feature = "se-verifier")]
 pub mod se;
@@ -118,15 +118,16 @@ pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
             }
         }
 
-        Tee::Cca => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "cca-verifier")] {
-                    Ok(Box::<cca::CCA>::default() as Box<dyn Verifier + Send + Sync>)
-                } else {
-                    bail!("feature `cca-verifier` is not enabled for `verifier` crate.")
-                }
-            }
-        }
+        // Tee::Cca => {
+        //     cfg_if::cfg_if! {
+        //         if #[cfg(feature = "cca-verifier")] {
+        //             Ok(Box::<cca::CCA>::default() as Box<dyn Verifier + Send + Sync>)
+        //         } else {
+        //             bail!("feature `cca-verifier` is not enabled for `verifier` crate.")
+        //         }
+        //     }
+        // }
+        Tee::Cca => todo!(),
 
         Tee::Se => {
             cfg_if::cfg_if! {

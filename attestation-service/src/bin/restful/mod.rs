@@ -80,7 +80,7 @@ fn to_tee(tee: &str) -> anyhow::Result<Tee> {
         "sgx" => Tee::Sgx,
         "snp" => Tee::Snp,
         "tdx" => Tee::Tdx,
-        "cca" => Tee::Cca,
+        // "cca" => Tee::Cca,
         "csv" => Tee::Csv,
         "sample" => Tee::Sample,
         "sampledevice" => Tee::SampleDevice,
