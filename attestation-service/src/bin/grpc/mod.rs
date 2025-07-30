@@ -41,7 +41,7 @@ fn to_kbs_tee(tee: &str) -> anyhow::Result<Tee> {
         "csv" => Tee::Csv,
         "sample" => Tee::Sample,
         "azsnpvtpm" => Tee::AzSnpVtpm,
-        "cca" => Tee::Cca,
+        // "cca" => Tee::Cca,
         "aztdxvtpm" => Tee::AzTdxVtpm,
         "se" => Tee::Se,
         "system" => Tee::System,
