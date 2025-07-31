@@ -110,7 +110,6 @@ impl AttestationService for Arc<RwLock<AttestationServer>> {
         let request: AttestationRequest = request.into_inner();
 
         info!("AttestationEvaluate API called.");
-        debug!("Evidence: {}", &request.evidence);
 
         let mut verification_requests: Vec<VerificationRequest> = vec![];
 

@@ -306,6 +306,22 @@ impl AttestationService {
             .context("delete reference value")
     }
 
+    /// Query Reference Values
+    pub async fn query_reference_values(&self) -> Result<HashMap<String, Value>> {
+        let rvs = self
+            .rvps
+            .get_digests()
+            .await
+            .context("query reference values")?;
+        let mut converted_rvs: HashMap<String, Value> = HashMap::new();
+        for (key, value) in rvs {
+            let value_as_value: Value = serde_json::to_value(value)
+                .map_err(|e| anyhow!("convert reference values to Value failed: {:?}", e))?;
+            converted_rvs.insert(key, value_as_value);
+        }
+        Ok(converted_rvs)
+    }
+
     pub async fn generate_supplemental_challenge(
         &self,
         tee: Tee,
