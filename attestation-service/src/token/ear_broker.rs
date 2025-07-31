@@ -337,6 +337,13 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
             .await
             .map_err(Error::from)
     }
+
+    async fn delete_policy(&self, policy_id: String) -> Result<()> {
+        self.policy_engine
+            .delete_policy(policy_id)
+            .await
+            .map_err(Error::from)
+    }
 }
 
 impl EarAttestationTokenBroker {
