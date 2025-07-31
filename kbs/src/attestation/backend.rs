@@ -138,10 +138,24 @@ pub trait Attest: Send + Sync {
     /// generate the Challenge to pass to attester based on Tee and nonce
     async fn generate_challenge(
         &self,
-        _tee: Tee,
-        _tee_parameters: serde_json::Value,
-    ) -> Result<Challenge> {
+        tee: Tee,
+        tee_parameters: serde_json::Value,
+    ) -> anyhow::Result<Challenge> {
         generic_generate_challenge(tee, tee_parameters).await
+    }
+
+    /// Add reference values to the RVPS, if the AS supports it
+    async fn register_reference_value(&self, _message: &str) -> anyhow::Result<()> {
+        Err(anyhow!(
+            "Attestation Service does not support reference value configuration."
+        ))
+    }
+
+    /// Get reference values from the RVPS, if the AS supports it
+    async fn query_reference_values(&self) -> anyhow::Result<HashMap<String, serde_json::Value>> {
+        Err(anyhow!(
+            "Attestation Service does not support reference value configuration."
+        ))
     }
 }
 
