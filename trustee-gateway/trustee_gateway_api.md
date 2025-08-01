@@ -137,12 +137,22 @@ curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/attest \
      -b "kbs-session-id=${SESSION_ID}" \
      -H 'Content-Type: application/json' \
      -d '{
-             "tee-pubkey": {
-                 "alg": "RSA",
-                 "k-mod": "base64_modulus",
-                 "k-exp": "base64_exponent"
+             "runtime_data": {
+                 "nonce": "base64_encoded_nonce",
+                 "tee-pubkey": {
+                     "alg": "RSA",
+                     "k-mod": "base64_modulus",
+                     "k-exp": "base64_exponent"
+                 }
              },
-             "tee-evidence": { ... }
+             "init_data": {
+                 "format": "toml",
+                 "body": "base64_encoded_toml"
+             },
+             "tee_evidence": {
+                 "primary_evidence": { ... },
+                 "additional_evidence": "{...}"
+             }
          }'
 ```
 
@@ -161,14 +171,25 @@ curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/attest \
 
 ```json
 {
-    "tee-pubkey": {       // (必需) TEE 公钥信息 (PublicKey Schema，具体字段取决于 alg)
-        "alg": "string",   // 例如 "RSA", "ECDSA"
-        "k-mod": "string", // Base64 编码的 RSA 模数 (如果 alg="RSA")
-        "k-exp": "string"  // Base64 编码的 RSA 公钥指数 (如果 alg="RSA")
+    "runtime_data": {     // (必需) 运行时数据，包含nonce和TEE公钥信息
+        "nonce": "string", // Base64编码的nonce
+        "tee-pubkey": {    // TEE公钥信息 (PublicKey Schema，具体字段取决于 alg)
+            "alg": "string",   // 例如 "RSA", "ECDSA"
+            "k-mod": "string", // Base64 编码的 RSA 模数 (如果 alg="RSA")
+            "k-exp": "string"  // Base64 编码的 RSA 公钥指数 (如果 alg="RSA")
+        }
     },
-    "tee-evidence": {}     // (必需) TEE 生成的证据 (具体结构取决于 TEE 类型)
+    "init_data": {        // (可选) 初始化数据
+        "format": "string", // 格式，例如 "toml"
+        "body": "string"    // Base64编码的数据体
+    },
+    "tee_evidence": {     // (必需) TEE证据，支持复合证据
+        "primary_evidence": {},     // 主要证据
+        "additional_evidence": "{}" // 额外证据的JSON字符串
+    }
 }
 ```
+
 
 *   **响应:**
     
@@ -702,12 +723,20 @@ curl -k -X POST http://<gateway-host>:<port>/api/attestation-service/attestation
      -H 'Content-Type: application/json' \
      -H 'AAInstanceInfo: {"image_id":"aliyun_3_9_x64_20G_uefi_alibase_20231219.vhd","instance_id":"i-bp13wqyr5ik6l669424n","instance_name":"test-cc","owner_account_id":"1242424451954755"}' \
      -d '{
-             "tee-pubkey": {
-                 "alg": "RSA",
-                 "k-mod": "base64_modulus",
-                 "k-exp": "base64_exponent"
-             },
-             "tee-evidence": { ... }
+             "verification_requests": [
+                 {
+                     "tee": "sample",
+                     "evidence": "base64_encoded_evidence",
+                     "runtime_data": {
+                         "structured_runtime_data": "{\"key\": \"value\"}"
+                     },
+                     "init_data": {
+                         "init_data_toml": "algorithm = \"sha384\"..."
+                     },
+                     "runtime_data_hash_algorithm": "sha384"
+                 }
+             ],
+             "policy_ids": ["default"]
          }'
 ```
 
@@ -722,14 +751,25 @@ curl -k -X POST http://<gateway-host>:<port>/api/attestation-service/attestation
 
 ```json
 {
-    "tee-pubkey": {       // (必需) TEE 公钥信息
-        "alg": "string",   // 例如 "RSA", "ECDSA"
-        "k-mod": "string", // Base64 编码的 RSA 模数 (如果 alg="RSA")
-        "k-exp": "string"  // Base64 编码的 RSA 公钥指数 (如果 alg="RSA")
-    },
-    "tee-evidence": {}     // (必需) TEE 生成的证据 (具体结构取决于 TEE 类型)
+    "verification_requests": [  // (必需) 验证请求数组，支持多个TEE证据
+        {
+            "tee": "string",     // TEE类型，例如 "sample", "tdx", "sgx"
+            "evidence": "string", // Base64编码的证据
+            "runtime_data": {    // (可选) 运行时数据
+                "raw_runtime_data": "string",        // 原始运行时数据(Base64)
+                "structured_runtime_data": "string"  // 结构化运行时数据(JSON字符串)
+            },
+            "init_data": {       // (可选) 初始化数据
+                "init_data_digest": "string",  // 初始化数据摘要(Base64)
+                "init_data_toml": "string"     // TOML格式的初始化数据
+            },
+            "runtime_data_hash_algorithm": "string" // 运行时数据哈希算法，例如 "sha256", "sha384", "sha512"
+        }
+    ],
+    "policy_ids": ["string"]    // (可选) 策略ID数组，如果未提供则使用"default"
 }
 ```
+
 
 *   **响应:**
     
