@@ -26,72 +26,46 @@ default hardware := 97
 #  unavailable to the Verifier."
 default configuration := 36
 
-##### Sample
+# For the `filesystem` trust claim, the value 35 stands for
+# "File system integrity cannot be verified or is compromised."
+default file_system := 35
 
-# For the `executables` trust claim, the value 3 stands for
-# "Only a recognized genuine set of approved executables have
-#  been loaded during the boot process."
-executables := 3 if {
-	# The sample attester does not report any launch digest.
-	# This is an example of how a real platform might validate executables.
-	input.sample.launch_digest in data.reference.launch_digest
+
+##### Common Helper Functions
+
+# Generic function to validate measurements for any platform and algorithm
+validate_boot_measurements(measurements_data) if {
+	some algorithm in {"SHA1", "SHA256", "SHA384"}
+	components := ["grub", "shim", "initrd", "kernel"]
+	every component in components {
+		measurement_key := sprintf("measurement.%s.%s", [component, algorithm])
+		measurements_data[measurement_key] in data.reference[measurement_key]
+	}
 }
 
-# For the `hardware` trust claim, the value 2 stands for
-# "An Attester has passed its hardware and/or firmware
-#  verifications needed to demonstrate that these are genuine/
-#  supported.
-hardware := 2 if {
-	input.sample.svn in data.reference.svn
+# Generic function to validate kernel cmdline for any platform and algorithm
+validate_kernel_cmdline(measurements_data, cmdline_data) if {
+	cmdline_data in data.reference["kernel_cmdline"]
+
+	some algorithm in {"SHA1", "SHA256", "SHA384"}
+	measurement_key := sprintf("measurement.kernel_cmdline.%s", [algorithm])
+	measurements_data[measurement_key] in data.reference[measurement_key]
 }
 
-##### SNP
-executables := 3 if {
-	# In the future, we might calculate this measurement here various components
-	input.snp.launch_measurement in data.reference.snp_launch_measurement
-}
-
-hardware := 2 if {
-	# Check the reported TCB to validate the ASP FW
-	input.snp.reported_tcb_bootloader in data.reference.snp_bootloader
-	input.snp.reported_tcb_microcode in data.reference.snp_microcode
-	input.snp.reported_tcb_snp in data.reference.snp_snp_svn
-	input.snp.reported_tcb_tee in data.reference.snp_tee_svn
-}
-
-# For the 'configuration' trust claim 2 stands for
-# "The configuration is a known and approved config."
-#
-# For this, we compare all the configuration fields.
-configuration := 2 if {
-	input.snp.policy_debug_allowed == 0
-	input.snp.policy_migrate_ma == 0
-	input.snp.platform_smt_enabled in data.reference.snp_smt_enabled
-	input.snp.platform_tsme_enabled in data.reference.snp_tsme_enabled
-	input.snp.policy_abi_major in data.reference.snp_guest_abi_major
-	input.snp.policy_abi_minor in data.reference.snp_guest_abi_minor
-	input.snp.policy_single_socket in data.reference.snp_single_socket
-	input.snp.policy_smt_allowed in data.reference.snp_smt_allowed
-}
-
-# For the `configuration` trust claim 3 stands for
-# "The configuration includes or exposes no known
-#  vulnerabilities."
-#
-# In this check, we do not specifically check every
-# configuration value, but we make sure that some key
-# configurations (like debug_allowed) are set correctly.
-else := 3 if {
-	input.snp.policy_debug_allowed == 0
-	input.snp.policy_migrate_ma == 0
+# Generic funtion to validate all file measurements in AA Eventlog
+file_measurements_valid(data) if {
+	every file_key, file_value in data {
+		startswith(file_key, "AA.eventlog.file")
+		file_path := substring(file_key, 16, -1)
+		file_value in data.reference[sprintf("measurement.file%s", [file_path])]
+	}
 }
 
 ##### TDX
+
 executables := 3 if {
-	# Check the kernel, initrd, and cmdline (including dmverity parameters) measurements
-	# TODO: add individual CCEL measurements from input.tdx.ccel instead
-	input.tdx.quote.body.rtmr_1 in data.reference.rtmr_1
-	input.tdx.quote.body.rtmr_2 in data.reference.rtmr_2
+	# Check the kernel, initrd, shim and grub measurements for any supported algorithm
+	validate_boot_measurements(input.tdx.ccel)
 }
 
 hardware := 2 if {
@@ -100,33 +74,60 @@ hardware := 2 if {
 	input.tdx.quote.header.vendor_id == "939a7233f79c4ca9940a0db3957f0607"
 
 	# Check TDX Module version and its hash. Also check OVMF code hash.
-	input.tdx.quote.body.mr_seam in data.reference.mr_seam
-	input.tdx.quote.body.tcb_svn in data.reference.tcb_svn
-	input.tdx.quote.body.mr_td in data.reference.mr_td
-	# Check TCB status
-	# input.tdx.tcb_status == "OK"
-
-	# Check collateral expiration status
-	# input.tdx.collateral_expiration_status == "0"
-
-	# Check against allowed advisory ids
-	# allowed_advisory_ids := {"INTEL-SA-00837"}
-	# attester_advisory_ids := {id | id := input.attester_advisory_ids[_]}
-	# object.subset(allowed_advisory_ids, attester_advisory_ids)
-
-	# Check against disallowed advisory ids
-	# disallowed_advisory_ids := {"INTEL-SA-00837"}
-	# attester_advisory_ids := {id | id := input.tdx.advisory_ids[_]} # convert array to set
-	# intersection := attester_advisory_ids & disallowed_advisory_ids
-	# count(intersection) == 0
+	input.tdx.quote.body.mr_seam in data.reference["tdx.mr_seam"]
+	input.tdx.quote.body.tcb_svn in data.reference["tdx.tcb_svn"]
+	input.tdx.quote.body.mr_td in data.reference["tdx.mr_td"]
 }
 
 configuration := 2 if {
 	# Check the TD has the expected attributes (e.g., debug not enabled) and features.
-	input.tdx.td_attributes.debug == false
-	input.tdx.quote.body.xfam in data.reference.xfam
+	# input.tdx.td_attributes.debug == false
+	input.tdx.quote.body.xfam in data.reference["tdx.xfam"]
+
+	# Check kernel command line parameters have the expected value for any supported algorithm
+	validate_kernel_cmdline(input.tdx.ccel, input.tdx.ccel.kernel_cmdline)
+
+	# Check cryptpilot config
+	# input.tdx["AA.eventlog.cryptpilot.alibabacloud.com.load_config"] in data.reference["cryptpilot.load_config"]
 }
 
-##### AZ SNP TODO
-##### AZ TDX TODO
-##### SE TODO
+file_system := 2 if {
+	# Check rootfs integrity
+	input.tdx["AA.eventlog.cryptpilot.alibabacloud.com.fde_rootfs_hash"] in data.reference["measurement.rootfs"]
+	
+	# Check measured files - iterate through all file measurements
+	file_measurements_valid(input.tdx)
+}
+
+##### TPM
+
+executables := 3 if {
+	# Check the kernel, initrd, shim and grub measurements for any supported algorithm
+	validate_boot_measurements(input.tpm)
+}
+
+hardware := 2 if {
+	# Check TPM EK cert issuer
+	# input.tpm.EK_cert_issuer.OU in data.reference["tpm_ek_issuer_ou"]
+
+	# Check TPM firmware version
+	input.tpm["quote.firmware_version"] in data.reference["tpm.firmware_version"]
+}
+
+configuration := 2 if {
+	# Check kernel command line parameters have the expected value for any supported algorithm
+	validate_kernel_cmdline(input.tpm, input.tpm.kernel_cmdline)
+
+	# Check cryptpilot config
+	# input.tpm["AA.eventlog.cryptpilot.alibabacloud.com.load_config"] in data.reference["cryptpilot.load_config"]
+}
+
+file_system := 2 if {
+	# Check rootfs integrity
+	input.tpm["AA.eventlog.cryptpilot.alibabacloud.com.fde_rootfs_hash"] in data.reference["measurement.rootfs"]
+	
+	# Check measured files - iterate through all file measurements
+	file_measurements_valid(input.tpm)
+}
+
+
