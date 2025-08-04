@@ -16,6 +16,9 @@ import {
 import { SearchOutlined, SyncOutlined, EyeOutlined } from '@ant-design/icons';
 import { auditApi } from '@/api';
 import type { AttestationRecord, ResourceRequest } from '@/types/api';
+import type { TokenEvaluationResult } from '@/types/token';
+import { parseToken } from '@/utils/tokenAdapter';
+import TokenDetails from '@/components/TokenDetails';
 
 const { Title } = Typography;
 const { RangePicker } = DatePicker;
@@ -23,6 +26,7 @@ const { Option } = Select;
 const { TabPane } = Tabs;
 
 const AuditPage: React.FC = () => {
+  const [currentTokenResult, setCurrentTokenResult] = useState<TokenEvaluationResult | null>(null);
   const [attestationRecords, setAttestationRecords] = useState<AttestationRecord[]>([]);
   const [resourceRequests, setResourceRequests] = useState<ResourceRequest[]>([]);
   const [attestationTotal, setAttestationTotal] = useState<number>(0);
@@ -114,6 +118,21 @@ const AuditPage: React.FC = () => {
       // 尝试解析和格式化JSON
       const parsedContent = JSON.parse(content);
       
+      if (title === 'claims') {
+        try {
+          // 尝试解析为Token
+          const tokenResult = parseToken(parsedContent);
+          setDetailContent('');  // 清空详情内容，因为我们将使用TokenDetails组件
+          setDetailTitle('Token详情');
+          setDetailModalVisible(true);
+          setCurrentTokenResult(tokenResult);
+          return;
+        } catch (e) {
+          console.error('Token解析失败:', e);
+          // 如果Token解析失败，回退到通用JSON显示
+        }
+      }
+      
       // 通用处理：检测并展开任何包含JSON字符串的字段
       if (parsedContent && typeof parsedContent === 'object') {
         // 递归处理对象，查找并展开任何包含JSON的字符串字段
@@ -161,6 +180,7 @@ const AuditPage: React.FC = () => {
     }
     setDetailTitle(title);
     setDetailModalVisible(true);
+    setCurrentTokenResult(null);
   };
 
   const attestationColumns = [
@@ -470,17 +490,27 @@ const AuditPage: React.FC = () => {
       <Modal
         title={detailTitle}
         open={detailModalVisible}
-        onCancel={() => setDetailModalVisible(false)}
+        onCancel={() => {
+          setDetailModalVisible(false);
+          setCurrentTokenResult(null);
+        }}
         footer={[
-          <Button key="close" onClick={() => setDetailModalVisible(false)}>
+          <Button key="close" onClick={() => {
+            setDetailModalVisible(false);
+            setCurrentTokenResult(null);
+          }}>
             关闭
           </Button>
         ]}
         width={800}
       >
-        <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 4, maxHeight: '500px', overflow: 'auto' }}>
-          {detailContent}
-        </pre>
+        {currentTokenResult ? (
+          <TokenDetails evaluationResult={currentTokenResult} />
+        ) : (
+          <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 4, maxHeight: '500px', overflow: 'auto' }}>
+            {detailContent}
+          </pre>
+        )}
       </Modal>
     </div>
   );
