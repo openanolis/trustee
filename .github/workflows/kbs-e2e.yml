@@ -27,7 +27,7 @@ jobs:
       RUSTC_VERSION: 1.85.0
     steps:
     - name: Download artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
 
     - name: Extract tarball
       run: tar xzf ./artifact/${{ inputs.tarball }}
@@ -74,7 +74,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     steps:
     - name: Download artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
 
     - name: Extract test folder
       run: tar xzf ./artifact/test.tar.gz
