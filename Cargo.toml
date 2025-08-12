@@ -6,6 +6,7 @@ members = [
     "tools/kbs-client",
     "tools/evidence-dump",
     "deps/verifier",
+    "deps/eventlog",
     "integration-tests",
 ]
 resolver = "2"
