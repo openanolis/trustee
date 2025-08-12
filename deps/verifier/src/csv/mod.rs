@@ -4,7 +4,7 @@
 //
 
 use base64::Engine;
-use eventlog::{ccel::tcg_enum::TcgAlgorithm, CcEventLog, ReferenceMeasurement};
+use ::eventlog::{ccel::tcg_enum::TcgAlgorithm, CcEventLog, ReferenceMeasurement};
 use reqwest::{get, Response as ReqwestResponse, StatusCode};
 use std::{io::Cursor, path::Path};
 use tokio::fs;

@@ -25,6 +25,7 @@ anyhow = "1.0"
 assert-json-diff = "2.0.2"
 async-trait = "0.1.31"
 base64 = "0.21"
+byteorder = "1.5.0"
 cfg-if = "1.0.0"
 chrono = "0.4.19"
 clap = { version = "4", features = ["derive"] }
@@ -35,9 +36,9 @@ hex = "0.4.3"
 jwt-simple = { version = "0.12", default-features = false, features = [
     "pure-rust",
 ] }
-kbs_protocol = { git = "https://github.com/inclavare-containers/guest-components.git", branch = "main", default-features = false }
-kbs-types = { git = "https://github.com/inclavare-containers/kbs-types.git", rev = "d411727" }
-confidential-data-hub = { git = "https://github.com/inclavare-containers/guest-components.git", branch = "main", default-features = false, features = ["aliyun", "kbs", "bin", "ttrpc", "cli"] }
+kbs_protocol = { git = "https://github.com/Xynnn007/guest-components.git", branch = "ic-kbs-protocol-040", default-features = false }
+kbs-types = { git = "https://github.com/inclavare-containers/kbs-types.git", rev = "5c029c9" }
+confidential-data-hub = { git = "https://github.com/Xynnn007/guest-components.git", branch = "ic-kbs-protocol-040", default-features = false, features = ["aliyun", "kbs", "bin", "ttrpc", "cli"] }
 jsonwebtoken = { version = "9", default-features = false }
 log = "0.4.17"
 openssl = "0.10.46"
