@@ -615,14 +615,14 @@ source = "git+https://github.com/Xynnn007/guest-components.git?branch=ic-kbs-pro
 dependencies = [
  "anyhow",
  "async-trait",
- "attester 0.1.0 (git+https://github.com/Xynnn007/guest-components.git?branch=ic-kbs-protocol-040)",
+ "attester",
  "base64 0.22.1",
  "config 0.14.1",
  "const_format",
  "crypto",
  "eventlog-rs",
  "hex",
- "kbs-types 0.12.0",
+ "kbs-types",
  "log",
  "serde",
  "serde_json",
@@ -651,7 +651,7 @@ dependencies = [
  "futures",
  "hex",
  "jsonwebtoken",
- "kbs-types 0.12.0",
+ "kbs-types",
  "lazy_static",
  "log",
  "openssl",
@@ -693,12 +693,12 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "codicon",
- "csv-rs 0.1.0 (git+https://github.com/panpingsheng/csv-rs.git?rev=7538198)",
+ "csv-rs 0.1.0 (git+https://github.com/panpingsheng/csv-rs?rev=7538198)",
  "eventlog-rs",
  "hex",
  "hyper 0.14.32",
  "hyper-tls 0.5.0",
- "kbs-types 0.12.0",
+ "kbs-types",
  "log",
  "nix 0.29.0",
  "num-traits",
@@ -721,37 +721,6 @@ dependencies = [
  "tss-esapi",
  "udev",
  "uuid",
-]
-
-[[package]]
-name = "attester"
-version = "0.1.0"
-source = "git+https://github.com/inclavare-containers/guest-components.git?branch=main#4c535aa1fec9383aa078f69821fbe89cad90cde3"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "codicon",
- "csv-rs 0.1.0 (git+https://github.com/openanolis/csv-rs?rev=3045440)",
- "eventlog-rs",
- "hex",
- "hyper 0.14.32",
- "hyper-tls 0.5.0",
- "kbs-types 0.6.0",
- "log",
- "nix 0.29.0",
- "pnet",
- "scroll 0.12.0",
- "serde",
- "serde_json",
- "serde_with 1.14.0",
- "sha2",
- "strum 0.26.3",
- "tdx-attest-rs",
- "tempfile",
- "thiserror 2.0.12",
- "tokio",
- "udev",
 ]
 
 [[package]]
@@ -1868,7 +1837,7 @@ dependencies = [
  "base64 0.22.1",
  "concat-kdf",
  "ctr",
- "kbs-types 0.12.0",
+ "kbs-types",
  "openssl",
  "p256",
  "rand 0.8.5",
@@ -1945,29 +1914,7 @@ dependencies = [
 [[package]]
 name = "csv-rs"
 version = "0.1.0"
-source = "git+https://github.com/openanolis/csv-rs?rev=3045440#3045440238a4487fc468a69dce07313662992a64"
-dependencies = [
- "bitfield 0.13.2",
- "bitflags 1.3.2",
- "codicon",
- "dirs",
- "hyper 0.14.32",
- "hyper-tls 0.5.0",
- "iocuddle",
- "libc",
- "openssl",
- "openssl-sys",
- "rand 0.8.5",
- "serde",
- "serde-big-array",
- "static_assertions",
- "tokio",
-]
-
-[[package]]
-name = "csv-rs"
-version = "0.1.0"
-source = "git+https://github.com/panpingsheng/csv-rs.git?rev=7538198#753819821493b0299ec8db622e10802eb6243c07"
+source = "git+https://github.com/panpingsheng/csv-rs?rev=7538198#753819821493b0299ec8db622e10802eb6243c07"
 dependencies = [
  "bincode",
  "bitfield 0.13.2",
@@ -2716,17 +2663,6 @@ dependencies = [
  "lazy_static",
  "log",
  "sha2",
-]
-
-[[package]]
-name = "evidence-dump"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "attester 0.1.0 (git+https://github.com/inclavare-containers/guest-components.git?branch=main)",
- "base64 0.21.7",
- "clap 4.2.7",
- "tokio",
 ]
 
 [[package]]
@@ -4078,7 +4014,7 @@ dependencies = [
  "josekit",
  "jsonwebtoken",
  "jwt-simple",
- "kbs-types 0.12.0",
+ "kbs-types",
  "lazy_static",
  "log",
  "mobc",
@@ -4127,15 +4063,6 @@ dependencies = [
 
 [[package]]
 name = "kbs-types"
-version = "0.6.0"
-source = "git+https://github.com/inclavare-containers/kbs-types.git?rev=1b4217f#1b4217f395023b6b33a32f1be6348b22ece5518c"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "kbs-types"
 version = "0.12.0"
 source = "git+https://github.com/inclavare-containers/kbs-types.git?rev=5c029c9#5c029c904afb458ce7e331d27d734fab1d0faf06"
 dependencies = [
@@ -4155,12 +4082,12 @@ source = "git+https://github.com/Xynnn007/guest-components.git?branch=ic-kbs-pro
 dependencies = [
  "anyhow",
  "async-trait",
- "attester 0.1.0 (git+https://github.com/Xynnn007/guest-components.git?branch=ic-kbs-protocol-040)",
+ "attester",
  "base64 0.22.1",
  "canon-json",
  "crypto",
  "jwt-simple",
- "kbs-types 0.12.0",
+ "kbs-types",
  "log",
  "protobuf 3.5.1",
  "reqwest 0.12.12",
@@ -8467,7 +8394,7 @@ dependencies = [
  "intel-tee-quote-verification-rs",
  "jsonwebkey",
  "jsonwebtoken",
- "kbs-types 0.12.0",
+ "kbs-types",
  "log",
  "openssl",
  "quick-xml",
