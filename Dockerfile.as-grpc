@@ -29,6 +29,7 @@ WORKDIR /tmp
 RUN yum install -y yum-utils
 RUN yum-config-manager --add-repo https://enclave-cn-beijing.oss-cn-beijing.aliyuncs.com/repo/alinux/enclave-expr.repo
 RUN yum install -y tar tpm2-tss tpm2-tss-devel curl openssl libsgx-dcap-default-qpl libsgx-dcap-quote-verify
+RUN yum reinstall -y ca-certificates
 
 COPY --from=builder /root/.cargo/bin/grpc-as /usr/local/bin/grpc-as
 
