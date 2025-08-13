@@ -1,17 +1,14 @@
-name: AS & RVPS Container Image Build
+name: Trustee Container Image Build
 on:
   push:
     branches:
       - "main"
+    # 所有修改默认触发此测试
     paths:
-      - 'attestation-service/**'
-      - '.github/workflows/as-docker-build.yml'
-      - 'Cargo.toml'
+      - '**'
   pull_request:
     paths:
-      - 'attestation-service/**'
-      - '.github/workflows/as-docker-build.yml'
-      - 'Cargo.toml'
+      - '**'
   create:
 
 jobs:
@@ -37,3 +34,15 @@ jobs:
     - name: Build RVPS Container Image
       run: |
         Docker_BUILDKIT=1 docker build -t rvps:latest . -f Dockerfile.rvps
+
+    - name: Build KBS Container Image
+      run: |
+        Docker_BUILDKIT=1 docker build -t kbs:latest . -f Dockerfile.kbs
+
+    - name: Build Trustee Gateway Container Image
+      run: |
+        Docker_BUILDKIT=1 docker build -t trustee-gateway:latest . -f Dockerfile.trustee-gateway
+    
+    - name: Build Trustee Frontend Container Image
+      run: |
+        Docker_BUILDKIT=1 docker build -t trustee-frontend:latest . -f Dockerfile.trustee-frontend
