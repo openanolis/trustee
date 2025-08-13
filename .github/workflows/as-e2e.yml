@@ -1,4 +1,4 @@
-name: CoCo-AS e2e
+name: Attestation Service e2e
 
 on:
   pull_request:
