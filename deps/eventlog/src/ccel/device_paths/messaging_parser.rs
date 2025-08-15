@@ -110,12 +110,12 @@ impl DeviceSubTypeParser for Ipv4Parser {
         let mut index = 0;
 
         let local_ip = data
-            .gread_with(&mut index, LE)
-            .map(Ipv4Addr::from_bits)
+            .gread_with::<u32>(&mut index, LE)
+            .map(Ipv4Addr::from)
             .map_err(|e| anyhow::anyhow!("Failed to read IPv4 local address: {:?}", e))?;
         let remote_ip = data
-            .gread_with(&mut index, LE)
-            .map(Ipv4Addr::from_bits)
+            .gread_with::<u32>(&mut index, LE)
+            .map(Ipv4Addr::from)
             .map_err(|e| anyhow::anyhow!("Failed to read IPv4 remote address: {:?}", e))?;
         let _local_port: u16 = data
             .gread_with(&mut index, LE)

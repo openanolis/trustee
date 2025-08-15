@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256, Sha384, Sha512};
 use sm3::Sm3;
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::mem::size_of;
 
 pub mod ccel;
 
