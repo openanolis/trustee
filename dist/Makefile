@@ -37,7 +37,6 @@ build:
 	CGO_ENABLED=1 GOOS=linux go build -mod vendor -a -installsuffix cgo -ldflags="-s -w" -o gateway cmd/server/main.go && \
 	cd ..
 	cargo build -p kbs --locked --release --no-default-features --features coco-as-grpc,aliyun,tpm-pca
-	cargo build -p kbs-client --locked --release --no-default-features --features sample_only,all-attesters
 	cargo build --bin restful-as --release --features restful-bin --locked
 	cargo build --bin grpc-as --release --features grpc-bin --locked
 	cargo build --bin rvps --release
@@ -68,12 +67,14 @@ install:
 	install -m 644 system/rvps.service $(BUILDROOT)$(PREFIX)/lib/systemd/system/rvps.service
 	install -m 644 system/as-restful.service $(BUILDROOT)$(PREFIX)/lib/systemd/system/as-restful.service
 	install -m 644 system/trustee.service $(BUILDROOT)$(PREFIX)/lib/systemd/system/trustee.service
+	install -m 644 system/trustee-gateway.service $(BUILDROOT)$(PREFIX)/lib/systemd/system/trustee-gateway.service
 	
 	# 创建配置目录并安装配置文件
 	install -d -p $(BUILDROOT)$(CONFIG_DIR)
 	install -m 644 configs/kbs-config.toml $(BUILDROOT)$(CONFIG_DIR)/kbs-config.toml
 	install -m 644 configs/as-config.json $(BUILDROOT)$(CONFIG_DIR)/as-config.json
 	install -m 644 configs/rvps.json $(BUILDROOT)$(CONFIG_DIR)/rvps.json
+	install -m 644 configs/gateway.yml $(BUILDROOT)$(CONFIG_DIR)/gateway.yml
 	
 	# 创建 bin 目录并安装可执行文件
 	install -d -p $(BUILDROOT)$(PREFIX)/bin
@@ -81,8 +82,8 @@ install:
 	install -m 755 ../target/release/restful-as $(BUILDROOT)$(PREFIX)/bin/restful-as
 	install -m 755 ../target/release/grpc-as $(BUILDROOT)$(PREFIX)/bin/grpc-as
 	install -m 755 ../target/release/rvps $(BUILDROOT)$(PREFIX)/bin/rvps
-	install -m 755 ../target/release/kbs-client $(BUILDROOT)$(PREFIX)/bin/kbs-client
 	install -m 755 ../target/release/rvps-tool $(BUILDROOT)$(PREFIX)/bin/rvps-tool
+	install -m 755 ../trustee-gateway/gateway $(BUILDROOT)$(PREFIX)/bin/trustee-gateway
 	
 	install -d -p $(BUILDROOT)$(PREFIX)/include
 	install -d -p $(BUILDROOT)$(PREFIX)/lib64
