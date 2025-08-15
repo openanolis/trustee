@@ -6,6 +6,7 @@
 use super::{EventDataParser, EventDetails};
 use crate::ccel::device_paths::DevicePath;
 use anyhow::{bail, Result};
+use std::mem::size_of;
 
 pub struct EvBootServicesAppParser;
 

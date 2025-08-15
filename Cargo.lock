@@ -643,7 +643,7 @@ dependencies = [
  "assert-json-diff",
  "async-trait",
  "base64 0.21.7",
- "canon-json",
+ "canon-json 0.2.1 (git+https://github.com/inclavare-containers/canon-json-rs)",
  "cfg-if",
  "clap 4.2.7",
  "ear",
@@ -1236,6 +1236,17 @@ name = "canon-json"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5ae9f90437d2e2efba2a6c75b8279aa6b8f2f4017e0a4aeb64a76cd9d3a2bab"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "canon-json"
+version = "0.2.1"
+source = "git+https://github.com/inclavare-containers/canon-json-rs#d6fa90c68f60d3d7a51daf942d882b589541be51"
 dependencies = [
  "serde",
  "serde_derive",
@@ -2639,7 +2650,7 @@ dependencies = [
  "hex",
  "log",
  "rstest",
- "scroll 0.13.0",
+ "scroll 0.12.0",
  "serde",
  "serde_json",
  "serde_with 1.14.0",
@@ -4084,7 +4095,7 @@ dependencies = [
  "async-trait",
  "attester",
  "base64 0.22.1",
- "canon-json",
+ "canon-json 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "crypto",
  "jwt-simple",
  "kbs-types",
@@ -6639,15 +6650,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "scroll"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1257cd4248b4132760d6524d6dda4e053bc648c9070b960929bf50cfb1e7add"
-dependencies = [
- "scroll_derive 0.13.0",
-]
-
-[[package]]
 name = "scroll_derive"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6663,17 +6665,6 @@ name = "scroll_derive"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f81c2fde025af7e69b1d1420531c8a8811ca898919db177141a85313b1cb932"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.98",
-]
-
-[[package]]
-name = "scroll_derive"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22fc4f90c27b57691bbaf11d8ecc7cfbfe98a4da6dbe60226115d322aa80c06e"
 dependencies = [
  "proc-macro2",
  "quote",

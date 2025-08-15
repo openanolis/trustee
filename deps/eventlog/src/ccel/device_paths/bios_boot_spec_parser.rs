@@ -52,15 +52,15 @@ impl DeviceSubTypeParser for BbsParser {
             .gread_with::<u16>(&mut index, LE)
             .map_err(|e| anyhow::anyhow!("Failed to read device type: {:?}", e))?
         {
-            0x01 => "FLOPPY",
-            0x02 => "HARD_DRIVE",
-            0x03 => "CDROM",
-            0x04 => "PCMCIA",
-            0x05 => "USB",
-            0x06 => "EMBEDDED_NETWORK",
-            0x80 => "DEV",
-            0xFF => "UNKNOWN",
-            other => &*other.to_string(),
+            0x01 => "FLOPPY".to_string(),
+            0x02 => "HARD_DRIVE".to_string(),
+            0x03 => "CDROM".to_string(),
+            0x04 => "PCMCIA".to_string(),
+            0x05 => "USB".to_string(),
+            0x06 => "EMBEDDED_NETWORK".to_string(),
+            0x80 => "DEV".to_string(),
+            0xFF => "UNKNOWN".to_string(),
+            other => other.to_string(),
         };
 
         let status_flag: u16 = data
