@@ -4,8 +4,8 @@
 
 use super::backend::{ResourceDesc, StorageBackend};
 use anyhow::{Context, Result};
-use confidential_data_hub::kms::{plugins::aliyun::AliyunKmsClient, Annotations, Getter};
 use derivative::Derivative;
+use kms::{plugins::aliyun::AliyunKmsClient, Annotations, Getter};
 use log::info;
 use serde::Deserialize;
 

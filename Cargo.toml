@@ -3,10 +3,9 @@ members = [
     "kbs",
     "attestation-service",
     "rvps",
-    "tools/kbs-client",
     "deps/verifier",
     "deps/eventlog",
-    "integration-tests",
+    "deps/kms",
 ]
 resolver = "2"
 
@@ -23,7 +22,6 @@ actix-web-httpauth = "0.8.0"
 anyhow = "1.0"
 assert-json-diff = "2.0.2"
 async-trait = "0.1.31"
-attester = { git = "https://github.com/Xynnn007/guest-components.git", branch = "ic-kbs-protocol-040", default-features = false }
 base64 = "0.21"
 byteorder = "1.5.0"
 cfg-if = "1.0.0"
@@ -36,9 +34,7 @@ hex = "0.4.3"
 jwt-simple = { version = "0.12", default-features = false, features = [
     "pure-rust",
 ] }
-kbs_protocol = { git = "https://github.com/Xynnn007/guest-components.git", branch = "ic-kbs-protocol-040", default-features = false }
 kbs-types = { git = "https://github.com/inclavare-containers/kbs-types.git", rev = "5c029c9" }
-confidential-data-hub = { git = "https://github.com/Xynnn007/guest-components.git", branch = "ic-kbs-protocol-040", default-features = false, features = ["aliyun", "kbs", "bin", "ttrpc", "cli"] }
 jsonwebtoken = { version = "9", default-features = false }
 log = "0.4.17"
 openssl = "0.10.46"

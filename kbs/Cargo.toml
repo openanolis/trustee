@@ -25,7 +25,7 @@ coco-as-builtin-no-verifier = ["coco-as"]
 coco-as-grpc = ["coco-as", "mobc", "tonic", "tonic-build", "prost"]
 
 # Use aliyun KMS as KBS backend
-aliyun = ["confidential-data-hub/aliyun"]
+aliyun = ["kms"]
 
 # Use pkcs11 plugin
 pkcs11 = ["cryptoki"]
@@ -55,7 +55,7 @@ env_logger.workspace = true
 jsonwebtoken = { workspace = true, default-features = false }
 jwt-simple.workspace = true
 kbs-types.workspace = true
-confidential-data-hub = { workspace = true, default-features = false }
+kms = { path = "../deps/kms", optional = true }
 lazy_static = "1.4.0"
 log.workspace = true
 mobc = { version = "0.8.3", optional = true }
