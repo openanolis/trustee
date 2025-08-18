@@ -28,6 +28,26 @@ impl Attest for BuiltInCoCoAs {
             .await
     }
 
+    async fn get_policy(&self, policy_id: &str) -> Result<String> {
+        self.inner
+            .read()
+            .await
+            .get_policy(policy_id.to_string())
+            .await
+    }
+
+    async fn list_policies(&self) -> Result<HashMap<String, String>> {
+        self.inner.read().await.list_policies().await
+    }
+
+    async fn delete_policy(&self, policy_id: &str) -> Result<()> {
+        self.inner
+            .write()
+            .await
+            .delete_policy(policy_id.to_string())
+            .await
+    }
+
     async fn verify(&self, evidence_to_verify: Vec<IndependentEvidence>) -> Result<String> {
         let mut verification_requests = vec![];
 

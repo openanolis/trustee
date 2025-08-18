@@ -64,6 +64,12 @@ impl InTotoExtractor {
     }
 }
 
+impl Default for InTotoExtractor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Extractor for InTotoExtractor {
     /// In-toto's Extractor.
     ///
@@ -279,7 +285,7 @@ pub mod test {
         let rv = ReferenceValue::new()
             .expect("create ReferenceValue failed")
             .set_name("foo.tar.gz")
-            .set_expired(Utc.with_ymd_and_hms(2030, 11, 18, 16, 6, 36).unwrap())
+            .set_expiration(Utc.with_ymd_and_hms(2030, 11, 18, 16, 6, 36).unwrap())
             .set_version("0.1.0")
             .add_hash_value("sha256".into(), sha256_for_in_toto_test_artifact());
         let rv = vec![rv];

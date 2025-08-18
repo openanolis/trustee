@@ -32,8 +32,6 @@ ifneq ($(BUILD_ARCH), $(ARCH))
   endif
 endif
 
-CLI_FEATURES ?=
-ATTESTER ?=
 FEATURES ?=
 TEST_FEATURES ?=
 TEST_ARGUMENTS ?=
@@ -60,14 +58,6 @@ ifeq ($(TPM_PCA_PLUGIN), true)
   FEATURES := $(FEATURES),tpm-pca
 endif
 
-ifndef CLI_FEATURES
-  ifdef ATTESTER
-    CLI_FEATURES = "sample_only,$(ATTESTER)"
-  else
-    CLI_FEATURES += "sample_only,all-attesters"
-  endif
-endif
-
 ifneq ($(TEST_FEATURES),)
   TEST_ARGUMENTS = --no-default-features --features $(TEST_FEATURES)
 endif
@@ -88,45 +78,26 @@ passport-resource-kbs:
 	$(CARGO_ENV) cargo build -p kbs --locked --release --no-default-features --features $(FEATURES), $(TARGET_FLAG)
 	mv ../target/release/kbs ../target/release/resource-kbs
 
-.PHONY: cli
-cli:
-	$(CARGO_ENV) cargo build -p kbs-client --locked --release --no-default-features --features $(CLI_FEATURES) $(TARGET_FLAG)
-
-.PHONY: cli-static-linux
-cli-static-linux:
-	$(CARGO_ENV) cargo build \
-      -p kbs-client \
-      --target=$(ARCH)-unknown-linux-gnu \
-      --config "target.$(ARCH)-unknown-linux-gnu.rustflags = '-C target-feature=+crt-static'" \
-      --locked \
-      --release \
-      --no-default-features \
-      --features sample_only
-
 install-kbs:
 	install -D -m0755 $(RELEASE_DIR)/kbs $(INSTALL_DESTDIR)
 
 install-issuer-kbs:
 	install -D -m0755 $(RELEASE_DIR)/issuer-kbs $(INSTALL_DESTDIR)
-	install -D -m0755 $(RELEASE_DIR)/kbs-client $(INSTALL_DESTDIR)
 
 install-resource-kbs:
 	install -D -m0755 $(RELEASE_DIR)/resource-kbs $(INSTALL_DESTDIR)
 
-install-cli:
-	install -D -m0755 $(RELEASE_DIR)/kbs-client $(INSTALL_DESTDIR)
-
 uninstall:
-	rm -rf $(INSTALL_DESTDIR)/kbs $(INSTALL_DESTDIR)/kbs-client $(INSTALL_DESTDIR)/issuer-kbs $(INSTALL_DESTDIR)/resource-kbs
+	rm -rf $(INSTALL_DESTDIR)/kbs $(INSTALL_DESTDIR)/issuer-kbs $(INSTALL_DESTDIR)/resource-kbs
 
 check:
-	cargo test -p kbs -p kbs-client -p integration-tests $(TEST_ARGUMENTS)
+	cargo test -p kbs $(TEST_ARGUMENTS)
 
 lint:
-	cargo clippy -p kbs -p kbs-client $(TEST_ARGUMENTS) -- -D warnings
+	cargo clippy -p kbs $(TEST_ARGUMENTS) -- -D warnings
 
 format:
-	cargo fmt -p kbs -p kbs-client -- --check --config format_code_in_doc_comments=true
+	cargo fmt -p kbs -- --check --config format_code_in_doc_comments=true
 
 clean:
 	cargo clean

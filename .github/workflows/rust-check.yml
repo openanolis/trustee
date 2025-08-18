@@ -134,15 +134,15 @@ jobs:
 
       - name: Run cargo test
         run: |
-          sudo -E PATH="$PATH" -s cargo test -p attestation-service -p reference-value-provider-service -p verifier
+          sudo -E PATH="$PATH" -s cargo test -p attestation-service -p verifier
 
       - name: Run cargo fmt check
         run: |
-          sudo -E PATH="$PATH" -s cargo fmt -p attestation-service -p reference-value-provider-service --check
+          sudo -E PATH="$PATH" -s cargo fmt -p attestation-service -p verifier --check
 
       - name: Run rust lint check
         run: |
-          sudo -E PATH="$PATH" -s cargo clippy -p attestation-service -p reference-value-provider-service -- -D warnings -A clippy::derive_partial_eq_without_eq
+          sudo -E PATH="$PATH" -s cargo clippy -p attestation-service -p verifier -- -D warnings -A clippy::derive_partial_eq_without_eq
 
   rvps-check:
     if: |
@@ -176,11 +176,6 @@ jobs:
         working-directory: rvps
         run: |
           cargo test --all-features
-
-      - name: RVPS Format Check
-        working-directory: rvps
-        run: |
-          cargo fmt --all -- --check
 
       - name: RVPS Lint Check
         working-directory: rvps

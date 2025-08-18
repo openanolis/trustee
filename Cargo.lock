@@ -2680,18 +2680,19 @@ dependencies = [
 
 [[package]]
 name = "josekit"
-version = "0.10.3"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a808e078330e6af222eb0044b71d4b1ff981bfef43e7bc8133a88234e0c86a0c"
+checksum = "54b85e2125819afc4fd2ae57416207e792c7e12797858e5db2a6c6f24a166829"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "flate2",
+ "once_cell",
  "openssl",
  "regex",
  "serde",
  "serde_json",
- "thiserror 2.0.12",
+ "thiserror 1.0.69",
  "time",
 ]
 

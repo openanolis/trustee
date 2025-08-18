@@ -30,7 +30,6 @@ default configuration := 36
 # "File system integrity cannot be verified or is compromised."
 default file_system := 35
 
-
 ##### Common Helper Functions
 
 # Generic function to validate measurements for any platform and algorithm
@@ -45,7 +44,7 @@ validate_boot_measurements(measurements_data) if {
 
 # Generic function to validate kernel cmdline for any platform and algorithm
 validate_kernel_cmdline(measurements_data, cmdline_data) if {
-	cmdline_data in data.reference["kernel_cmdline"]
+	cmdline_data in data.reference.kernel_cmdline
 
 	some algorithm in {"SHA1", "SHA256", "SHA384"}
 	measurement_key := sprintf("measurement.kernel_cmdline.%s", [algorithm])
@@ -53,8 +52,8 @@ validate_kernel_cmdline(measurements_data, cmdline_data) if {
 }
 
 # Generic funtion to validate all file measurements in AA Eventlog
-file_measurements_valid(data) if {
-	every file_key, file_value in data {
+file_measurements_valid(measurements_data) if {
+	every file_key, file_value in measurements_data {
 		startswith(file_key, "AA.eventlog.file")
 		file_path := substring(file_key, 16, -1)
 		file_value in data.reference[sprintf("measurement.file%s", [file_path])]
@@ -86,7 +85,6 @@ configuration := 2 if {
 
 	# Check kernel command line parameters have the expected value for any supported algorithm
 	validate_kernel_cmdline(input.tdx.ccel, input.tdx.ccel.kernel_cmdline)
-
 	# Check cryptpilot config
 	# input.tdx["AA.eventlog.cryptpilot.alibabacloud.com.load_config"] in data.reference["cryptpilot.load_config"]
 }
@@ -94,7 +92,7 @@ configuration := 2 if {
 file_system := 2 if {
 	# Check rootfs integrity
 	input.tdx["AA.eventlog.cryptpilot.alibabacloud.com.fde_rootfs_hash"] in data.reference["measurement.rootfs"]
-	
+
 	# Check measured files - iterate through all file measurements
 	file_measurements_valid(input.tdx)
 }
@@ -117,7 +115,6 @@ hardware := 2 if {
 configuration := 2 if {
 	# Check kernel command line parameters have the expected value for any supported algorithm
 	validate_kernel_cmdline(input.tpm, input.tpm.kernel_cmdline)
-
 	# Check cryptpilot config
 	# input.tpm["AA.eventlog.cryptpilot.alibabacloud.com.load_config"] in data.reference["cryptpilot.load_config"]
 }
@@ -125,9 +122,7 @@ configuration := 2 if {
 file_system := 2 if {
 	# Check rootfs integrity
 	input.tpm["AA.eventlog.cryptpilot.alibabacloud.com.fde_rootfs_hash"] in data.reference["measurement.rootfs"]
-	
+
 	# Check measured files - iterate through all file measurements
 	file_measurements_valid(input.tpm)
 }
-
-
