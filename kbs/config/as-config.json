@@ -6,7 +6,7 @@
         "address": "http://rvps:50003"
     },
     "attestation_token_broker": {
-	"type": "Ear",
+	"type": "Simple",
         "duration_min": 5
     }
 }

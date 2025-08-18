@@ -14,6 +14,7 @@ use log::info;
 use mobc::{Manager, Pool};
 use serde::Deserialize;
 use std::collections::HashMap;
+use tokio::sync::Mutex;
 use tonic::transport::Channel;
 
 use crate::attestation::backend::{make_nonce, Attest, IndependentEvidence};
@@ -21,7 +22,8 @@ use crate::attestation::backend::{make_nonce, Attest, IndependentEvidence};
 use self::attestation::{
     attestation_service_client::AttestationServiceClient,
     individual_attestation_request::{InitData, RuntimeData},
-    AttestationRequest, ChallengeRequest, IndividualAttestationRequest, SetPolicyRequest,
+    AttestationRequest, ChallengeRequest, DeletePolicyRequest, GetPolicyRequest,
+    IndividualAttestationRequest, ListPoliciesRequest, SetPolicyRequest,
 };
 
 mod attestation {
@@ -60,7 +62,7 @@ impl Default for GrpcConfig {
 }
 
 pub struct GrpcClientPool {
-    pool: Pool<GrpcManager>,
+    pool: Mutex<Pool<GrpcManager>>,
 }
 
 impl GrpcClientPool {
@@ -72,7 +74,7 @@ impl GrpcClientPool {
         let manager = GrpcManager {
             as_addr: config.as_addr,
         };
-        let pool = Pool::builder().max_open(config.pool_size).build(manager);
+        let pool = Mutex::new(Pool::builder().max_open(config.pool_size).build(manager));
 
         Ok(Self { pool })
     }
@@ -86,12 +88,63 @@ impl Attest for GrpcClientPool {
             policy: policy.to_string(),
         });
 
-        let mut client = self.pool.get().await?;
+        let mut client = { self.pool.lock().await.get().await? };
         client
             .as_rpc
             .set_attestation_policy(req)
             .await
             .map_err(|e| anyhow!("Set Policy Failed: {:?}", e))?;
+
+        Ok(())
+    }
+
+    async fn get_policy(&self, policy_id: &str) -> Result<String> {
+        let req = tonic::Request::new(GetPolicyRequest {
+            policy_id: policy_id.to_string(),
+        });
+
+        let mut client = { self.pool.lock().await.get().await? };
+
+        let resp = client
+            .as_rpc
+            .get_attestation_policy(req)
+            .await
+            .map_err(|e| anyhow!("Get Policy Failed: {:?}", e))?;
+
+        Ok(resp.into_inner().policy)
+    }
+
+    async fn list_policies(&self) -> Result<HashMap<String, String>> {
+        let req = tonic::Request::new(ListPoliciesRequest {});
+
+        let mut client = { self.pool.lock().await.get().await? };
+
+        let resp = client
+            .as_rpc
+            .list_attestation_policies(req)
+            .await
+            .map_err(|e| anyhow!("List Policies Failed: {:?}", e))?;
+
+        let mut policies_map = HashMap::new();
+        for policy_info in resp.into_inner().policies {
+            policies_map.insert(policy_info.policy_id, policy_info.policy_hash);
+        }
+
+        Ok(policies_map)
+    }
+
+    async fn delete_policy(&self, policy_id: &str) -> Result<()> {
+        let req = tonic::Request::new(DeletePolicyRequest {
+            policy_id: policy_id.to_string(),
+        });
+
+        let mut client = { self.pool.lock().await.get().await? };
+
+        client
+            .as_rpc
+            .delete_attestation_policy(req)
+            .await
+            .map_err(|e| anyhow!("Delete Policy Failed: {:?}", e))?;
 
         Ok(())
     }
@@ -130,7 +183,7 @@ impl Attest for GrpcClientPool {
             policy_ids: vec!["default".to_string()],
         });
 
-        let mut client = self.pool.get().await?;
+        let mut client = { self.pool.lock().await.get().await? };
 
         let token = client
             .as_rpc
@@ -154,7 +207,7 @@ impl Attest for GrpcClientPool {
                 inner.insert(String::from("tee_params"), tee_parameters.to_string());
                 let req = tonic::Request::new(ChallengeRequest { inner });
 
-                let mut client = self.pool.get().await?;
+                let mut client = { self.pool.lock().await.get().await? };
                 client
                     .as_rpc
                     .get_attestation_challenge(req)
@@ -178,7 +231,7 @@ impl Attest for GrpcClientPool {
             message: message.to_string(),
         });
 
-        let mut client = self.pool.get().await?;
+        let mut client = { self.pool.lock().await.get().await? };
 
         client
             .rvps_rpc
@@ -192,7 +245,7 @@ impl Attest for GrpcClientPool {
     async fn query_reference_values(&self) -> anyhow::Result<HashMap<String, serde_json::Value>> {
         let req = tonic::Request::new(ReferenceValueQueryRequest {});
 
-        let mut client = self.pool.get().await?;
+        let mut client = { self.pool.lock().await.get().await? };
 
         let ReferenceValueQueryResponse {
             reference_value_results,

@@ -393,7 +393,7 @@ pub async fn get_vbios_rim(
     let rim_service_url = get_rim_service_url().await?;
 
     // Construct VBIOS RIM file ID
-    let vbios_version_formatted = vbios_version.replace(".", "").to_uppercase();
+    let vbios_version_formatted = vbios_version.replace('.', "").to_uppercase();
     let project_upper = project.to_uppercase();
     let project_sku_upper = project_sku.to_uppercase();
     let chip_sku_upper = chip_sku.to_uppercase();

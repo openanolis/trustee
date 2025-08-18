@@ -65,7 +65,7 @@
 curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/auth \
      -H 'Content-Type: application/json' \
      -d '{
-             "version": "0.1.0",
+             "version": "0.4.0",
              "tee": "tdx",
              "extra-params": "foo"
          }'
@@ -82,7 +82,7 @@ curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/auth \
 
 ```json
 {
-    "version": "string", // (必需) 协议版本，例如 "0.1.0"
+    "version": "string", // (必需) 协议版本，例如 "0.4.0"
     "tee": "string",     // (必需) TEE 类型。已知值: "tdx", "tpm", "csv"。后端 KBS 可能接受其他值（例如用于测试的 "sample"）。
     "extra-params": "string"   // 字符串，保留字段，用于可能的额外参数传递
 }
@@ -564,7 +564,7 @@ curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/resource/my-repo/my-type
         
     *   `type` (路径参数, string, 必需): 资源的类型。
         
-    *   `tag` (路径参数, string, 必需): 资源的标签或版本。_(KBS OpenAPI V0.1.0 标记 repository 为可选，但 Gateway 路由需要它)_
+    *   `tag` (路径参数, string, 必需): 资源的标签或版本。_(KBS OpenAPI V0.4.0 标记 repository 为可选，但 Gateway 路由需要它)_
         
 *   **请求体:** 资源内容，格式由 `Content-Type` 指定，具体由 KBS 处理。
     

@@ -6,7 +6,7 @@
         "address": "http://127.0.0.1:50003"
     },
     "attestation_token_broker": {
-	"type": "Ear",
+	"type": "Simple",
         "duration_min": 5,
         "policy_dir": "/opt/trustee/attestation-service/policies"
     }

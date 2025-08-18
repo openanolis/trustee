@@ -75,7 +75,7 @@ func (h *HealthCheckHandler) checkKBSHealth(c *gin.Context) ServiceStatus {
 	defer cancel()
 
 	authBody := []byte(`{
-		"version": "0.1.0",
+		"version": "0.4.0",
 		"tee": "sample",
 		"extra-params": "foo"
 	}`)

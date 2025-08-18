@@ -45,4 +45,4 @@ jobs:
     
     - name: Build Trustee Frontend Container Image
       run: |
-        Docker_BUILDKIT=1 docker build -t trustee-frontend:latest . -f Dockerfile.trustee-frontend
+        Docker_BUILDKIT=1 docker build -t trustee-frontend:latest . -f Dockerfile.frontend
