@@ -38,7 +38,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Deserialize)]
 pub struct AttestationRequest {
-    individual_attestation_request: Vec<IndividualAttestationRequest>,
+    verification_requests: Vec<IndividualAttestationRequest>,
     policy_ids: Vec<String>,
 }
 
@@ -134,7 +134,7 @@ pub async fn attestation(
     debug!("attestation: {request:#?}");
 
     let mut verification_requests: Vec<VerificationRequest> = vec![];
-    for attestation_request in request.individual_attestation_request {
+    for attestation_request in request.verification_requests {
         let evidence = URL_SAFE_NO_PAD
             .decode(&attestation_request.evidence)
             .context("base64 decode evidence")?;
