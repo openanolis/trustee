@@ -601,7 +601,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "attestation-agent"
 version = "0.1.0"
-source = "git+https://github.com/inclavare-containers/guest-components.git?branch=main#4c535aa1fec9383aa078f69821fbe89cad90cde3"
+source = "git+https://github.com/inclavare-containers/guest-components.git?rev=39dd161#39dd161cff541c5285709c08e9b5bfbf2220145d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -610,6 +610,7 @@ dependencies = [
  "config 0.14.1",
  "const_format",
  "crypto",
+ "eventlog-rs",
  "hex",
  "kbs-types",
  "log",
@@ -671,13 +672,14 @@ dependencies = [
 [[package]]
 name = "attester"
 version = "0.1.0"
-source = "git+https://github.com/inclavare-containers/guest-components.git?branch=main#4c535aa1fec9383aa078f69821fbe89cad90cde3"
+source = "git+https://github.com/inclavare-containers/guest-components.git?rev=39dd161#39dd161cff541c5285709c08e9b5bfbf2220145d"
 dependencies = [
  "anyhow",
  "async-trait",
  "az-snp-vtpm 0.7.1",
  "az-tdx-vtpm 0.7.1",
  "base64 0.22.1",
+ "chrono",
  "codicon",
  "csv-rs",
  "eventlog-rs",
@@ -688,9 +690,11 @@ dependencies = [
  "log",
  "nix 0.29.0",
  "num-traits",
+ "nvml-wrapper",
  "occlum_dcap",
  "openssl",
  "pnet",
+ "rsa",
  "s390_pv",
  "scroll 0.12.0",
  "serde",
@@ -705,6 +709,7 @@ dependencies = [
  "tokio",
  "tss-esapi",
  "udev",
+ "uuid",
 ]
 
 [[package]]
@@ -1479,7 +1484,7 @@ dependencies = [
 [[package]]
 name = "confidential-data-hub"
 version = "0.1.0"
-source = "git+https://github.com/inclavare-containers/guest-components.git?branch=main#4c535aa1fec9383aa078f69821fbe89cad90cde3"
+source = "git+https://github.com/inclavare-containers/guest-components.git?rev=39dd161#39dd161cff541c5285709c08e9b5bfbf2220145d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1792,7 +1797,7 @@ checksum = "43da5946c66ffcc7745f48db692ffbb10a83bfe0afd96235c5c2a4fb23994929"
 [[package]]
 name = "crypto"
 version = "0.1.0"
-source = "git+https://github.com/inclavare-containers/guest-components.git?branch=main#4c535aa1fec9383aa078f69821fbe89cad90cde3"
+source = "git+https://github.com/inclavare-containers/guest-components.git?rev=39dd161#39dd161cff541c5285709c08e9b5bfbf2220145d"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3492,7 +3497,7 @@ dependencies = [
 [[package]]
 name = "image-rs"
 version = "0.1.0"
-source = "git+https://github.com/inclavare-containers/guest-components.git?branch=main#4c535aa1fec9383aa078f69821fbe89cad90cde3"
+source = "git+https://github.com/inclavare-containers/guest-components.git?rev=39dd161#39dd161cff541c5285709c08e9b5bfbf2220145d"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -3879,7 +3884,7 @@ dependencies = [
 [[package]]
 name = "kbc"
 version = "0.1.0"
-source = "git+https://github.com/inclavare-containers/guest-components.git?branch=main#4c535aa1fec9383aa078f69821fbe89cad90cde3"
+source = "git+https://github.com/inclavare-containers/guest-components.git?rev=39dd161#39dd161cff541c5285709c08e9b5bfbf2220145d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3965,7 +3970,7 @@ dependencies = [
 [[package]]
 name = "kbs-types"
 version = "0.6.0"
-source = "git+https://github.com/inclavare-containers/kbs-types.git?rev=d881395#d8813950a035b037322cdcde53b2a9c9f513489b"
+source = "git+https://github.com/inclavare-containers/kbs-types.git?rev=1b4217f#1b4217f395023b6b33a32f1be6348b22ece5518c"
 dependencies = [
  "serde",
  "serde_json",
@@ -3974,7 +3979,7 @@ dependencies = [
 [[package]]
 name = "kbs_protocol"
 version = "0.1.0"
-source = "git+https://github.com/inclavare-containers/guest-components.git?branch=main#4c535aa1fec9383aa078f69821fbe89cad90cde3"
+source = "git+https://github.com/inclavare-containers/guest-components.git?rev=39dd161#39dd161cff541c5285709c08e9b5bfbf2220145d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4622,6 +4627,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "nvml-wrapper"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d5c6c0ef9702176a570f06ad94f3198bc29c524c8b498f1b9346e1b1bdcbb3a"
+dependencies = [
+ "bitflags 2.8.0",
+ "libloading 0.8.6",
+ "nvml-wrapper-sys",
+ "static_assertions",
+ "thiserror 1.0.69",
+ "wrapcenum-derive",
+]
+
+[[package]]
+name = "nvml-wrapper-sys"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd23dbe2eb8d8335d2bce0299e0a07d6a63c089243d626ca75b770a962ff49e6"
+dependencies = [
+ "libloading 0.8.6",
+]
+
+[[package]]
 name = "objc2"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4736,7 +4764,7 @@ dependencies = [
 [[package]]
 name = "ocicrypt-rs"
 version = "0.1.0"
-source = "git+https://github.com/inclavare-containers/guest-components.git?branch=main#4c535aa1fec9383aa078f69821fbe89cad90cde3"
+source = "git+https://github.com/inclavare-containers/guest-components.git?rev=39dd161#39dd161cff541c5285709c08e9b5bfbf2220145d"
 dependencies = [
  "aes",
  "anyhow",
@@ -6061,7 +6089,7 @@ dependencies = [
 [[package]]
 name = "resource_uri"
 version = "0.1.0"
-source = "git+https://github.com/inclavare-containers/guest-components.git?branch=main#4c535aa1fec9383aa078f69821fbe89cad90cde3"
+source = "git+https://github.com/inclavare-containers/guest-components.git?rev=39dd161#39dd161cff541c5285709c08e9b5bfbf2220145d"
 dependencies = [
  "anyhow",
  "serde",
@@ -7865,10 +7893,11 @@ dependencies = [
 
 [[package]]
 name = "ttrpc-codegen"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94d7f7631d7a9ebed715a47cd4cb6072cbc7ae1d4ec01598971bbec0024340c2"
+checksum = "cdc0529f65223eca94fc5830e7d552d0d152ff42b74aff5c641edac39592f41f"
 dependencies = [
+ "home",
  "protobuf 2.28.0",
  "protobuf-codegen 3.5.1",
  "protobuf-support",
@@ -7877,11 +7906,12 @@ dependencies = [
 
 [[package]]
 name = "ttrpc-compiler"
-version = "0.6.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0672eb06e5663ad190c7b93b2973f5d730259859b62e4e3381301a12a7441107"
+checksum = "9be3fb2fe509cb9c0099b3b5551b759ae714f2dde56dfc713f2a5bda8c16064a"
 dependencies = [
  "derive-new",
+ "home",
  "prost 0.8.0",
  "prost-build 0.8.0",
  "prost-types 0.8.0",
@@ -8694,6 +8724,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3268f3d866458b787f390cf61f4bbb563b922d091359f9608842999eaee3943c"
 dependencies = [
  "bitflags 2.8.0",
+]
+
+[[package]]
+name = "wrapcenum-derive"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a76ff259533532054cfbaefb115c613203c73707017459206380f03b3b3f266e"
+dependencies = [
+ "darling 0.20.11",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.98",
 ]
 
 [[package]]
