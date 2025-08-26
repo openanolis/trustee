@@ -94,7 +94,7 @@ services:
     ports:
       - "8081:8081"
     volumes:
-      - ./trustee-gateway/config.yaml:/app/config.yaml:rw
+      - ./deploy/configs/trustee-gateway.yml:/app/config.yaml:rw
       - ./trustee-gateway/data:/app/data:rw
     command: [
       "/app/gateway",
