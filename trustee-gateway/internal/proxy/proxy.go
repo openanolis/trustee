@@ -174,7 +174,12 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 	if serviceType == KBSService && !strings.HasPrefix(targetPath, "/kbs/v0") {
 		targetPath = "/kbs/v0" + strings.TrimPrefix(targetPath, "/api/kbs/v0")
 	} else if serviceType == AttestationServiceType {
-		targetPath = strings.TrimPrefix(targetPath, "/api/attestation-service")
+		// Handle both /api/attestation-service and /api/as prefixes
+		if strings.HasPrefix(targetPath, "/api/attestation-service") {
+			targetPath = strings.TrimPrefix(targetPath, "/api/attestation-service")
+		} else if strings.HasPrefix(targetPath, "/api/as") {
+			targetPath = strings.TrimPrefix(targetPath, "/api/as")
+		}
 	}
 
 	targetQuery := c.Request.URL.RawQuery

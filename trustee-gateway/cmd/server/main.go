@@ -183,6 +183,20 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 		attestationSvc.DELETE("/policy/:id", attestationServiceHandler.DeleteAttestationPolicy)
 	}
 
+	// AS API routes (alias for attestation-service)
+	as := router.Group("/api/as")
+	{
+		as.POST("/attestation", attestationServiceHandler.HandleAttestation)
+		as.POST("/challenge", attestationServiceHandler.HandleGeneralRequest)
+		as.GET("/certificate", attestationServiceHandler.HandleGeneralRequest)
+
+		// Policy routes
+		as.POST("/policy", attestationServiceHandler.HandleSetAttestationPolicy)
+		as.GET("/policy/:id", attestationServiceHandler.GetAttestationPolicy)
+		as.GET("/policies", attestationServiceHandler.ListAttestationPolicies)
+		as.DELETE("/policy/:id", attestationServiceHandler.DeleteAttestationPolicy)
+	}
+
 	// RVPS API routes
 	rvps := router.Group("/api/rvps")
 	{
