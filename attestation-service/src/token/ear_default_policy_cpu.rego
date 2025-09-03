@@ -28,6 +28,8 @@ default configuration := 36
 
 # For the `filesystem` trust claim, the value 35 stands for
 # "File system integrity cannot be verified or is compromised."
+# FIXME: now the `file_system` claim returned by rego is not well
+# handled by EAR token broker, as it expects `file-system`.
 default file_system := 35
 
 ##### Common Helper Functions
