@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  labels:
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+data:
+  nginx.conf: |
+    user  nginx;
+    worker_processes  1;
+    
+    error_log  /var/log/nginx/error.log warn;
+    pid        /var/run/nginx.pid;
+    
+    events {
+        worker_connections  1024;
+    }
+    
+    http {
+        include       /etc/nginx/mime.types;
+        default_type  application/octet-stream;
+        
+        log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                          '$status $body_bytes_sent "$http_referer" '
+                          '"$http_user_agent" "$http_x_forwarded_for"';
+                          
+        access_log  /var/log/nginx/access.log  main;
+        
+        sendfile        on;
+        keepalive_timeout  65;
+        
+        # Disable client_body_temp_path and related temp paths
+        client_body_temp_path /tmp/nginx-client-body;
+        proxy_temp_path /tmp/nginx-proxy;
+        fastcgi_temp_path /tmp/nginx-fastcgi;
+        uwsgi_temp_path /tmp/nginx-uwsgi;
+        scgi_temp_path /tmp/nginx-scgi;
+        
+        server { 
+            listen       {{ .Values.frontend.service.port }}; 
+            server_name  localhost; 
+            root   /usr/share/nginx/html; 
+            index  index.html; 
+            location / { 
+                try_files $uri $uri/ /index.html; 
+            } 
+            location /api { 
+                proxy_pass http://gateway:{{ .Values.gateway.service.port }}; 
+                proxy_set_header Host $host; 
+                proxy_set_header X-Real-IP $remote_addr; 
+                proxy_buffer_size 128k; 
+                proxy_buffers 8 128k;
+                proxy_busy_buffers_size 256k;
+                proxy_temp_file_write_size 512k;
+            } 
+        }
+    }

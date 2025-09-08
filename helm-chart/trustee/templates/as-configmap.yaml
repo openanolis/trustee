@@ -21,7 +21,7 @@ data:
           {{- end }}
         },
         "attestation_token_broker": {
-            "type": "Simple",
+            "type": "Ear",
             "duration_min": 5
         }
     }

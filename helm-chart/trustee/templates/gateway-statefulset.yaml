@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: gateway
+  labels:
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.gateway.replicaCount }}
+  serviceName: gateway
+  selector:
+    matchLabels:
+      app: gateway
+      {{- include "coco-kbs.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        rollme: {{ randAlphaNum 5 | quote }}
+      {{- with .Values.gateway.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        app: gateway
+        {{- include "coco-kbs.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.gateway.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.gateway.podSecurityContext | nindent 8 }}
+      containers:
+        - name: gateway
+          securityContext:
+            {{- toYaml .Values.gateway.securityContext | nindent 12 }}
+          image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
+          imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          command:
+            - "/app/gateway"
+            - "--config"
+            - "/app/config.yaml"
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.log_level }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.gateway.service.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: trustee-gateway.yml
+            - name: data
+              mountPath: /app/data
+      volumes:
+        - name: config
+          configMap:
+            name: gateway-config
+  {{- if .Values.gateway.storage.enabled }}
+  {{- else }}
+        - name: data
+          emptyDir: {}
+  {{- end }}
+      {{- with .Values.gateway.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gateway.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+{{- if .Values.gateway.storage.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ {{ .Values.gateway.storage.accessMode }} ]
+      storageClassName: {{ .Values.gateway.storage.storageClass }}
+      resources:
+        requests:
+          storage: {{ .Values.gateway.storage.size }}
+{{ end }}

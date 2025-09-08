@@ -11,7 +11,7 @@ data:
   rvps.json: |
     {
         "storage": {
-	          "type": "LocalFs",
-	          "file_path": "/opt/confidential-containers/attestation-service/reference_values"
+            "type": "LocalFs",
+            "file_path": "/opt/confidential-containers/attestation-service/reference_values"
         }
     }
