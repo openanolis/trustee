@@ -1,0 +1,53 @@
+apiVersion: alibabacloud.com/v1
+kind: AlbConfig
+metadata:
+  name: alb-{{ .Release.Name }}
+spec:
+  config:
+    name: alb-{{ .Release.Name }}
+    addressType: Internet
+  listeners:
+    - port: 80
+      protocol: HTTP
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: alb-{{ .Release.Name }}
+spec:
+  controller: ingress.k8s.alibabacloud/alb
+  parameters:
+    apiGroup: alibabacloud.com
+    kind: AlbConfig
+    name: alb-{{ .Release.Name }}
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend-ingress
+  labels:
+    ingress-controller: alb
+    # {{- include "coco-kbs.labels" . | nindent 4 }}
+  annotations:
+    # alb.ingress.kubernetes.io/use-regex: "true"
+    alb.ingress.kubernetes.io/sticky-session: "true"
+    # alb.ingress.kubernetes.io/rewrite-target: /${2}
+spec:
+  ingressClassName: alb-{{ .Release.Name }}
+  rules:
+    # {{- if .Values.domainName }}
+    # - host: {{ .Values.domainName }}
+    # {{- end }}
+    - http:
+        paths:
+          - backend:
+              service:
+                name: frontend-slb-intranet
+                port:
+                  number: {{ .Values.frontend.service.port }}
+            path: /
+            pathType: Prefix

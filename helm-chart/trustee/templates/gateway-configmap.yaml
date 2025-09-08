@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  labels:
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+data:
+  trustee-gateway.yml: |
+    server:
+      host: "0.0.0.0"
+      port: {{ .Values.gateway.service.port }}
+      insecure_http: true
+      tls:
+        cert_file: ""
+        key_file: ""
+
+    kbs:
+      url: "http://kbs:8080"
+      insecure_http: true
+      ca_cert_file: ""
+
+    attestation_service:
+      url: "http://asrestful:50005"
+      insecure_http: true
+      ca_cert_file: ""
+
+    rvps:
+      grpc_addr: "rvps:50003"
+
+    database:
+      type: "sqlite"
+      path: "/app/data/trustee-gateway.db"
+      use_memory: true
+      backup_interval: "2m"
+      enable_backup_on_shutdown: true
+
+    logging:
+      level: "{{ .Values.log_level }}"
+
+    audit:
+      max_records: 1000
+      retention_days: 3
+      cleanup_interval_hours: 24
+
+    attestation_agent_instance_info:
+      heartbeat_timeout_minutes: 10

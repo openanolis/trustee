@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-slb-intranet
+  labels:
+    app: frontend
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+  annotations:
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-spec: slb.s2.small
+    service.beta.kubernetes.io/alicloud-loadbalancer-address-type: {{ .Values.frontend.service.loadBalancerType }}
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-id: {{ .Values.frontend.service.loadBalancerId | default "" }}
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-force-override-listeners: 'true'
+    service.beta.kubernetes.io/alicloud-loadbalancer-backend-label: app=frontend,{{ include "coco-kbs.selectorLabels" . | replace "\n" "," | replace " " "" }}
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-additional-resource-tags: k8s-namespace={{ .Release.Namespace }},region={{ .Values.regionId | default "cn-hangzhou" }}
+spec:
+  type: {{ .Values.frontend.service.type }}
+  ports:
+    - port: {{ .Values.frontend.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: frontend
+    {{- include "coco-kbs.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.frontend.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: frontend
+    {{- include "coco-kbs.selectorLabels" . | nindent 4 }}
