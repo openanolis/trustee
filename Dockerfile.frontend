@@ -1,4 +1,6 @@
-FROM docker.io/library/node:latest as builder
+ARG NODE_IMAGE=docker.io/library/node
+
+FROM ${NODE_IMAGE}:latest as builder
 
 WORKDIR /app
 
