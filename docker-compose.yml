@@ -3,6 +3,7 @@ services:
   kbs:
     build:
       context: .
+      network: host
       dockerfile: Dockerfile.kbs
     image: trustee-kbs:latest
     command: [
@@ -23,6 +24,7 @@ services:
   as:
     build:
       context: .
+      network: host
       dockerfile: Dockerfile.as-grpc
     image: trustee-as:latest
     ports:
@@ -47,6 +49,7 @@ services:
   as-restful:
     build:
       context: .
+      network: host
       dockerfile: Dockerfile.as-restful
     image: trustee-as-restful:latest
     ports:
@@ -71,6 +74,7 @@ services:
   rvps:
     build:
       context: .
+      network: host
       dockerfile: Dockerfile.rvps
     image: trustee-rvps:latest
     restart: always # keep the server running
@@ -88,6 +92,7 @@ services:
   gateway:
     build:
       context: .
+      network: host
       dockerfile: Dockerfile.trustee-gateway
     image: trustee-gateway:latest
     restart: always
@@ -109,6 +114,7 @@ services:
   frontend:
     build:
       context: .
+      network: host
       dockerfile: Dockerfile.frontend
     image: trustee-frontend:latest
     ports:
