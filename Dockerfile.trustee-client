@@ -6,6 +6,13 @@
 
 FROM alibaba-cloud-linux-3-registry.cn-hangzhou.cr.aliyuncs.com/alinux3/alinux3:latest as builder
 
+ARG ALL_PROXY
+ARG NO_PROXY
+ENV ALL_PROXY=$ALL_PROXY
+ENV NO_PROXY=$NO_PROXY
+
+ARG CARGO_JOBS
+
 RUN yum install -y perl wget curl clang openssh-clients openssl-devel protobuf-devel git
 
 WORKDIR /usr/src/trustee
@@ -26,6 +33,11 @@ RUN printf '\
     [source.aliyun]\n\
     registry = "sparse+https://mirrors.aliyun.com/crates.io-index/"\n\
     ' > ~/.cargo/config
+
+RUN if [ -n "$CARGO_JOBS" ]; then \
+      [ ! -d /root/.cargo ] && mkdir /root/.cargo; \
+      echo -e "[build]\njobs = $CARGO_JOBS" >> /root/.cargo/config.toml; \
+    fi
 
 RUN cargo build -p kbs-client --locked --release --no-default-features --features sample_only
 

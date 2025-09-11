@@ -7,6 +7,14 @@
 ARG BASE_IMAGE=alibaba-cloud-linux-3-registry.cn-hangzhou.cr.aliyuncs.com/alinux3/alinux3:latest
 
 FROM ${BASE_IMAGE} AS builder
+
+ARG ALL_PROXY
+ARG NO_PROXY
+ENV ALL_PROXY=$ALL_PROXY
+ENV NO_PROXY=$NO_PROXY
+
+ARG CARGO_JOBS
+
 ARG ARCH=x86_64
 
 WORKDIR /tmp
@@ -18,10 +26,21 @@ WORKDIR /usr/src/attestation-service
 COPY . .
 RUN sed -i 's/version = 4/version = 3/g' Cargo.lock
 
+RUN if [ -n "$CARGO_JOBS" ]; then \
+      [ ! -d /root/.cargo ] && mkdir /root/.cargo; \
+      echo -e "[build]\njobs = $CARGO_JOBS" >> /root/.cargo/config.toml; \
+    fi
+
 # Build and Install gRPC attestation-service
 RUN cargo install --path attestation-service --bin grpc-as --features grpc-bin,all-verifier --locked
 
 FROM ${BASE_IMAGE}
+
+ARG ALL_PROXY
+ARG NO_PROXY
+ENV ALL_PROXY=$ALL_PROXY
+ENV NO_PROXY=$NO_PROXY
+
 ARG ARCH=x86_64
 
 WORKDIR /tmp
