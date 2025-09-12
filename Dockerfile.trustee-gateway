@@ -15,7 +15,7 @@ COPY . .
 
 RUN yum install -y wget ca-certificates gcc
 
-RUN wget https://go.dev/dl/go1.21.6.linux-amd64.tar.gz && \
+RUN wget https://mirrors.aliyun.com/golang/go1.21.6.linux-amd64.tar.gz && \
     sha256sum go1.21.6.linux-amd64.tar.gz > go1.21.6.linux-amd64.tar.gz.sha256 && \
     sha256sum -c go1.21.6.linux-amd64.tar.gz.sha256 && \
     rm -rf /usr/local/go && \
