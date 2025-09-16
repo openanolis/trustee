@@ -144,8 +144,7 @@ validate_cryptpilot_config(uefi_event_logs) if {
 	uefi_event_logs[i].details.unicode_name == "AAEL"
 	uefi_event_logs[i].details.data.domain == "cryptpilot.alibabacloud.com"
 	uefi_event_logs[i].details.data.operation == "load_config"
-	uefi_event_logs[i].details.data.content.alg == "sha384"
-	uefi_event_logs[i].details.data.content.value in data.reference["AA.eventlog.cryptpilot.alibabacloud.com.load_config"]
+	uefi_event_logs[i].details.data.content in data.reference["AA.eventlog.cryptpilot.alibabacloud.com.load_config"]
 }
 
 # Function to check the cryptpilot fde rootfs integrity
