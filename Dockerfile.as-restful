@@ -50,6 +50,10 @@ RUN yum-config-manager --add-repo https://enclave-cn-beijing.oss-cn-beijing.aliy
 RUN yum install -y tar tpm2-tss tpm2-tss-devel curl openssl libsgx-dcap-default-qpl libsgx-dcap-quote-verify
 RUN yum reinstall -y ca-certificates
 
+ENV HTTPS_PROXY=
+ENV HTTP_PROXY=
+ENV NO_PROXY=
+
 COPY --from=builder /root/.cargo/bin/restful-as /usr/local/bin/restful-as
 
 COPY ./attestation-service/config.json /etc/config.json

@@ -37,6 +37,10 @@ FROM ${BASE_IMAGE}
 
 RUN yum install -y openssl curl pkg-config
 
+ENV HTTPS_PROXY=
+ENV HTTP_PROXY=
+ENV NO_PROXY=
+
 COPY --from=builder /usr/local/bin/kbs /usr/local/bin/kbs
 COPY --from=builder /usr/src/kbs/kbs/kbs-init/kbs-init /usr/local/bin/coco-kbs-init
 COPY --from=builder /usr/src/kbs/kbs/kbs-init/kbs-watcher /usr/local/bin/coco-kbs-secret-watcher
