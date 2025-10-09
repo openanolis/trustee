@@ -1,6 +1,6 @@
 ARG NODE_IMAGE=docker.io/library/node
 
-FROM ${NODE_IMAGE}:latest as builder
+FROM ${NODE_IMAGE}:18-alpine as builder
 
 WORKDIR /app
 
@@ -33,4 +33,4 @@ RUN echo 'server { \
 
 EXPOSE 8082
 
-CMD ["nginx", "-g", "daemon off;"] 
+CMD ["nginx", "-g", "daemon off;"]
