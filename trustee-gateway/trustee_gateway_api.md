@@ -1313,8 +1313,8 @@ curl -k http://<gateway-host>:<port>/api/audit/attestation?limit=50&offset=50
         
 *   **响应:**
     
-    *   成功时，返回包含认证记录列表和总数的 JSON 对象，包含 `data` (记录数组) 和 `total` (当前返回的记录数量)。
-        
+    *   成功时，返回包含认证记录列表和总数的 JSON 对象，包含 `data` (记录数组) 和 `total` (满足筛选条件的总记录数，独立于本次分页返回数量)。
+    
     *   失败时，返回错误信息。
         
 *   **返回码:**
@@ -1423,8 +1423,8 @@ curl -k http://<gateway-host>:<port>/api/audit/resources?method=POST&successful=
     
 *   **响应:**
     
-    *   成功时，返回包含资源请求记录列表和总数的 JSON 对象，包含 `data` (记录数组) 和 `total` (当前返回的记录数量)。
-        
+    *   成功时，返回包含资源请求记录列表和总数的 JSON 对象，包含 `data` (记录数组) 和 `total` (满足筛选条件的总记录数，独立于本次分页返回数量)。
+    
     *   失败时，返回错误信息。
         
 *   **返回码:**
