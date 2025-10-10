@@ -81,9 +81,24 @@ func (h *AuditHandler) ListAttestationRecords(c *gin.Context) {
 		return
 	}
 
+	// Count total matched records without pagination
+	total, err := h.auditRepo.CountAttestationRecords(
+		sessionID,
+		sourceService,
+		instanceID,
+		successful,
+		startTime,
+		endTime,
+	)
+	if err != nil {
+		logrus.Errorf("Failed to count attestation records: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count attestation records"})
+		return
+	}
+
 	response := models.AttestationRecordsResponse{
 		Data:  records,
-		Total: int64(len(records)),
+		Total: total,
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -153,9 +168,28 @@ func (h *AuditHandler) ListResourceRequests(c *gin.Context) {
 		return
 	}
 
+
+	// Count total matched resource request records without pagination
+	rTotal, err := h.auditRepo.CountResourceRequests(
+		sessionID,
+		repository,
+		resourceType,
+		tag,
+		method,
+		instanceID,
+		successful,
+		startTime,
+		endTime,
+	)
+	if err != nil {
+		logrus.Errorf("Failed to count resource requests: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count resource requests"})
+		return
+	}
+
 	response := models.ResourceRequestsResponse{
 		Data:  records,
-		Total: int64(len(records)),
+		Total: rTotal,
 	}
 
 	c.JSON(http.StatusOK, response)

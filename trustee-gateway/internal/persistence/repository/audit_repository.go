@@ -133,6 +133,107 @@ func (r *AuditRepository) ListResourceRequests(
 	return records, nil
 }
 
+// CountAttestationRecords counts attestation records with optional filtering (without pagination)
+func (r *AuditRepository) CountAttestationRecords(
+    sessionID string,
+    sourceService string,
+    instanceID string,
+    successful *bool,
+    startTime, endTime *time.Time,
+) (int64, error) {
+    var count int64
+
+    query := r.db.Model(&models.AttestationRecord{})
+
+    if sessionID != "" {
+        query = query.Where("session_id = ?", sessionID)
+    }
+
+    if sourceService != "" {
+        query = query.Where("source_service = ?", sourceService)
+    }
+
+    if instanceID != "" {
+        query = query.Where("instance_id = ?", instanceID)
+    }
+
+    if successful != nil {
+        query = query.Where("successful = ?", *successful)
+    }
+
+    if startTime != nil {
+        query = query.Where("timestamp >= ?", startTime)
+    }
+
+    if endTime != nil {
+        query = query.Where("timestamp <= ?", endTime)
+    }
+
+    if err := query.Count(&count).Error; err != nil {
+        return 0, err
+    }
+
+    return count, nil
+}
+
+// CountResourceRequests counts resource request records with optional filtering (without pagination)
+func (r *AuditRepository) CountResourceRequests(
+    sessionID string,
+    repository string,
+    resourceType string,
+    tag string,
+    method string,
+    instanceID string,
+    successful *bool,
+    startTime, endTime *time.Time,
+) (int64, error) {
+    var count int64
+
+    query := r.db.Model(&models.ResourceRequest{})
+
+    if sessionID != "" {
+        query = query.Where("session_id = ?", sessionID)
+    }
+
+    if repository != "" {
+        query = query.Where("repository = ?", repository)
+    }
+
+    if resourceType != "" {
+        query = query.Where("type = ?", resourceType)
+    }
+
+    if tag != "" {
+        query = query.Where("tag = ?", tag)
+    }
+
+    if method != "" {
+        query = query.Where("method = ?", method)
+    }
+
+    if instanceID != "" {
+        query = query.Where("instance_id = ?", instanceID)
+    }
+
+    if successful != nil {
+        query = query.Where("successful = ?", *successful)
+    }
+
+    if startTime != nil {
+        query = query.Where("timestamp >= ?", startTime)
+    }
+
+    if endTime != nil {
+        query = query.Where("timestamp <= ?", endTime)
+    }
+
+    if err := query.Count(&count).Error; err != nil {
+        return 0, err
+    }
+
+    return count, nil
+}
+
 // CleanupOldRecords removes old audit records based on retention policy
 func (r *AuditRepository) CleanupOldRecords(maxRecords int, retentionDays int) error {
 	// Only apply time-based cleanup if retention days > 0
