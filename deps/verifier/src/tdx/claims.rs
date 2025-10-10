@@ -47,12 +47,13 @@
 
 use anyhow::*;
 use byteorder::{LittleEndian, ReadBytesExt};
+use eventlog::CcEventLog;
 use log::debug;
 use serde_json::{Map, Value};
 
-use crate::{eventlog::AAEventlog, tdx::quote::QuoteV5Body, TeeEvidenceParsedClaim};
+use crate::{tdx::quote::QuoteV5Body, TeeEvidenceParsedClaim};
 
-use super::{eventlog::CcEventLog, quote::Quote};
+use super::quote::Quote;
 
 macro_rules! parse_claim {
     ($map_name: ident, $key_name: literal, $field: ident) => {
@@ -69,7 +70,6 @@ macro_rules! parse_claim {
 pub fn generate_parsed_claim(
     quote: Quote,
     cc_eventlog: Option<CcEventLog>,
-    aa_eventlog: Option<AAEventlog>,
 ) -> Result<TeeEvidenceParsedClaim> {
     let mut quote_map = Map::new();
     let mut quote_body = Map::new();
@@ -163,22 +163,15 @@ pub fn generate_parsed_claim(
         }
     }
 
-    // Claims from CC EventLog.
-    let mut ccel_map = Map::new();
-    if let Some(ccel) = cc_eventlog {
-        parse_ccel(ccel, &mut ccel_map)?;
-    }
-
     let mut claims = Map::new();
 
-    // Claims from AA eventlog
-    if let Some(aael) = aa_eventlog {
-        let aael_map = aael.to_parsed_claims();
-        parse_claim!(claims, "aael", aael_map);
+    // Claims from CC EventLog.
+    if let Some(ccel) = cc_eventlog {
+        let result = serde_json::to_value(ccel.clone().log)?;
+        claims.insert("uefi_event_logs".to_string(), result);
     }
 
     parse_claim!(claims, "quote", quote_map);
-    parse_claim!(claims, "ccel", ccel_map);
 
     parse_claim!(claims, "report_data", quote.report_data());
     parse_claim!(claims, "init_data", quote.mr_config_id());
@@ -187,125 +180,6 @@ pub fn generate_parsed_claim(
     debug!("Parsed Evidence claims map: \n{claims_str}\n");
 
     Ok(Value::Object(claims) as TeeEvidenceParsedClaim)
-}
-
-fn parse_ccel(ccel: CcEventLog, ccel_map: &mut Map<String, Value>) -> Result<()> {
-    let eventlog = ccel.cc_events.clone();
-
-    for event in eventlog.log {
-        let event_data = match String::from_utf8(event.event_desc.clone()) {
-            Result::Ok(d) => d,
-            Result::Err(_) => hex::encode(event.event_desc),
-        };
-
-        let event_digest_algorithm = event.digests[0].algorithm.trim_start_matches("TPM_ALG_");
-
-        #[allow(dead_code)]
-        struct UefiImageLoadEvent {
-            image_location_in_memory: u64,
-            image_length_in_memory: u64,
-            image_link_time_address: u64,
-            length_of_device_path: u64,
-            device_path: Vec<u8>,
-        }
-
-        impl UefiImageLoadEvent {
-            fn from_bytes(bytes: &[u8]) -> Result<Self> {
-                if bytes.len() < 32 {
-                    bail!("Event data too short for UefiImageLoadEvent");
-                }
-
-                let image_location_in_memory = u64::from_le_bytes(bytes[0..8].try_into()?);
-                let image_length_in_memory = u64::from_le_bytes(bytes[8..16].try_into()?);
-                let image_link_time_address = u64::from_le_bytes(bytes[16..24].try_into()?);
-                let length_of_device_path = u64::from_le_bytes(bytes[24..32].try_into()?);
-
-                if bytes.len() < 32 + length_of_device_path as usize {
-                    bail!("Event data too short for device path");
-                }
-
-                let device_path = bytes[32..32 + length_of_device_path as usize].to_vec();
-
-                Ok(Self {
-                    image_location_in_memory,
-                    image_length_in_memory,
-                    image_link_time_address,
-                    length_of_device_path,
-                    device_path,
-                })
-            }
-        }
-
-        // Shim and Grub measurement (Authenticode)
-        // Parse EV_EFI_BOOT_SERVICES_APPLICATION for shim and grub measurement (Authenticode)
-        if event.event_type == "EV_EFI_BOOT_SERVICES_APPLICATION" {
-            let event_data_bytes = hex::decode(&event_data).map_err(|e| {
-                anyhow!("Failed to hex decode event data of EV_EFI_BOOT_SERVICES_APPLICATION: {e}")
-            })?;
-            let image_load_event = UefiImageLoadEvent::from_bytes(&event_data_bytes)
-                .map_err(|e| anyhow!("Failed to parse UefiImageLoadEvent: {e}"))?;
-            let device_path_str =
-                String::from_utf8_lossy(&image_load_event.device_path).to_lowercase();
-
-            let device_path_str = device_path_str
-                .chars()
-                .filter(|c| c.is_ascii() && !c.is_ascii_control())
-                .collect::<String>();
-
-            if device_path_str.contains("shim") {
-                ccel_map.insert(
-                    format!("measurement.shim.{}", event_digest_algorithm),
-                    serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
-                );
-            }
-            if device_path_str.contains("grub") {
-                ccel_map.insert(
-                    format!("measurement.grub.{}", event_digest_algorithm),
-                    serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
-                );
-            }
-        }
-
-        // Kernel blob measurement
-        // Check if event_desc contains "Kernel" or starts with "/boot/vmlinuz"
-        if event_data.contains("Kernel") || event_data.starts_with("/boot/vmlinuz") {
-            let kernel_claim_key = format!("measurement.kernel.{}", event_digest_algorithm);
-            ccel_map.insert(
-                kernel_claim_key,
-                serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
-            );
-        }
-
-        // Kernel command line measurement
-        // Check if event_desc starts with "grub_cmd linux", "kernel_cmdline", or "grub_kernel_cmdline"
-        if event_data.starts_with("grub_cmd linux")
-            || event_data.starts_with("kernel_cmdline")
-            || event_data.starts_with("grub_kernel_cmdline")
-        {
-            let kernel_cmdline_claim_key =
-                format!("measurement.kernel_cmdline.{}", event_digest_algorithm);
-            ccel_map.insert(
-                kernel_cmdline_claim_key,
-                serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
-            );
-            ccel_map.insert(
-                "kernel_cmdline".to_string(),
-                serde_json::Value::String(event_data.clone()),
-            );
-        }
-
-        // Initrd blob measurement
-        // Check if event_desc contains "Initrd" or starts with "/boot/initramfs"
-        if event_data.contains("Initrd") || event_data.starts_with("/boot/initramfs") {
-            let initrd_claim_key = format!("measurement.initrd.{}", event_digest_algorithm);
-            ccel_map.insert(
-                initrd_claim_key,
-                serde_json::Value::String(hex::encode(event.digests[0].digest.clone())),
-            );
-        }
-    }
-
-    Ok(())
 }
 
 const ERR_INVALID_HEADER: &str = "invalid header";
@@ -385,14 +259,12 @@ fn parse_kernel_parameters(kernel_parameters: &[u8]) -> Result<Map<String, Value
 mod tests {
     use anyhow::{anyhow, Result};
     use assert_json_diff::assert_json_eq;
+    use eventlog::CcEventLog;
     use serde_json::{json, to_value, Map, Value};
 
-    use crate::tdx::{eventlog::CcEventLog, quote::parse_tdx_quote};
+    use crate::tdx::quote::parse_tdx_quote;
 
-    use super::{
-        generate_parsed_claim, parse_kernel_parameters, TdShimPlatformConfigInfo,
-        ERR_INVALID_HEADER, ERR_NOT_ENOUGH_DATA,
-    };
+    use super::{generate_parsed_claim, parse_kernel_parameters};
 
     use rstest::rstest;
 
@@ -407,11 +279,78 @@ mod tests {
         let ccel_bin = std::fs::read("./test_data/CCEL_data").expect("read ccel failed");
         let quote = parse_tdx_quote(&quote_bin).expect("parse quote");
         let ccel = CcEventLog::try_from(ccel_bin).expect("parse ccel");
-        let claims = generate_parsed_claim(quote, Some(ccel), None).expect("parse claim failed");
+        let claims = generate_parsed_claim(quote, Some(ccel)).expect("parse claim failed");
         let expected = json!({
-            "ccel": {},
+            "uefi_event_logs": [
+                {
+                    "details": {
+                        "string": ""
+                    },
+                    "digests": [
+                        {
+                            "alg": "SHA-384",
+                            "digest": "c6e6d33de4104b8196acfb57a9866ef6a85d413e86c1be96486e857b464591f4e2d252414346e9b98960246d2219a0eb"
+                        }
+                    ],
+                    "event": "dGRfaG9iAAAAAAAAAAAAAIAUAAABADgAAAAAAAkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAFIAAAAAAAAMAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcAAAAHAAAAAAAAAAAAAAAAAABAAAAAAAMAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHAAAAAAAE/wAAAAAAEAAAAAAAAAMAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHAAAAACAE/wAAAAAAAAIAAAAAAAMAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHAAAAACAG/wAAAAAAAAIAAAAAAAMAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAADBAAAAAAAwAAAAAAAAOA+AAAAAAMAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAADBAAAAAAAAAEAAAD//+7//j8AAAQACBEAAAAAcFgMau3U9EShNd0ji28MjURTRFTsEAAABihDTE9VREhDSERTRFQgIAEAAABDTERIAAAAAFuCQQ4uX1NCX1BIUFIIX0hJRAxB0AoGCF9TVEEKCwhfVUlEDVBDSSBIb3RwbHVnIENvbnRyb2xsZXIAWwFCTENLAAhfQ1JTETMKMIorAAAMAQAAAAAAAAAAAPD+//8/AAAP8P7//z8AAAAAAAAAAAAAEAAAAAAAAAB5AFuAUENTVAAOAPD+//8/AAAKEFuBGlBDU1RDUENJVSBQQ0lEIEIwRUogUFNFRyAUI1BDRUoKWyNCTENL//9waVBTRUd5AWhCMEVKWydCTENLpAAUFVBTQ04IXC8DX1NCX1BDSTBQQ05UW4JK1C5fU0JfUENJMAhfSElEDEHQCggIX0NJRAxB0AoDCF9BRFIACF9TRUcLAAAIX1VJRAAIX0NDQQEIU1VQUAAUDF9QWE0ApAwAAAAAFDdfRFNNBKAqk2gREwoQ0DfJ5VM1ek2RF+pNGcNDTaAKk2oApBEECgEhoAeTagoFpACkEQQKAQAIX0NSUxFGCAqCiA0AAgwAAAAAAAAAAAABAEcB+Az4DAEIhxcAAAwBAAAAAAAAAMD////nAAAAAAAAACiKKwAADAEAAAAAAAAAAAAAAAABAAAA//////4/AAAAAAAAAAAAAAAAAAD+PwAAiA0AAQwDAAAAAPcMAAD4DIgNAAEMAwAAAA3//wAAAPN5AFuCNFMwMDAIX1NVTgoACF9BRFIMAAAAABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMDEIX1NVTgoBCF9BRFIMAAABABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMDIIX1NVTgoCCF9BRFIMAAACABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMDMIX1NVTgoDCF9BRFIMAAADABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMDQIX1NVTgoECF9BRFIMAAAEABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMDUIX1NVTgoFCF9BRFIMAAAFABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMDYIX1NVTgoGCF9BRFIMAAAGABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMDcIX1NVTgoHCF9BRFIMAAAHABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMDgIX1NVTgoICF9BRFIMAAAIABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMDkIX1NVTgoJCF9BRFIMAAAJABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMTAIX1NVTgoKCF9BRFIMAAAKABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMTEIX1NVTgoLCF9BRFIMAAALABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMTIIX1NVTgoMCF9BRFIMAAAMABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMTMIX1NVTgoNCF9BRFIMAAANABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMTQIX1NVTgoOCF9BRFIMAAAOABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMTUIX1NVTgoPCF9BRFIMAAAPABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMTYIX1NVTgoQCF9BRFIMAAAQABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMTcIX1NVTgoRCF9BRFIMAAARABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMTgIX1NVTgoSCF9BRFIMAAASABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMTkIX1NVTgoTCF9BRFIMAAATABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMjAIX1NVTgoUCF9BRFIMAAAUABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMjEIX1NVTgoVCF9BRFIMAAAVABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMjIIX1NVTgoWCF9BRFIMAAAWABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMjMIX1NVTgoXCF9BRFIMAAAXABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMjQIX1NVTgoYCF9BRFIMAAAYABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMjUIX1NVTgoZCF9BRFIMAAAZABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMjYIX1NVTgoaCF9BRFIMAAAaABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMjcIX1NVTgobCF9BRFIMAAAbABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMjgIX1NVTgocCF9BRFIMAAAcABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMjkIX1NVTgodCF9BRFIMAAAdABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMzAIX1NVTgoeCF9BRFIMAAAeABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFR1uCNFMwMzEIX1NVTgofCF9BRFIMAAAfABQdX0VKMAlcLwNfU0JfUEhQUlBDRUpfU1VOX1NFRxRHLkRWTlQKe2gMAQAAAGCgDpNgDAEAAACGUzAwMGl7aAwCAAAAYKAOk2AMAgAA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",
+                    "index": 1,
+                    "type_name": "EV_PLATFORM_CONFIG_FLAGS"
+                },
+                {
+                    "details": {},
+                    "digests": [
+                        {
+                            "alg": "SHA-384",
+                            "digest": "394341b7182cd227c5c6b07ef8000cdfd86136c4292b8e576573ad7ed9ae41019f5818b4b971c9effc60e1ad9f1289f0"
+                        }
+                    ],
+                    "event": "AAAAAA==",
+                    "index": 1,
+                    "type_name": "EV_SEPARATOR"
+                },
+                {
+                    "details": {},
+                    "digests": [
+                        {
+                            "alg": "SHA-384",
+                            "digest": "394341b7182cd227c5c6b07ef8000cdfd86136c4292b8e576573ad7ed9ae41019f5818b4b971c9effc60e1ad9f1289f0"
+                        }
+                    ],
+                    "event": "AAAAAA==",
+                    "index": 2,
+                    "type_name": "EV_SEPARATOR"
+                },
+                {
+                    "details": {
+                        "string": "td_payload"
+                    },
+                    "digests": [
+                        {
+                            "alg": "SHA-384",
+                            "digest": "5b7aa6572f649714ff00b6a2b9170516a068fd1a0ba72aa8de27574131d454e6396d3bfa1727d9baf421618a942977fa"
+                        }
+                    ],
+                    "event": "C3RkX3BheWxvYWQAABCQAAAAAAAAAAAQAAAAAA==",
+                    "index": 2,
+                    "type_name": "EV_EFI_PLATFORM_FIRMWARE_BLOB2"
+                },
+                {
+                    "details": {
+                        "string": "td_payload_info root=/dev/vda1 console=hvc0 rw"
+                    },
+                    "digests": [
+                        {
+                            "alg": "SHA-384",
+                            "digest": "64ed1e5a47e8632f80faf428465bd987af3e8e4ceb10a5a9f387b6302e30f4993bded2331f0691c4a38ad34e4cbbc627"
+                        }
+                    ],
+                    "event": "dGRfcGF5bG9hZF9pbmZvAAAQAAByb290PS9kZXYvdmRhMSBjb25zb2xlPWh2YzAgcncAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                    "index": 2,
+                    "type_name": "EV_PLATFORM_CONFIG_FLAGS"
+                }
+            ],
             "quote": {
-                "header":{
+                "header": {
                     "version": "0400",
                     "att_key_type": "0200",
                     "tee_type": "81000000",
@@ -419,7 +358,7 @@ mod tests {
                     "vendor_id": "939a7233f79c4ca9940a0db3957f0607",
                     "user_data": "d099bfec0a477aa85a605dceabf2b10800000000"
                 },
-                "body":{
+                "body": {
                     "mr_config_id": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
                     "mr_owner": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
                     "mr_owner_config": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
@@ -587,48 +526,5 @@ mod tests {
 
             assert_eq!(value_found, value, "{kv_msg}");
         }
-    }
-
-    #[rstest]
-    #[trace]
-    #[case(b"", Err(anyhow!(ERR_INVALID_HEADER)))]
-    #[case(b"0123456789ABCDEF", Err(anyhow!(ERR_INVALID_HEADER)))]
-    #[case(b"0123456789ABCDEF\x00", Err(anyhow!(ERR_INVALID_HEADER)))]
-    #[case(b"0123456789ABCDEF\x00\x00", Err(anyhow!(ERR_INVALID_HEADER)))]
-    #[case(b"0123456789ABCDEF\x00\x00\x00", Err(anyhow!(ERR_INVALID_HEADER)))]
-    #[case(b"0123456789ABCDEF\x00\x00\x00\x00", Ok(TdShimPlatformConfigInfo{descriptor: *b"0123456789ABCDEF", info_length: 0, data: &[]}))]
-    #[case(b"0123456789ABCDEF\x01\x00\x00\x00X", Ok(TdShimPlatformConfigInfo{descriptor: *b"0123456789ABCDEF", info_length: 1, data: b"X"}))]
-    #[case(b"0123456789ABCDEF\x03\x00\x00\x00ABC", Ok(TdShimPlatformConfigInfo{descriptor: *b"0123456789ABCDEF", info_length: 3, data: b"ABC"}))]
-    #[case(b"0123456789ABCDEF\x04\x00\x00\x00;):)", Ok(TdShimPlatformConfigInfo{descriptor: *b"0123456789ABCDEF", info_length: 4, data: b";):)"}))]
-    #[case(b"0123456789ABCDEF\x01\x00\x00\x00", Err(anyhow!(ERR_NOT_ENOUGH_DATA)))]
-    fn test_td_shim_platform_config_info_try_from(
-        #[case] data: &[u8],
-        #[case] result: Result<TdShimPlatformConfigInfo>,
-    ) {
-        let msg = format!(
-            "test: data: {:?}, result: {result:?}",
-            String::from_utf8_lossy(&data.to_vec())
-        );
-
-        let actual_result = TdShimPlatformConfigInfo::try_from(data);
-
-        let msg = format!("{msg}: actual result: {actual_result:?}");
-
-        if std::env::var("DEBUG").is_ok() {
-            println!("DEBUG: {msg}");
-        }
-
-        if result.is_err() {
-            let expected_result_str = format!("{result:?}");
-            let actual_result_str = format!("{actual_result:?}");
-
-            assert_eq!(expected_result_str, actual_result_str, "{msg}");
-            return;
-        }
-
-        let actual_result = actual_result.unwrap();
-        let expected_result = result.unwrap();
-
-        assert_eq!(expected_result, actual_result, "{msg}");
     }
 }
