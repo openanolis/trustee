@@ -4,6 +4,7 @@
 //
 
 use super::*;
+use ::eventlog::CcEventLog;
 use async_trait::async_trait;
 use base64::Engine;
 use eventlog_rs::{BiosEventlog, Eventlog};
@@ -29,7 +30,7 @@ pub struct TpmEvidence {
     pub quote: HashMap<String, TpmQuote>,
     // Base64 encoded Eventlog ACPI table
     pub eventlog: Option<String>,
-    // AA Eventlog
+    // Base64 encoded TCG2 encoding AA Eventlog
     pub aa_eventlog: Option<String>,
 }
 
@@ -215,34 +216,12 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
         }
     }
 
-    // Parse AA Eventlogs
+    // Parse AA Eventlogs in TCG2 encoding
     if let Some(aael) = tpm_evidence.aa_eventlog {
-        let aa_eventlog: Vec<&str> = aael.split('\n').collect();
-
-        for event in aa_eventlog.iter() {
-            let event_split: Vec<&str> = event.splitn(3, ' ').collect();
-
-            if event_split[0] == "INIT" {
-                // let claims_key = format!("AA.eventlog.INIT.{}", event_split[0]);
-                // parsed_claims.insert(
-                //     claims_key,
-                //     serde_json::Value::String(event_split[1].to_string()),
-                // );
-                continue;
-            } else if event_split[0].to_string().is_empty() {
-                break;
-            }
-
-            if event_split.len() != 3 {
-                bail!("Illegal AA eventlog format");
-            }
-
-            let claims_key = format!("AA.eventlog.{}.{}", event_split[0], event_split[1]);
-            parsed_claims.insert(
-                claims_key,
-                serde_json::Value::String(event_split[2].to_string()),
-            );
-        }
+        let aa_ccel_data = base64::engine::general_purpose::STANDARD.decode(aael)?;
+        let aa_ccel = CcEventLog::try_from(aa_ccel_data)?;
+        let result = serde_json::to_value(aa_ccel.clone().log)?;
+        parsed_claims.insert("uefi_event_logs".to_string(), result);
     }
 
     Ok(Value::Object(parsed_claims) as TeeEvidenceParsedClaim)
