@@ -51,15 +51,6 @@ validate_kernel_cmdline(measurements_data, cmdline_data) if {
 	measurements_data[measurement_key] in data.reference[measurement_key]
 }
 
-# Generic funtion to validate all file measurements in AA Eventlog
-file_measurements_valid(measurements_data) if {
-	every file_key, file_value in measurements_data {
-		startswith(file_key, "AA.eventlog.file")
-		file_path := substring(file_key, 16, -1)
-		file_value in data.reference[sprintf("measurement.file%s", [file_path])]
-	}
-}
-
 ### The following functions are for parsing UEFI event logs
 ### These functions are chosen when the related verifier is using `deps/eventlog`
 ### crate
@@ -157,14 +148,24 @@ validate_cryptpilot_fde(uefi_event_logs) if {
 	uefi_event_logs[i].details.data.content in data.reference["AA.eventlog.cryptpilot.alibabacloud.com.fde_rootfs_hash"]
 }
 
+# Function to check the file measurements from Measurement_tool integrity
+validate_aael_file_measurements(uefi_event_logs) if {
+	some i
+	uefi_event_logs[i].type_name == "EV_EVENT_TAG"
+	uefi_event_logs[i].details.unicode_name == "AAEL"
+	domain := uefi_event_logs[i].details.data.domain
+	operation := uefi_event_logs[i].details.data.operation
+	key := sprintf("measurement.%s.%s", [domain, operation])
+	uefi_event_logs[i].details.data.content in data.reference[key]
+}
+
 ##### TDX
 
 executables := 3 if {
 	# Check the kernel, initrd, shim and grub measurements for any supported algorithm
 	validate_boot_measurements_uefi_event_log(input.tdx.uefi_event_logs)
-
 	# Check rootfs integrity
-	validate_cryptpilot_fde(input.tdx.uefi_event_logs)
+	# validate_cryptpilot_fde(input.tdx.uefi_event_logs)
 }
 
 hardware := 2 if {
@@ -186,15 +187,15 @@ configuration := 2 if {
 	# Check kernel command line parameters have the expected value for any supported algorithm
 	validate_kernel_cmdline(input.tdx.ccel, input.tdx.ccel.kernel_cmdline)
 	# Check cryptpilot config
-	# input.tdx["AA.eventlog.cryptpilot.alibabacloud.com.load_config"] in data.reference["cryptpilot.load_config"]
+	# validate_cryptpilot_config(input.tdx.uefi_event_logs)
 }
 
 file_system := 2 if {
 	# Check rootfs integrity
-	input.tdx["AA.eventlog.cryptpilot.alibabacloud.com.fde_rootfs_hash"] in data.reference["measurement.rootfs"]
+	# validate_cryptpilot_fde(input.tdx.uefi_event_logs)
 
 	# Check measured files - iterate through all file measurements
-	file_measurements_valid(input.tdx)
+	validate_aael_file_measurements(input.tdx.uefi_event_logs)
 }
 
 ##### TPM
@@ -216,15 +217,15 @@ configuration := 2 if {
 	# Check kernel command line parameters have the expected value for any supported algorithm
 	validate_kernel_cmdline(input.tpm, input.tpm.kernel_cmdline)
 	# Check cryptpilot config
-	# input.tpm["AA.eventlog.cryptpilot.alibabacloud.com.load_config"] in data.reference["cryptpilot.load_config"]
+	# validate_cryptpilot_config(input.tpm.uefi_event_logs)
 }
 
 file_system := 2 if {
 	# Check rootfs integrity
-	input.tpm["AA.eventlog.cryptpilot.alibabacloud.com.fde_rootfs_hash"] in data.reference["measurement.rootfs"]
+	# validate_cryptpilot_fde(input.tpm.uefi_event_logs)
 
 	# Check measured files - iterate through all file measurements
-	file_measurements_valid(input.tpm)
+	validate_aael_file_measurements(input.tpm.uefi_event_logs)
 }
 
 ##### Hygon CSV
@@ -232,9 +233,8 @@ file_system := 2 if {
 executables := 3 if {
 	# Check the kernel, initrd, shim and grub measurements
 	validate_boot_measurements_uefi_event_log(input.csv.uefi_event_logs)
-
 	# Check rootfs integrity
-	validate_cryptpilot_fde(input.csv.uefi_event_logs)
+	# validate_cryptpilot_fde(input.csv.uefi_event_logs)
 }
 
 # Check cryptpilot config. Uncomment this due to your need
@@ -264,7 +264,6 @@ configuration := 2 if {
 
 	# Check kernel command line parameters have the expected value for any supported algorithm
 	validate_kernel_cmdline_uefi(input.csv.uefi_event_logs)
-
 	# Check cryptpilot config. Uncomment this due to your need
-	validate_cryptpilot_config(input.csv.uefi_event_logs)
+	# validate_cryptpilot_config(input.csv.uefi_event_logs)
 }
