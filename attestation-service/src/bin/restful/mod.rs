@@ -7,7 +7,7 @@ use attestation_service::{
     RuntimeData as InnerRuntimeData, VerificationRequest,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use kbs_types::Tee;
+use kbs_types::{ErrorInformation, Tee};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -15,19 +15,54 @@ use strum::AsRefStr;
 use thiserror::Error;
 use tokio::sync::RwLock;
 
+const ERROR_TYPE_PREFIX: &str =
+    "https://github.com/confidential-containers/attestation-service/errors";
+
 #[derive(Error, Debug, AsRefStr)]
+#[allow(dead_code)]
+#[allow(clippy::enum_variant_names)]
 pub enum Error {
+    #[error("Bad request: {0}")]
+    BadRequest(#[source] anyhow::Error),
+
+    #[error("Unauthorized: {0}")]
+    Unauthorized(#[source] anyhow::Error),
+
+    #[error("Forbidden: {0}")]
+    Forbidden(#[source] anyhow::Error),
+
+    #[error("Not found: {0}")]
+    NotFound(#[source] anyhow::Error),
+
+    #[error("Conflict: {0}")]
+    Conflict(#[source] anyhow::Error),
+
+    #[error("Unprocessable entity: {0}")]
+    UnprocessableEntity(#[source] anyhow::Error),
+
     #[error("An internal error occured: {0}")]
     InternalError(#[from] anyhow::Error),
 }
 
 impl ResponseError for Error {
     fn error_response(&self) -> HttpResponse {
-        let body = format!("{self:#?}");
+        // 统一的错误信息结构
+        let detail = format!("{}", self);
+        let info = ErrorInformation {
+            error_type: format!("{}/{}", ERROR_TYPE_PREFIX, self.as_ref()),
+            detail,
+        };
+
+        let body = serde_json::to_string(&info).unwrap_or_else(|_| "{}".to_string());
 
         let mut res = match self {
+            Error::BadRequest(_) => HttpResponse::BadRequest(),
+            Error::Unauthorized(_) => HttpResponse::Unauthorized(),
+            Error::Forbidden(_) => HttpResponse::Forbidden(),
+            Error::NotFound(_) => HttpResponse::NotFound(),
+            Error::Conflict(_) => HttpResponse::Conflict(),
+            Error::UnprocessableEntity(_) => HttpResponse::UnprocessableEntity(),
             Error::InternalError(_) => HttpResponse::InternalServerError(),
-            // _ => HttpResponse::NotImplemented(),
         };
 
         res.body(BoxBody::new(body))
@@ -100,7 +135,7 @@ fn parse_runtime_data(data: RuntimeData) -> Result<InnerRuntimeData> {
         RuntimeData::Raw(raw) => {
             let data = URL_SAFE_NO_PAD
                 .decode(raw)
-                .context("base64 decode raw runtime data")?;
+                .map_err(|e| Error::BadRequest(anyhow!("base64 decode raw runtime data: {e}")))?;
             InnerRuntimeData::Raw(data)
         }
         RuntimeData::Structured(structured) => InnerRuntimeData::Structured(structured),
@@ -114,7 +149,7 @@ fn parse_init_data(data: InitDataInput) -> Result<InnerInitDataInput> {
         InitDataInput::InitDataDigest(raw) => {
             let data = URL_SAFE_NO_PAD
                 .decode(raw)
-                .context("base64 decode raw init data")?;
+                .map_err(|e| Error::BadRequest(anyhow!("base64 decode raw init data: {e}")))?;
             InnerInitDataInput::Digest(data)
         }
         InitDataInput::InitDataToml(structured) => InnerInitDataInput::Toml(structured),
@@ -137,28 +172,28 @@ pub async fn attestation(
     for attestation_request in request.verification_requests {
         let evidence = URL_SAFE_NO_PAD
             .decode(&attestation_request.evidence)
-            .context("base64 decode evidence")?;
+            .map_err(|e| Error::BadRequest(anyhow!("base64 decode evidence: {e}")))?;
 
-        let evidence =
-            serde_json::from_slice(&evidence).context("failed to parse evidence as JSON")?;
+        let evidence = serde_json::from_slice(&evidence)
+            .map_err(|e| Error::BadRequest(anyhow!("failed to parse evidence as JSON: {e}")))?;
 
-        let tee = to_tee(&attestation_request.tee)?;
+        let tee = to_tee(&attestation_request.tee)
+            .map_err(|e| Error::BadRequest(anyhow!("invalid tee: {e}")))?;
 
         let runtime_data = attestation_request
             .runtime_data
             .map(parse_runtime_data)
-            .transpose()
-            .context("decode given Runtime Data")?;
+            .transpose()?;
 
         let init_data = attestation_request
             .init_data
             .map(parse_init_data)
-            .transpose()
-            .context("decode given Init Data")?;
+            .transpose()?;
 
         let runtime_data_hash_algorithm = match attestation_request.runtime_data_hash_algorithm {
-            Some(alg) => HashAlgorithm::try_from(&alg[..])
-                .context("parse runtime data HashAlgorithm failed")?,
+            Some(alg) => HashAlgorithm::try_from(&alg[..]).map_err(|e| {
+                Error::BadRequest(anyhow!("parse runtime data HashAlgorithm failed: {e}"))
+            })?,
             None => {
                 info!("No Runtime Data Hash Algorithm provided, use `sha384` by default.");
                 HashAlgorithm::Sha384
@@ -186,7 +221,7 @@ pub async fn attestation(
         .await
         .evaluate(verification_requests, policy_ids)
         .await
-        .context("attestation report evaluate")?;
+        .map_err(|e| Error::InternalError(anyhow!("attestation report evaluate: {e}")))?;
     Ok(HttpResponse::Ok().body(token))
 }
 
@@ -229,19 +264,19 @@ pub async fn get_challenge(
         .get("tee")
         .as_ref()
         .map(|s| s.as_str())
-        .ok_or(anyhow!("Failed to get inner tee"))?;
+        .ok_or_else(|| Error::BadRequest(anyhow!("Failed to get inner tee")))?;
     let tee_params = request
         .inner
         .get("tee_params")
-        .ok_or(anyhow!("Failed to get inner tee_params"))?;
+        .ok_or_else(|| Error::BadRequest(anyhow!("Failed to get inner tee_params")))?;
 
-    let tee = to_tee(inner_tee)?;
+    let tee = to_tee(inner_tee).map_err(|e| Error::BadRequest(anyhow!("invalid tee: {e}")))?;
     let challenge = cocoas
         .read()
         .await
         .generate_supplemental_challenge(tee, tee_params.to_string())
         .await
-        .context("generate challenge")?;
+        .map_err(|e| Error::InternalError(anyhow!("generate challenge: {e}")))?;
     Ok(HttpResponse::Ok().body(challenge))
 }
 

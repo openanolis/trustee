@@ -119,7 +119,25 @@ impl ResponseError for Error {
             | Error::PolicyEngine(_) => HttpResponse::InternalServerError(),
 
             #[cfg(feature = "as")]
-            Error::AttestationError(_) => HttpResponse::InternalServerError(),
+            Error::AttestationError(e) => {
+                use crate::attestation::Error as AttestationError;
+                match e {
+                    // Initialization problems are server-side
+                    AttestationError::AttestationServiceInitialization { .. } => {
+                        HttpResponse::InternalServerError()
+                    }
+                    // Client provided invalid/unsupported claims or inputs
+                    AttestationError::ExtractTeePubKeyFailed { .. } => HttpResponse::BadRequest(),
+                    // Upstream handshake failures → treat as Bad Gateway to indicate dependency issue
+                    AttestationError::RcarAuthFailed { .. }
+                    | AttestationError::RcarAttestFailed { .. } => HttpResponse::BadGateway(),
+                    // Policy ops errors are usually due to bad input or illegal state
+                    AttestationError::SetPolicy { .. }
+                    | AttestationError::GetPolicy { .. }
+                    | AttestationError::ListPolicies { .. }
+                    | AttestationError::DeletePolicy { .. } => HttpResponse::BadRequest(),
+                }
+            }
         };
 
         error!("{self:?}");
