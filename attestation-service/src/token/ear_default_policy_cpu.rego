@@ -162,9 +162,6 @@ validate_cryptpilot_fde(uefi_event_logs) if {
 executables := 3 if {
 	# Check the kernel, initrd, shim and grub measurements for any supported algorithm
 	validate_boot_measurements_uefi_event_log(input.tdx.uefi_event_logs)
-
-	# Check rootfs integrity
-	validate_cryptpilot_fde(input.tdx.uefi_event_logs)
 }
 
 hardware := 2 if {
@@ -191,7 +188,7 @@ configuration := 2 if {
 
 file_system := 2 if {
 	# Check rootfs integrity
-	input.tdx["AA.eventlog.cryptpilot.alibabacloud.com.fde_rootfs_hash"] in data.reference["measurement.rootfs"]
+	validate_cryptpilot_fde(input.tdx.uefi_event_logs)
 
 	# Check measured files - iterate through all file measurements
 	file_measurements_valid(input.tdx)
