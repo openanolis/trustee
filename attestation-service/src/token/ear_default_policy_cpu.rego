@@ -162,7 +162,10 @@ validate_cryptpilot_fde(uefi_event_logs) if {
 
 executables := 3 if {
 	# Check the kernel, initrd, shim and grub measurements for any supported algorithm
-	validate_boot_measurements(input.tdx.ccel)
+	validate_boot_measurements_uefi_event_log(input.tdx.uefi_event_logs)
+
+	# Check rootfs integrity
+	validate_cryptpilot_fde(input.tdx.uefi_event_logs)
 }
 
 hardware := 2 if {
