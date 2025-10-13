@@ -240,7 +240,7 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
 
             let rules = TrustVector::new()
                 .into_iter()
-                .map(|c| c.tag().to_string())
+                .map(|c| c.tag().replace('-', "_").to_string())
                 .collect();
 
             // There is a policy for each tee class.
