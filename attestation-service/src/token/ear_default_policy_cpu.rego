@@ -150,13 +150,16 @@ validate_cryptpilot_fde(uefi_event_logs) if {
 
 # Function to check the file measurements from Measurement_tool integrity
 validate_aael_file_measurements(uefi_event_logs) if {
-	some i
-	uefi_event_logs[i].type_name == "EV_EVENT_TAG"
-	uefi_event_logs[i].details.unicode_name == "AAEL"
-	domain := uefi_event_logs[i].details.data.domain
-	operation := uefi_event_logs[i].details.data.operation
-	key := sprintf("measurement.%s.%s", [domain, operation])
-	uefi_event_logs[i].details.data.content in data.reference[key]
+	aael := [e |
+		e := uefi_event_logs[_]
+		e.type_name == "EV_EVENT_TAG"
+		e.details.unicode_name == "AAEL"
+		e.details.data.domain == "file"
+	]
+	every e in aael {
+		key := sprintf("measurement.%s.%s", [e.details.data.domain, e.details.data.operation])
+		e.details.data.content in data.reference[key]
+	}
 }
 
 ##### TDX
@@ -188,13 +191,15 @@ configuration := 2 if {
 	# validate_cryptpilot_config(input.tdx.uefi_event_logs)
 }
 
-file_system := 2 if {}
+file_system := 2 if {
+	# Placeholder to avoid empty body being treated as true. Remove when enabling checks below.
+	false
+	# Check rootfs integrity
+	# validate_cryptpilot_fde(input.tdx.uefi_event_logs)
 
-# Check rootfs integrity
-# validate_cryptpilot_fde(input.tdx.uefi_event_logs)
-
-# Check measured files - iterate through all file measurements
-# validate_aael_file_measurements(input.tdx.uefi_event_logs)
+	# Check measured files - iterate through all file measurements
+	# validate_aael_file_measurements(input.tdx.uefi_event_logs)
+}
 
 ##### TPM
 
@@ -218,13 +223,15 @@ configuration := 2 if {
 	# validate_cryptpilot_config(input.tpm.uefi_event_logs)
 }
 
-file_system := 2 if {}
+file_system := 2 if {
+	# Placeholder to avoid empty body being treated as true. Remove when enabling checks below.
+	false
+	# Check rootfs integrity
+	# validate_cryptpilot_fde(input.tpm.uefi_event_logs)
 
-# Check rootfs integrity
-# validate_cryptpilot_fde(input.tpm.uefi_event_logs)
-
-# Check measured files - iterate through all file measurements
-# validate_aael_file_measurements(input.tpm.uefi_event_logs)
+	# Check measured files - iterate through all file measurements
+	# validate_aael_file_measurements(input.tpm.uefi_event_logs)
+}
 
 ##### Hygon CSV
 
@@ -264,9 +271,11 @@ configuration := 2 if {
 	# validate_cryptpilot_config(input.csv.uefi_event_logs)
 }
 
-file_system := 2 if {}
-
-# Check rootfs integrity
-# validate_cryptpilot_fde(input.tpm.uefi_event_logs)
-# Check measured files - iterate through all file measurements
-# validate_aael_file_measurements(input.tpm.uefi_event_logs)
+file_system := 2 if {
+	# Placeholder to avoid empty body being treated as true. Remove when enabling checks below.
+	false
+	# Check rootfs integrity
+	# validate_cryptpilot_fde(input.tpm.uefi_event_logs)
+	# Check measured files - iterate through all file measurements
+	# validate_aael_file_measurements(input.tpm.uefi_event_logs)
+}
