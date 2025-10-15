@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use actix_web::{body::BoxBody, web, HttpRequest, HttpResponse, Responder, ResponseError};
 use anyhow::{anyhow, bail, Context};
+use attestation_service::challenge::verify_challenge_and_extract_nonce_b64url;
 use attestation_service::{
     AttestationService, HashAlgorithm, InitDataInput as InnerInitDataInput,
     RuntimeData as InnerRuntimeData, VerificationRequest,
@@ -180,10 +181,19 @@ pub async fn attestation(
         let tee = to_tee(&attestation_request.tee)
             .map_err(|e| Error::BadRequest(anyhow!("invalid tee: {e}")))?;
 
-        let runtime_data = attestation_request
-            .runtime_data
-            .map(parse_runtime_data)
-            .transpose()?;
+        let runtime_data = match attestation_request.runtime_data {
+            Some(RuntimeData::Structured(v)) => {
+                if let Some(jwt) = v.get("challenge_token").and_then(|x| x.as_str()) {
+                    // 验证 token，但不修改 runtime_data 内容
+                    let _ = verify_challenge_and_extract_nonce_b64url(jwt).map_err(|e| {
+                        Error::Unauthorized(anyhow!("verify challenge_token failed: {e}"))
+                    })?;
+                }
+                Some(parse_runtime_data(RuntimeData::Structured(v))?)
+            }
+            Some(RuntimeData::Raw(raw)) => Some(parse_runtime_data(RuntimeData::Raw(raw))?),
+            None => None,
+        };
 
         let init_data = attestation_request
             .init_data
@@ -259,22 +269,15 @@ pub async fn get_challenge(
     let request: ChallengeRequest = request.into_inner();
 
     debug!("get_challenge: {request:#?}");
-    let inner_tee = request
-        .inner
-        .get("tee")
-        .as_ref()
-        .map(|s| s.as_str())
-        .ok_or_else(|| Error::BadRequest(anyhow!("Failed to get inner tee")))?;
-    let tee_params = request
-        .inner
-        .get("tee_params")
-        .ok_or_else(|| Error::BadRequest(anyhow!("Failed to get inner tee_params")))?;
-
-    let tee = to_tee(inner_tee).map_err(|e| Error::BadRequest(anyhow!("invalid tee: {e}")))?;
+    let tee_opt = match request.inner.get("tee") {
+        Some(s) => Some(to_tee(s).map_err(|e| Error::BadRequest(anyhow!("invalid tee: {e}")))?),
+        None => None,
+    };
+    let tee_params_opt = request.inner.get("tee_params").cloned();
     let challenge = cocoas
         .read()
         .await
-        .generate_supplemental_challenge(tee, tee_params.to_string())
+        .generate_challenge(tee_opt, tee_params_opt)
         .await
         .map_err(|e| Error::InternalError(anyhow!("generate challenge: {e}")))?;
     Ok(HttpResponse::Ok().body(challenge))
