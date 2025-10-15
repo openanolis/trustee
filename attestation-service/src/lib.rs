@@ -3,6 +3,7 @@
 //! # Features
 //! - `rvps-grpc`: The AS will connect a remote RVPS.
 
+pub mod challenge;
 pub mod config;
 pub mod policy_engine;
 pub mod rvps;
@@ -331,6 +332,20 @@ impl AttestationService {
         verifier
             .generate_supplemental_challenge(tee_parameters)
             .await
+    }
+
+    pub async fn generate_challenge(
+        &self,
+        tee: Option<Tee>,
+        tee_parameters: Option<String>,
+    ) -> Result<String> {
+        match tee {
+            None => challenge::generate_common_challenge(),
+            Some(t) => {
+                self.generate_supplemental_challenge(t, tee_parameters.unwrap_or_default())
+                    .await
+            }
+        }
     }
 
     /// Get token broker certificate content

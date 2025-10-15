@@ -1,4 +1,5 @@
 use anyhow::bail;
+use attestation_service::challenge::verify_challenge_and_extract_nonce_b64url;
 use attestation_service::HashAlgorithm;
 use attestation_service::{
     config::Config, config::ConfigError, AttestationService as Service, ServiceError, Tee,
@@ -135,9 +136,14 @@ impl AttestationService for Arc<RwLock<AttestationServer>> {
                     crate::as_api::individual_attestation_request::RuntimeData::StructuredRuntimeData(
                         structured,
                     ) => {
-                        let structured = serde_json::from_str(&structured).map_err(|e| {
-                            Status::aborted(format!("parse structured runtime data: {e}"))
-                        })?;
+                        let structured: serde_json::Value = serde_json::from_str(&structured)
+                            .map_err(|e| Status::aborted(format!(
+                                "parse structured runtime data: {e}")))?;
+                        if let Some(jwt) = structured.get("challenge_token").and_then(|x| x.as_str()) {
+                            verify_challenge_and_extract_nonce_b64url(jwt)
+                                .map_err(|e| Status::aborted(format!(
+                                    "verify challenge_token failed: {e}")))?;
+                        }
                         Some(attestation_service::RuntimeData::Structured(structured))
                     }
                 },
@@ -210,22 +216,19 @@ impl AttestationService for Arc<RwLock<AttestationServer>> {
         info!("get_attestation_challenge API called.");
         debug!("get_attestation_challenge: {request:#?}");
 
-        let inner_tee = request
-            .inner
-            .get("tee")
-            .ok_or(Status::aborted("Error parse inner_tee tee"))?;
-        let tee_params = request
-            .inner
-            .get("tee_params")
-            .map_or(Err(Status::aborted("Error parse inner_tee tee_params")), Ok)?;
-        let tee = to_kbs_tee(&inner_tee)
-            .map_err(|e| Status::aborted(format!("Error parse TEE type: {e}")))?;
+        let tee_opt = match request.inner.get("tee") {
+            Some(s) => Some(
+                to_kbs_tee(s).map_err(|e| Status::aborted(format!("Error parse TEE type: {e}")))?,
+            ),
+            None => None,
+        };
+        let tee_params_opt = request.inner.get("tee_params").cloned();
 
         let attestation_challenge = self
             .read()
             .await
             .attestation_service
-            .generate_supplemental_challenge(tee, tee_params.clone())
+            .generate_challenge(tee_opt, tee_params_opt)
             .await
             .map_err(|e| Status::aborted(format!("Challenge: {e:?}")))?;
 
