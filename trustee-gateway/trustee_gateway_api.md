@@ -850,9 +850,47 @@ curl -k -X POST http://<gateway-host>:<port>/api/attestation-service/challenge \
 ```json
 {
     "nonce": "base64_encoded_challenge_nonce",
-    "extra-params": { ... }
+    "extra-params": {
+        "jwt": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzM4NCJ9.eyJub25jZSI6IkFiQ0QxMjM0NTYifQ.SIGNATURE"
+    }
 }
 ```
+
+> 说明：AS 返回的 `extra-params.jwt` 为一个签名的 JWT，其中包含自定义 claim：`"nonce": "base64_encoded_nonce"`。该 `nonce` 为标准 Base64 编码，供后续 attestation 请求绑定使用。
+
+*   **后续用法（将 ChallengeToken 放入 Attestation 的 runtime_data 中）**
+
+    - 从本接口响应中读取 `extra-params.jwt`（ChallengeToken，JWT 字符串）。
+    - 在后续调用 `/attestation-service/attestation` 时，将该 token 放入 `runtime_data` 的结构化 JSON 中，字段名为 `challenge_token`，不再放置于请求头。
+    - AS 会验证该 token 的签名与有效期（`exp`，签发端设置为 5 分钟）。仅当 `runtime_data` 中存在 `challenge_token` 且验证失败时，AS 才会直接返回统一错误；若字段不存在或 `runtime_data` 为原始类型，则按原逻辑继续处理。AS 只做验证，不修改来访 `runtime_data` 内容。
+
+```shell
+curl -k -X POST http://<gateway-host>:<port>/api/attestation-service/attestation \
+     -H 'Content-Type: application/json' \
+     -d '{
+            "verification_requests": [
+                {
+                    "tee": "tdx",
+                    "evidence": "<base64url_evidence>",
+                    "runtime_data": {
+                        "structured": {
+                            "challenge_token": "<JWT from extra-params.jwt>",
+                            "nonce": "base64_encoded_nonce",
+                            "tee-pubkey": { "alg": "RSA", "k-mod": "...", "k-exp": "..." }
+                        }
+                    },
+                    "runtime_data_hash_algorithm": "sha384"
+                }
+            ],
+            "policy_ids": ["default"]
+        }'
+```
+
+*   **错误处理：** 当且仅当 `runtime_data.structured.challenge_token` 存在且验证失败（例如 `400 Bad Request`/`401 Unauthorized`）时，AS 返回统一错误；否则维持原有处理流程。失败原因包括但不限于：
+    - 无效的 JWT 结构或 Base64 编码错误
+    - 无法读取/解析签名密钥
+    - 签名校验失败
+    - 缺少 `nonce` claim 或 `nonce` 编码非法
 
 #### 2.3 获取证书 (Get Certificate)
 
