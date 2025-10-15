@@ -15,6 +15,7 @@ use serde_json::Value;
 pub(crate) mod claims;
 pub(crate) mod gpu;
 pub(crate) mod quote;
+pub(crate) mod supplemental;
 
 use crate::tdx::gpu::GpuEvidenceList;
 
@@ -52,6 +53,10 @@ impl Verifier for Tdx {
             .map_err(|e| anyhow!("TDX Verifier: {:?}", e))?;
 
         Ok((claims, "cpu".to_string()))
+    }
+
+    async fn generate_supplemental_challenge(&self, tee_parameters: String) -> Result<String> {
+        supplemental::generate_supplemental_challenge_impl(tee_parameters)
     }
 }
 

@@ -19,6 +19,7 @@ tdx-verifier = [
     "intel-tee-quote-verification-rs",
     "gpu-verifier",
     "eventlog",
+    "openssl",
 ]
 sgx-verifier = ["scroll", "intel-tee-quote-verification-rs"]
 az-snp-vtpm-verifier = ["az-snp-vtpm", "sev", "snp-verifier"]

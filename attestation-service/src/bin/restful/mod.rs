@@ -6,9 +6,13 @@ use attestation_service::{
     AttestationService, HashAlgorithm, InitDataInput as InnerInitDataInput,
     RuntimeData as InnerRuntimeData, VerificationRequest,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine,
+};
 use kbs_types::{ErrorInformation, Tee};
 use log::{debug, error, info};
+use openssl::{hash::MessageDigest, pkey::PKey, rsa::Rsa, sign::Verifier};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use strum::AsRefStr;
@@ -158,6 +162,71 @@ fn parse_init_data(data: InitDataInput) -> Result<InnerInitDataInput> {
     Ok(res)
 }
 
+// removed old header-based extractor
+
+fn extract_nonce_from_challenge_jwt(token: &str) -> Result<String> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 3 {
+        return Err(Error::BadRequest(anyhow!(
+            "invalid JWT format in challenge_token"
+        )));
+    }
+
+    let signing_input = format!("{}.{}", parts[0], parts[1]);
+    let sig = URL_SAFE_NO_PAD
+        .decode(parts[2])
+        .map_err(|e| Error::BadRequest(anyhow!("invalid JWT signature encoding: {e}")))?;
+
+    let pem = std::fs::read("/etc/trustee/attestation-service/nonce_token_issuer/key.pem")
+        .map_err(|e| Error::Unauthorized(anyhow!("read nonce token key failed: {e}")))?;
+    let rsa = Rsa::private_key_from_pem(&pem)
+        .map_err(|e| Error::Unauthorized(anyhow!("parse nonce token key failed: {e}")))?;
+    let pkey = PKey::from_rsa(rsa)
+        .map_err(|e| Error::Unauthorized(anyhow!("load nonce token key failed: {e}")))?;
+
+    let mut verifier = Verifier::new(MessageDigest::sha384(), &pkey)
+        .map_err(|e| Error::InternalError(anyhow!("create verifier failed: {e}")))?;
+    verifier
+        .update(signing_input.as_bytes())
+        .map_err(|e| Error::InternalError(anyhow!("verifier update failed: {e}")))?;
+    let ok = verifier
+        .verify(&sig)
+        .map_err(|e| Error::Unauthorized(anyhow!("verify signature failed: {e}")))?;
+    if !ok {
+        return Err(Error::Unauthorized(anyhow!(
+            "invalid challenge_token signature"
+        )));
+    }
+
+    let payload = URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .map_err(|e| Error::BadRequest(anyhow!("invalid JWT payload encoding: {e}")))?;
+    let v: serde_json::Value = serde_json::from_slice(&payload)
+        .map_err(|e| Error::BadRequest(anyhow!("invalid JWT payload json: {e}")))?;
+    // 校验 exp 有效期 (5分钟内有效)。允许客户端与服务器存在少量时钟偏差
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| Error::InternalError(anyhow!("time error: {e}")))?
+        .as_secs() as i64;
+    if let Some(exp) = v.get("exp").and_then(|x| x.as_i64()) {
+        if now > exp {
+            return Err(Error::Unauthorized(anyhow!("challenge_token expired")));
+        }
+    } else {
+        return Err(Error::BadRequest(anyhow!("missing exp claim in challenge_token")));
+    }
+    let nonce_b64 = v
+        .get("nonce")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| Error::BadRequest(anyhow!("missing nonce claim in challenge_token")))?;
+
+    let nonce_bytes = STANDARD
+        .decode(nonce_b64)
+        .or_else(|_| URL_SAFE_NO_PAD.decode(nonce_b64))
+        .map_err(|e| Error::BadRequest(anyhow!("invalid nonce base64: {e}")))?;
+    Ok(URL_SAFE_NO_PAD.encode(nonce_bytes))
+}
+
 /// This handler uses json extractor
 pub async fn attestation(
     request: web::Json<AttestationRequest>,
@@ -180,10 +249,17 @@ pub async fn attestation(
         let tee = to_tee(&attestation_request.tee)
             .map_err(|e| Error::BadRequest(anyhow!("invalid tee: {e}")))?;
 
-        let runtime_data = attestation_request
-            .runtime_data
-            .map(parse_runtime_data)
-            .transpose()?;
+        let runtime_data = match attestation_request.runtime_data {
+            Some(RuntimeData::Structured(v)) => {
+                if let Some(jwt) = v.get("challenge_token").and_then(|x| x.as_str()) {
+                    // 验证 token，但不修改 runtime_data 内容
+                    let _ = extract_nonce_from_challenge_jwt(jwt)?;
+                }
+                Some(parse_runtime_data(RuntimeData::Structured(v))?)
+            }
+            Some(RuntimeData::Raw(raw)) => Some(parse_runtime_data(RuntimeData::Raw(raw))?),
+            None => None,
+        };
 
         let init_data = attestation_request
             .init_data
