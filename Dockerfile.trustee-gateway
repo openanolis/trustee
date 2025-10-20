@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.3
-
 ARG BASE_IMAGE=registry.openanolis.cn/openanolis/anolisos:23.3
 
 FROM ${BASE_IMAGE} AS builder
