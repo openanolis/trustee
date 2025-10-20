@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.3
+
 
 ARG BASE_IMAGE=alibaba-cloud-linux-3-registry.cn-hangzhou.cr.aliyuncs.com/alinux3/alinux3:latest
 
