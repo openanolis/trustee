@@ -9,14 +9,16 @@ const { Text } = Typography;
 const getTrustLevelTag = (value: number) => {
   if (value === undefined) return null;
   
-  if (value >= 0 && value <= 33) {
-    return <Tag color="red">低 ({value})</Tag>;
-  } else if (value > 33 && value <= 66) {
-    return <Tag color="orange">中 ({value})</Tag>;
-  } else if (value > 66) {
-    return <Tag color="green">高 ({value})</Tag>;
+  // AR4SI 语义：数值并非“越大越可信”，而是编码区间
+  // 0–32: 可信，33–96: 警告，97–127: 禁用；负数：未知/未定义
+  if (value >= 97) {
+    return <Tag color="red">禁用 ({value})</Tag>;
+  } else if (value >= 33) {
+    return <Tag color="orange">警告 ({value})</Tag>;
+  } else if (value >= 0) {
+    return <Tag color="green">可信 ({value})</Tag>;
   } else {
-    return <Tag color="red">无效 ({value})</Tag>;
+    return <Tag>未知 ({value})</Tag>;
   }
 };
 
