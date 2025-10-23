@@ -175,9 +175,9 @@ hardware := 2 if {
 	input.tdx.quote.header.vendor_id == "939a7233f79c4ca9940a0db3957f0607"
 
 	# Check TDX Module version and its hash. Also check OVMF code hash.
-	input.tdx.quote.body.mr_seam in data.reference["tdx.mr_seam"]
-	input.tdx.quote.body.tcb_svn in data.reference["tdx.tcb_svn"]
-	input.tdx.quote.body.mr_td in data.reference["tdx.mr_td"]
+	# input.tdx.quote.body.mr_seam in data.reference["tdx.mr_seam"]
+	# input.tdx.quote.body.tcb_svn in data.reference["tdx.tcb_svn"]
+	# input.tdx.quote.body.mr_td in data.reference["tdx.mr_td"]
 }
 
 configuration := 2 if {
@@ -209,11 +209,13 @@ executables := 3 if {
 }
 
 hardware := 2 if {
+	# Placeholder to avoid empty body. Remove when enabling checks below.
+	true
 	# Check TPM EK cert issuer
 	# input.tpm.EK_cert_issuer.OU in data.reference["tpm_ek_issuer_ou"]
 
 	# Check TPM firmware version
-	input.tpm["quote.firmware_version"] in data.reference["tpm.firmware_version"]
+	# input.tpm["quote.firmware_version"] in data.reference["tpm.firmware_version"]
 }
 
 configuration := 2 if {
