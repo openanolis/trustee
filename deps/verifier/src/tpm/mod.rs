@@ -176,16 +176,25 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
                     Result::Ok(d) => d,
                     Result::Err(_) => hex::encode(event_desc),
                 };
-
-                let event_digest_algorithm =
-                    event.digests[0].algorithm.trim_start_matches("TPM_ALG_");
+                // Normalize digest algorithm label:
+                // - Remove "TPM_ALG_" prefix
+                // - Replace underscores with hyphens
+                // - If there is no hyphen between letters and digits, insert one
+                //   Examples: "SHA256" -> "SHA-256", "SHA_384" -> "SHA-384", "SM3_256" -> "SM3-256"
+                let algo_clean = event.digests[0].algorithm.trim_start_matches("TPM_ALG_");
+                let mut event_digest_algorithm = algo_clean.replace('_', "-");
+                if !event_digest_algorithm.contains('-') {
+                    if let Some(idx) = event_digest_algorithm.find(|c: char| c.is_ascii_digit()) {
+                        event_digest_algorithm.insert(idx, '-');
+                    }
+                }
                 let event_digest = &event.digests[0].digest;
 
                 parse_measurements_from_event(
                     &mut parsed_claims,
                     event.event_type.as_str(),
                     &event_data,
-                    event_digest_algorithm,
+                    &event_digest_algorithm,
                     event_digest,
                 )?;
             }
@@ -200,7 +209,7 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
                 };
 
                 // If it's BIOS Eventlog, use SHA1 as the digest algorithm
-                let event_digest_algorithm = "SHA1";
+                let event_digest_algorithm = "SHA-1";
                 let event_digest = &event.digest;
 
                 parse_measurements_from_event(
