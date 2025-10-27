@@ -173,7 +173,6 @@ hardware := 2 if {
 	# Check the quote is a TDX quote signed by Intel SGX Quoting Enclave
 	input.tdx.quote.header.tee_type == "81000000"
 	input.tdx.quote.header.vendor_id == "939a7233f79c4ca9940a0db3957f0607"
-
 	# Check TDX Module version and its hash. Also check OVMF code hash.
 	# input.tdx.quote.body.mr_seam in data.reference["tdx.mr_seam"]
 	# input.tdx.quote.body.tcb_svn in data.reference["tdx.tcb_svn"]
@@ -192,6 +191,8 @@ configuration := 2 if {
 }
 
 file_system := 2 if {
+	input.tdx
+
 	# Placeholder to avoid empty body being treated as true. Remove when enabling checks below.
 	false
 	# Check rootfs integrity
@@ -210,7 +211,7 @@ executables := 3 if {
 
 hardware := 2 if {
 	# Placeholder to avoid empty body. Remove when enabling checks below.
-	true
+	input.tpm
 	# Check TPM EK cert issuer
 	# input.tpm.EK_cert_issuer.OU in data.reference["tpm_ek_issuer_ou"]
 
@@ -226,6 +227,8 @@ configuration := 2 if {
 }
 
 file_system := 2 if {
+	input.tpm
+
 	# Placeholder to avoid empty body being treated as true. Remove when enabling checks below.
 	false
 	# Check rootfs integrity
@@ -274,6 +277,8 @@ configuration := 2 if {
 }
 
 file_system := 2 if {
+	input.csv
+
 	# Placeholder to avoid empty body being treated as true. Remove when enabling checks below.
 	false
 	# Check rootfs integrity
