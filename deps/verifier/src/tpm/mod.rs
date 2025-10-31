@@ -12,6 +12,7 @@ use log::info;
 use openssl::hash::MessageDigest;
 use openssl::pkey::PKey;
 use openssl::x509::X509;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -19,6 +20,7 @@ use tss_esapi::structures::{Attest, AttestInfo};
 use tss_esapi::traits::UnMarshall;
 
 const TPM_REPORT_DATA_SIZE: usize = 32;
+const DEFAULT_KEYLIME_REGISTRAR_URL: &str = "https://127.0.0.1:8991";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TpmEvidence {
@@ -26,6 +28,8 @@ pub struct TpmEvidence {
     pub ek_cert: Option<String>,
     // PEM format of AK public key
     pub ak_pubkey: String,
+    // Optional Keylime agent UUID
+    pub keylime_agent_uuid: Option<String>,
     // TPM Quote (Contained PCRs)
     pub quote: HashMap<String, TpmQuote>,
     // Base64 encoded Eventlog ACPI table
@@ -57,6 +61,90 @@ impl Verifier for TpmVerifier {
     ) -> Result<(TeeEvidenceParsedClaim, TeeClass)> {
         let tpm_evidence = serde_json::from_value::<TpmEvidence>(evidence)
             .context("Deserialize TPM Evidence failed.")?;
+
+        // If keylime uuid provided, fetch registrar AK/EK info and compare
+        if let Some(uuid) = &tpm_evidence.keylime_agent_uuid {
+            let registrar = std::env::var("KEYLIME_REGISTRAR_URL")
+                .unwrap_or_else(|_| DEFAULT_KEYLIME_REGISTRAR_URL.to_string());
+
+            let client = Client::builder()
+                .danger_accept_invalid_certs(true)
+                .build()
+                .map_err(|e| anyhow!(format!("create http client: {}", e)))?;
+
+            let ver_resp = client
+                .get(format!("{}/version", registrar))
+                .send()
+                .await
+                .map_err(|e| anyhow!(format!("fetch registrar version: {}", e)))?
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|e| anyhow!(format!("parse registrar version json: {}", e)))?;
+
+            let ver = ver_resp
+                .get("results")
+                .and_then(|v| v.get("current_version"))
+                .and_then(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| v.as_u64().map(|n| n.to_string()))
+                })
+                .ok_or_else(|| anyhow!("Invalid registrar version response"))?;
+
+            let agent = client
+                .get(format!("{}/v{}/agents/{}", registrar, ver, uuid))
+                .send()
+                .await
+                .map_err(|e| anyhow!(format!("fetch agent info: {}", e)))?
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|e| anyhow!(format!("parse agent json: {}", e)))?;
+
+            let results = agent
+                .get("results")
+                .ok_or_else(|| anyhow!("Invalid agent results"))?;
+            let get_str = |k: &str| -> Result<String> {
+                results
+                    .get(k)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| anyhow!(format!("Missing '{}' in registrar results", k)))
+            };
+            let ek_tpm_b64 = get_str("ek_tpm")?;
+            let ekcert_b64 = get_str("ekcert")?;
+            let aik_tpm_b64 = get_str("aik_tpm")?;
+
+            // Compare EK certificate (registrar DER vs evidence PEM)
+            let evidence_ek_pem = tpm_evidence.ek_cert.as_ref().ok_or_else(|| {
+                anyhow!("EK certificate missing in evidence while Keylime UUID is provided")
+            })?;
+            let evidence_ek_der = X509::from_pem(evidence_ek_pem.as_bytes())
+                .map_err(|e| anyhow!(format!("parse evidence EK cert (PEM): {}", e)))?
+                .to_der()
+                .map_err(|e| anyhow!(format!("encode evidence EK cert (DER): {}", e)))?;
+            let engine = base64::engine::general_purpose::STANDARD;
+            let registrar_ek_der = engine
+                .decode(ekcert_b64)
+                .map_err(|e| anyhow!(format!("decode registrar EK cert (base64 DER): {}", e)))?;
+            if registrar_ek_der != evidence_ek_der {
+                bail!("EK certificate mismatch with keylime registrar");
+            }
+
+            // Compare AK public key (registrar TPM2B_PUBLIC vs evidence PEM)
+            let registrar_ak =
+                pkey_from_tpm2b_public(&engine.decode(aik_tpm_b64).map_err(|e| {
+                    anyhow!(format!("decode registrar AK (TPM2B_PUBLIC base64): {}", e))
+                })?)
+                .map_err(|e| anyhow!(format!("parse registrar AK (TPM2B_PUBLIC): {}", e)))?;
+            let evidence_ak = PKey::public_key_from_pem(tpm_evidence.ak_pubkey.as_bytes())
+                .map_err(|e| anyhow!(format!("parse evidence AK (PEM): {}", e)))?;
+            if registrar_ak.public_key_to_der()? != evidence_ak.public_key_to_der()? {
+                bail!("AK public key mismatch with keylime registrar");
+            }
+
+            // Silence unused ek_tpm_b64 for now
+            let _ = ek_tpm_b64;
+        }
 
         // Verify Quote and PCRs
         for (algorithm, quote) in &tpm_evidence.quote {
@@ -412,5 +500,51 @@ impl TpmQuote {
         info!("Check TPM {pcr_algorithm} PCRs succussfully");
 
         Ok(())
+    }
+}
+
+fn pkey_from_tpm2b_public(tpm2b_public: &[u8]) -> Result<PKey<openssl::pkey::Public>> {
+    use openssl::bn::BigNum;
+    use openssl::ec::{EcGroup, EcKey, EcPoint};
+    use openssl::nid::Nid;
+    use openssl::rsa::Rsa;
+    use tss_esapi::interface_types::ecc::EccCurve;
+    use tss_esapi::structures::Public;
+
+    let public = Public::unmarshall(tpm2b_public)
+        .map_err(|e| anyhow!(format!("unmarshall TPM2B_PUBLIC: {}", e)))?;
+
+    match public {
+        Public::Rsa {
+            parameters, unique, ..
+        } => {
+            let n = BigNum::from_slice(unique.value())?;
+            let mut e_val = parameters.exponent().value();
+            if e_val == 0 {
+                e_val = 65537;
+            }
+            let e = BigNum::from_u32(e_val)?;
+            let rsa = Rsa::from_public_components(n, e)?;
+            Ok(PKey::from_rsa(rsa)?)
+        }
+        Public::Ecc {
+            parameters, unique, ..
+        } => {
+            let nid = match parameters.ecc_curve() {
+                EccCurve::NistP256 => Nid::X9_62_PRIME256V1,
+                EccCurve::NistP384 => Nid::SECP384R1,
+                EccCurve::NistP521 => Nid::SECP521R1,
+                _ => bail!("Unsupported ECC curve in TPM2B_PUBLIC"),
+            };
+            let group = EcGroup::from_curve_name(nid)?;
+            let mut ctx = openssl::bn::BigNumContext::new()?;
+            let bx = BigNum::from_slice(unique.x().value())?;
+            let by = BigNum::from_slice(unique.y().value())?;
+            let mut ec_point = EcPoint::new(&group)?;
+            ec_point.set_affine_coordinates_gfp(&group, &bx, &by, &mut ctx)?;
+            let ec_key = EcKey::from_public_key(&group, &ec_point)?;
+            Ok(PKey::from_ec_key(ec_key)?)
+        }
+        _ => bail!("Unsupported or invalid TPM public key"),
     }
 }

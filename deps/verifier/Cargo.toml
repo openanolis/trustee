@@ -30,7 +30,7 @@ hygon-dcu-verifier = ["csv-rs"]
 # cca-verifier = ["ear", "jsonwebtoken", "veraison-apiclient", "ccatoken"]
 se-verifier = ["openssl", "pv", "serde_with", "tokio/sync"]
 system-verifier = []
-tpm-verifier = ["openssl", "tss-esapi"]
+tpm-verifier = ["openssl", "tss-esapi", "reqwest"]
 gpu-verifier = [
     "reqwest",
     "quick-xml",
