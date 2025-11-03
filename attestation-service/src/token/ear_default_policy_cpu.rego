@@ -44,8 +44,6 @@ validate_boot_measurements(measurements_data) if {
 
 # Generic function to validate kernel cmdline for any platform and algorithm
 validate_kernel_cmdline(measurements_data, cmdline_data) if {
-	cmdline_data in data.reference.kernel_cmdline
-
 	some algorithm in {"SHA1", "SHA256", "SHA384"}
 	measurement_key := sprintf("measurement.kernel_cmdline.%s", [algorithm])
 	measurements_data[measurement_key] in data.reference[measurement_key]
@@ -185,7 +183,7 @@ configuration := 2 if {
 	input.tdx.quote.body.xfam in data.reference["tdx.xfam"]
 
 	# Check kernel command line parameters have the expected value for any supported algorithm
-	validate_kernel_cmdline(input.tdx.ccel, input.tdx.ccel.kernel_cmdline)
+	validate_kernel_cmdline_uefi(input.tdx.uefi_event_logs)
 	# Check cryptpilot config
 	# validate_cryptpilot_config(input.tdx.uefi_event_logs)
 }
