@@ -69,6 +69,8 @@ attestation-agent-client get-token --token-type kbs
 }
 ```
 
+OpenAnolis提供了一个简单易用的工具[cryptpilot](https://github.com/openanolis/cryptpilot)，用于对一个系统镜像一键计算出上述启动度量值的参考值（包括grub、shim、initrd、kernel、kernel_cmdline），具体方式参见文档[reference.md](./reference.md).
+
 ### 平台特定
 
 平台特定的证据字段内容已经在Trustee内部验证硬件证书和硬件签名时做过了一轮验证，确保其真实可信，如果想要在远程证明策略中对关注的字段再次做一次自定义的验证，就需要设置对应的参考值。
