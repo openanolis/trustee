@@ -131,10 +131,14 @@ impl Verifier for TpmVerifier {
             }
 
             // Compare AK public key (registrar TPM2B_PUBLIC vs evidence PEM)
-            let registrar_ak =
-                pkey_from_tpm2b_public(&engine.decode(aik_tpm_b64).map_err(|e| {
-                    anyhow!(format!("decode registrar AK (TPM2B_PUBLIC base64): {}", e))
-                })?)
+            let registrar_ak_raw = engine.decode(aik_tpm_b64).map_err(|e| {
+                anyhow!(format!("decode registrar AK (TPM2B_PUBLIC base64): {}", e))
+            })?;
+            if registrar_ak_raw.len() <= 2 {
+                bail!("Invalid registrar AK (TPM2B_PUBLIC) length (<= 2)");
+            }
+            let ak_bytes = &registrar_ak_raw[2..];
+            let registrar_ak = pkey_from_tpm2b_public(ak_bytes)
                 .map_err(|e| anyhow!(format!("parse registrar AK (TPM2B_PUBLIC): {}", e)))?;
             let evidence_ak = PKey::public_key_from_pem(tpm_evidence.ak_pubkey.as_bytes())
                 .map_err(|e| anyhow!(format!("parse evidence AK (PEM): {}", e)))?;
