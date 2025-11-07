@@ -148,9 +148,9 @@ impl EarAttestationTokenBroker {
         let policy_engine = PolicyEngineType::OPA.to_policy_engine(
             Path::new(&config.policy_dir),
             include_str!("ear_default_policy_cpu.rego"),
-            "default_cpu.rego",
+            "default.rego",
         )?;
-        info!("Loading default AS policy \"default_cpu.rego\"");
+        info!("Loading default AS policy \"default.rego\"");
 
         if config.signer.is_none() {
             log::info!("No Token Signer key in config file, create an ephemeral key and without CA pubkey cert");
@@ -245,10 +245,9 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
 
             // There is a policy for each tee class.
             // The cpu tee class is loaded as the default.
-            let policy_id = format!("{}_{}", policy_ids[0], tee_claims.tee_class);
             let policy_results = self
                 .policy_engine
-                .evaluate(&reference_data, &tcb_claims_json, &policy_id, rules)
+                .evaluate(&reference_data, &tcb_claims_json, &policy_ids[0], rules)
                 .await?;
 
             for (k, v) in &policy_results.rules_result {
