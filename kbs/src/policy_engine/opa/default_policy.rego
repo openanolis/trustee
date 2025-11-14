@@ -51,10 +51,10 @@ is_tag(tag)   if { count(path_parts) == 3; path_parts[2] == tag }
 
 # All four core dimensions must satisfy the trust threshold (<= 32)
 core4_strict(tv) if {
-	tv.configuration <= 32
-	tv.executables <= 32
-	tv.file_system <= 32
-	tv.hardware <= 32
+	tv["configuration"] <= 32
+	tv["executables"] <= 32
+	tv["file-system"] <= 32
+	tv["hardware"] <= 32
 }
 
 # ---------------------------
