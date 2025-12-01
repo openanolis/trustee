@@ -1,6 +1,7 @@
 use ::eventlog::{ccel::tcg_enum::TcgAlgorithm, CcEventLog, ReferenceMeasurement};
 use anyhow::anyhow;
 use log::{debug, error, info, warn};
+use std::env;
 
 use crate::tdx::claims::generate_parsed_claim;
 
@@ -136,30 +137,49 @@ async fn verify_evidence(
 
     if let Some(gpu_evidence) = evidence.gpu_evidence {
         let mut gpu_claims = serde_json::Map::new();
+        let skip_gpu_verify = env::var("TRUSTEE_SKIP_NVGPU_VERIFY")
+            .map(|value| value.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
 
-        // Create tasks for parallel GPU processing
-        let mut tasks = Vec::new();
-        for (index, single_gpu_evidence) in gpu_evidence.evidence_list.iter().enumerate() {
-            let gpu_evidence = single_gpu_evidence.clone();
-            let task = tokio::spawn(async move {
-                let result = gpu::GpuEvidence::evaluate(&gpu_evidence).await;
-                (index, result)
-            });
-            tasks.push(task);
-        }
+        if skip_gpu_verify {
+            info!("Skipping GPU evidence verification per TRUSTEE_SKIP_NVGPU_VERIFY.");
+            for (index, single_gpu_evidence) in gpu_evidence.evidence_list.iter().enumerate() {
+                match serde_json::to_value(single_gpu_evidence) {
+                    Result::Ok(ev) => {
+                        gpu_claims.insert(format!("nvidia_gpu.{}", index), ev);
+                    }
+                    Result::Err(err) => {
+                        warn!("GPU {} serialization failed: {}", index, err);
+                    }
+                }
+            }
+        } else {
+            // Create tasks for parallel GPU processing
+            let mut tasks = Vec::new();
+            for (index, single_gpu_evidence) in gpu_evidence.evidence_list.iter().enumerate() {
+                let gpu_evidence = single_gpu_evidence.clone();
+                let task = tokio::spawn(async move {
+                    let result = gpu::GpuEvidence::evaluate(&gpu_evidence).await;
+                    (index, result)
+                });
+                tasks.push(task);
+            }
 
-        // Wait for all tasks to complete
-        for task in tasks {
-            match task.await {
-                std::result::Result::Ok((index, std::result::Result::Ok(gpu_evidence_claims))) => {
-                    gpu_claims.insert(format!("nvidia_gpu.{}", index), gpu_evidence_claims);
-                }
-                std::result::Result::Ok((index, std::result::Result::Err(e))) => {
-                    warn!("GPU {} evaluation failed: {}", index, e);
-                    // Continue with other GPUs
-                }
-                std::result::Result::Err(e) => {
-                    warn!("GPU task failed: {}", e);
+            // Wait for all tasks to complete
+            for task in tasks {
+                match task.await {
+                    std::result::Result::Ok((
+                        index,
+                        std::result::Result::Ok(gpu_evidence_claims),
+                    )) => {
+                        gpu_claims.insert(format!("nvidia_gpu.{}", index), gpu_evidence_claims);
+                    }
+                    std::result::Result::Ok((index, std::result::Result::Err(e))) => {
+                        warn!("GPU {} evaluation failed: {}", index, e);
+                    }
+                    std::result::Result::Err(e) => {
+                        warn!("GPU task failed: {}", e);
+                    }
                 }
             }
         }
