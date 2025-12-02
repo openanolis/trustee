@@ -3,11 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use actix_web::{
-    http::{header::Header, Method},
+    http::{
+        header::{self, Header},
+        Method,
+    },
     middleware, web, App, HttpRequest, HttpResponse, HttpServer,
 };
 use actix_web_httpauth::headers::authorization::{Authorization, Bearer};
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use log::info;
 
 use crate::{
@@ -48,13 +51,26 @@ impl ApiServer {
             return Ok(token);
         }
 
-        let bearer = Authorization::<Bearer>::parse(request)
-            .context("parse Authorization header failed")?
-            .into_scheme();
+        if let Some(attestation_header) = request.headers().get("Attestation") {
+            let token = attestation_header
+                .to_str()
+                .context("parse Attestation header failed")?
+                .to_string();
 
-        let token = bearer.token().to_string();
+            return Ok(token);
+        }
 
-        Ok(token)
+        if request.headers().contains_key(header::AUTHORIZATION) {
+            let bearer = Authorization::<Bearer>::parse(request)
+                .context("parse Authorization header failed")?
+                .into_scheme();
+
+            return Ok(bearer.token().to_string());
+        }
+
+        Err(anyhow!(
+            "attestation token not found in Attestation or Authorization headers"
+        ))
     }
 
     pub async fn new(config: KbsConfig) -> Result<Self> {
