@@ -1,0 +1,55 @@
+ARG BASE_IMAGE=alibaba-cloud-linux-3-registry.cn-hangzhou.cr.aliyuncs.com/alinux3/alinux3:latest
+
+FROM ${BASE_IMAGE} AS builder
+
+ARG ALL_PROXY
+ARG NO_PROXY
+ENV ALL_PROXY=$ALL_PROXY
+ENV NO_PROXY=$NO_PROXY
+
+ARG CARGO_JOBS
+
+RUN yum install -y perl wget curl clang openssh-clients openssl-devel protobuf-devel git
+
+WORKDIR /usr/src/trustee
+COPY . .
+
+# Install Rust toolchain from mirrored source for faster builds
+RUN export RUSTUP_DIST_SERVER='https://mirrors.ustc.edu.cn/rust-static' && \
+    export RUSTUP_UPDATE_ROOT='https://mirrors.ustc.edu.cn/rust-static/rustup' && \
+    curl --proto '=https' --tlsv1.2 -sSf https://mirrors.aliyun.com/repo/rust/rustup-init.sh | \
+    sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN export RUSTUP_DIST_SERVER='https://mirrors.ustc.edu.cn/rust-static' && \
+    export RUSTUP_UPDATE_ROOT='https://mirrors.ustc.edu.cn/rust-static/rustup' && \
+    rustup toolchain install 1.79.0-x86_64-unknown-linux-gnu
+
+RUN printf '\
+    [source.crates-io]\n\
+    replace-with = "aliyun"\n\
+    [source.aliyun]\n\
+    registry = "sparse+https://mirrors.aliyun.com/crates.io-index/"\n\
+    ' >> /root/.cargo/config
+
+RUN if [ -n "$CARGO_JOBS" ]; then \
+      [ ! -d /root/.cargo ] && mkdir /root/.cargo; \
+      echo -e "[build]\njobs = $CARGO_JOBS" >> /root/.cargo/config.toml; \
+    fi
+
+RUN cargo build --locked --release -p iam
+
+FROM ${BASE_IMAGE}
+
+RUN yum install -y ca-certificates tzdata && \
+    mkdir -p /app/config
+
+COPY --from=builder /usr/src/trustee/target/release/iam /usr/local/bin/iam
+COPY iam/config/iam.toml /app/config/iam.toml
+
+WORKDIR /app
+EXPOSE 8090
+
+ENV RUST_LOG=info
+
+CMD ["/usr/local/bin/iam", "--config", "/app/config/iam.toml"]
+

@@ -1,14 +1,14 @@
 [Unit]
 Description=Trustee
 After=network.target
-Wants=kbs.service as.service as-restful.service rvps.service trustee-gateway.service
+Wants=kbs.service iam.service as.service as-restful.service rvps.service trustee-gateway.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/systemctl start kbs as as-restful rvps trustee-gateway
-ExecStop=/usr/bin/systemctl stop kbs as as-restful rvps trustee-gateway
-ExecReload=/usr/bin/systemctl restart kbs as as-restful rvps trustee-gateway
+ExecStart=/usr/bin/systemctl start kbs iam as as-restful rvps trustee-gateway
+ExecStop=/usr/bin/systemctl stop kbs iam as as-restful rvps trustee-gateway
+ExecReload=/usr/bin/systemctl restart kbs iam as as-restful rvps trustee-gateway
 
 [Install]
 WantedBy=multi-user.target

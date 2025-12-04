@@ -1,0 +1,8 @@
+[server]
+bind_address = "0.0.0.0:8090"
+
+[crypto]
+issuer = "trustee-iam"
+hmac_secret = "change-me"
+default_ttl_seconds = 900
+

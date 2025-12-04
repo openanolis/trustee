@@ -41,6 +41,7 @@ build:
 	cargo build --bin grpc-as --release --features grpc-bin --locked
 	cargo build --bin rvps --release
 	cargo build --bin rvps-tool --release
+	cargo build -p iam --release --locked
 	@echo "编译 trustee-gateway..."
 	@echo "编译完成"
 
@@ -68,6 +69,7 @@ install:
 	install -m 644 system/as-restful.service $(BUILDROOT)$(PREFIX)/lib/systemd/system/as-restful.service
 	install -m 644 system/trustee.service $(BUILDROOT)$(PREFIX)/lib/systemd/system/trustee.service
 	install -m 644 system/trustee-gateway.service $(BUILDROOT)$(PREFIX)/lib/systemd/system/trustee-gateway.service
+	install -m 644 system/iam.service $(BUILDROOT)$(PREFIX)/lib/systemd/system/iam.service
 	
 	# 创建配置目录并安装配置文件
 	install -d -p $(BUILDROOT)$(CONFIG_DIR)
@@ -75,6 +77,7 @@ install:
 	install -m 644 configs/as-config.json $(BUILDROOT)$(CONFIG_DIR)/as-config.json
 	install -m 644 configs/rvps.json $(BUILDROOT)$(CONFIG_DIR)/rvps.json
 	install -m 644 configs/gateway.yml $(BUILDROOT)$(CONFIG_DIR)/gateway.yml
+	install -m 644 configs/iam.toml $(BUILDROOT)$(CONFIG_DIR)/iam.toml
 	
 	# 创建 bin 目录并安装可执行文件
 	install -d -p $(BUILDROOT)$(PREFIX)/bin
@@ -84,6 +87,7 @@ install:
 	install -m 755 ../target/release/rvps $(BUILDROOT)$(PREFIX)/bin/rvps
 	install -m 755 ../target/release/rvps-tool $(BUILDROOT)$(PREFIX)/bin/rvps-tool
 	install -m 755 ../trustee-gateway/gateway $(BUILDROOT)$(PREFIX)/bin/trustee-gateway
+	install -m 755 ../target/release/iam $(BUILDROOT)$(PREFIX)/bin/iam
 	
 	install -d -p $(BUILDROOT)$(PREFIX)/include
 	install -d -p $(BUILDROOT)$(PREFIX)/lib64

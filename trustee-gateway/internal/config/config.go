@@ -10,6 +10,7 @@ type Config struct {
 	Server                       ServerConfig                       `mapstructure:"server"`
 	KBS                          ServiceConfig                      `mapstructure:"kbs"`
 	AttestationService           ServiceConfig                      `mapstructure:"attestation_service"`
+	IAM                          ServiceConfig                      `mapstructure:"iam"`
 	RVPS                         RVPSConfig                         `mapstructure:"rvps"`
 	Database                     DatabaseConfig                     `mapstructure:"database"`
 	Logging                      LoggingConfig                      `mapstructure:"logging"`
@@ -79,6 +80,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	viper.SetDefault("server.insecure_http", true)
 	viper.SetDefault("kbs.url", "http://localhost:8080")
 	viper.SetDefault("attestation_service.url", "http://localhost:50005")
+	viper.SetDefault("iam.url", "http://localhost:8090")
 	viper.SetDefault("rvps.grpc_addr", "localhost:50003")
 	viper.SetDefault("database.type", "sqlite")
 	viper.SetDefault("database.path", "./trustee-gateway.db")

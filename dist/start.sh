@@ -30,7 +30,7 @@ EOF
 }
 
 # Setup log rotation for each service
-for service in rvps as as-restful kbs trustee-gateway trustee-frontend nginx; do
+for service in rvps as as-restful kbs iam trustee-gateway trustee-frontend nginx; do
   setup_log_rotation $service
 done
 
@@ -66,6 +66,14 @@ start_kbs() {
   echo "KBS service started, PID: $(cat /opt/trustee/logs/kbs.pid)"
 }
 
+# Start IAM service
+start_iam() {
+  echo "Starting IAM service..."
+  nohup /usr/bin/iam --config /etc/trustee/iam.toml > >(tee -a /opt/trustee/logs/iam.log) 2>&1 &
+  echo $! > /opt/trustee/logs/iam.pid
+  echo "IAM service started, PID: $(cat /opt/trustee/logs/iam.pid)"
+}
+
 # Start Trustee-Gateway service
 start_trustee_gateway() {
   echo "Starting Trustee-Gateway service..."
@@ -91,6 +99,8 @@ start_as_restful
 sleep 2
 start_kbs
 sleep 1
+start_iam
+sleep 1
 start_trustee_gateway
 sleep 1
 start_trustee_frontend
@@ -100,7 +110,7 @@ echo "All services started. Log files are located in /opt/trustee/logs/ director
 # Check service status
 check_services() {
   echo "Checking service status..."
-  for service in rvps as as-restful kbs trustee-gateway nginx-trustee-frontend; do
+  for service in rvps as as-restful kbs iam trustee-gateway nginx-trustee-frontend; do
     if [ -f "/opt/trustee/logs/${service}.pid" ]; then
       pid=$(cat /opt/trustee/logs/${service}.pid)
       if ps -p $pid > /dev/null; then

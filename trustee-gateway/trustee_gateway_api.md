@@ -2,49 +2,287 @@
 
 ## 目录
 
-### [1. KBS API (`/api/kbs/v0`)](#kbs-api-apikbsv0)
-- [1.1 认证 (Authentication)](#11-认证-authentication)
-- [1.2 证明 (Attestation)](#12-证明-attestation)
-- [1.3 设置认证策略 (Set Attestation Policy)](#13-设置认证策略-set-attestation-policy)
-- [1.4 获取认证策略 (Get Attestation Policy)](#14-获取认证策略-get-attestation-policy)
-- [1.5 删除认证策略 (Delete Attestation Policy)](#15-删除认证策略-delete-attestation-policy)
-- [1.6 列出认证策略 (List Attestation Policies)](#16-列出认证策略-list-attestation-policies)
-- [1.7 设置资源策略 (Set Resource Policy)](#17-设置资源策略-set-resource-policy)
-- [1.8 获取资源策略 (Get Resource Policy)](#18-获取资源策略-get-resource-policy)
-- [1.9 获取资源 (Get Resource)](#19-获取资源-get-resource)
-- [1.10 设置资源 (Set Resource)](#110-设置资源-set-resource)
-- [1.11 列出资源 (List Resources)](#111-列出资源-list-resources)
-- [1.12 删除资源 (Delete Resource)](#112-删除资源-delete-resource)
+### [1. IAM API (`/api/iam`)](#iam-api-apiiam)
+- [1.1 创建账号 (Create Account)](#11-创建账号-create-account)
+- [1.2 创建主体 (Create Principal)](#12-创建主体-create-principal)
+- [1.3 注册资源 (Register Resource)](#13-注册资源-register-resource)
+- [1.4 创建角色 (Create Role)](#14-创建角色-create-role)
+- [1.5 AssumeRole 获取会话令牌](#15-assumerole-获取会话令牌)
+- [1.6 鉴权评估 (Access Evaluation)](#16-鉴权评估-access-evaluation)
 
-### [2. AS API (`/api/attestation-service`)](#as-api-apiattestation-service)
-- [2.1 证明 (Attestation)](#21-证明-attestation-1)
-- [2.2 挑战 (Challenge)](#22-挑战-challenge)
-- [2.3 获取证书 (Get Certificate)](#23-获取证书-get-certificate)
+### [2. KBS API (`/api/kbs/v0`)](#kbs-api-apikbsv0)
+- [2.1 认证 (Authentication)](#21-认证-authentication)
+- [2.2 证明 (Attestation)](#22-证明-attestation)
+- [2.3 设置认证策略 (Set Attestation Policy)](#23-设置认证策略-set-attestation-policy)
+- [2.4 获取认证策略 (Get Attestation Policy)](#24-获取认证策略-get-attestation-policy)
+- [2.5 删除认证策略 (Delete Attestation Policy)](#25-删除认证策略-delete-attestation-policy)
+- [2.6 列出认证策略 (List Attestation Policies)](#26-列出认证策略-list-attestation-policies)
+- [2.7 设置资源策略 (Set Resource Policy)](#27-设置资源策略-set-resource-policy)
+- [2.8 获取资源策略 (Get Resource Policy)](#28-获取资源策略-get-resource-policy)
+- [2.9 获取资源 (Get Resource)](#29-获取资源-get-resource)
+- [2.10 设置资源 (Set Resource)](#210-设置资源-set-resource)
+- [2.11 列出资源 (List Resources)](#211-列出资源-list-resources)
+- [2.12 删除资源 (Delete Resource)](#212-删除资源-delete-resource)
 
-### [3. AS API (`/api/as`)](#as-api-apias)
-- [3.1 证明 (Attestation)](#31-证明-attestation-2)
-- [3.2 挑战 (Challenge)](#32-挑战-challenge-1)
-- [3.3 获取证书 (Get Certificate)](#33-获取证书-get-certificate-1)
+### [3. AS API (`/api/attestation-service`)](#as-api-apiattestation-service)
+- [3.1 证明 (Attestation)](#31-证明-attestation-1)
+- [3.2 挑战 (Challenge)](#32-挑战-challenge)
+- [3.3 获取证书 (Get Certificate)](#33-获取证书-get-certificate)
 
-### [4. RVPS API (`/api/rvps`)](#rvps-api-apirvps)
-- [4.1 查询参考值 (Query Reference Value)](#41-查询参考值-query-reference-value)
-- [4.2 注册参考值 (Register Reference Value)](#42-注册参考值-register-reference-value)
-- [4.3 删除参考值 (Delete Reference Value)](#43-删除参考值-delete-reference-value)
+### [4. AS API (`/api/as`)](#as-api-apias)
+- [4.1 证明 (Attestation)](#41-证明-attestation-2)
+- [4.2 挑战 (Challenge)](#42-挑战-challenge-1)
+- [4.3 获取证书 (Get Certificate)](#43-获取证书-get-certificate-1)
 
-### [5. 审计 API (`/api/audit`)](#审计-api-apiaudit)
-- [5.1 列出认证记录 (List Attestation Records)](#51-列出认证记录-list-attestation-records)
-- [5.2 列出资源请求记录 (List Resource Requests)](#52-列出资源请求记录-list-resource-requests)
+### [5. RVPS API (`/api/rvps`)](#rvps-api-apirvps)
+- [5.1 查询参考值 (Query Reference Value)](#51-查询参考值-query-reference-value)
+- [5.2 注册参考值 (Register Reference Value)](#52-注册参考值-register-reference-value)
+- [5.3 删除参考值 (Delete Reference Value)](#53-删除参考值-delete-reference-value)
 
-### [6. 健康检查 API (`/api`)](#6-健康检查-api-api)
-- [6.1 基本健康检查](#61-基本健康检查)
-- [6.2 服务健康检查](#62-服务健康检查)
+### [6. 审计 API (`/api/audit`)](#审计-api-apiaudit)
+- [6.1 列出认证记录 (List Attestation Records)](#61-列出认证记录-list-attestation-records)
+- [6.2 列出资源请求记录 (List Resource Requests)](#62-列出资源请求记录-list-resource-requests)
 
-### [7. 实例API (`/api/aa-instance`)](#7-实例api-apiaa-instance)
-- [7.1 AA实例心跳](#71-aa实例心跳)
-- [7.2 实例列表](#72-实例列表)
+### [7. 健康检查 API (`/api`)](#7-健康检查-api-api)
+- [7.1 基本健康检查](#71-基本健康检查)
+- [7.2 服务健康检查](#72-服务健康检查)
+
+### [8. 实例API (`/api/aa-instance`)](#8-实例api-apiaa-instance)
+- [8.1 AA实例心跳](#81-aa实例心跳)
+- [8.2 实例列表](#82-实例列表)
 
 ### [附录](#附录)
 - [KBS认证头生成方法](#kbs认证头生成方法)
+
+---
+
+### IAM API (`**/api/iam**`)
+
+Gateway 按原样代理所有 IAM 请求到 Trustee IAM 服务，接口语义与源服务完全一致。以下示例展示各端点的常见调用方式。
+
+#### 1.1 创建账号 (Create Account)
+
+* **端点:** `POST /api/iam/accounts`
+* **说明:** 创建新的租户账号，包含名称与可选标签。
+* **调用方法:**
+  ```bash
+  curl -X POST http://<gateway-host>:8081/api/iam/accounts \
+       -H 'Content-Type: application/json' \
+       -d '{
+             "name": "example-account",
+             "labels": { "environment": "dev" }
+           }'
+  ```
+* **请求头:** `Content-Type: application/json`
+* **请求体:**  
+  ```json
+  {
+    "name": "string",
+    "labels": { "key": "value" }
+  }
+  ```
+* **响应:** 返回创建好的账号对象。
+* **返回码:** `201 Created`（成功） / `400 Bad Request`（字段缺失或非法）
+* **返回示例:**
+  ```json
+  {
+    "account": {
+      "id": "acct-5f5c7a2b-...",
+      "name": "example-account",
+      "labels": { "environment": "dev" },
+      "created_at": "2025-12-04T06:00:00Z"
+    }
+  }
+  ```
+
+#### 1.2 创建主体 (Create Principal)
+
+* **端点:** `POST /api/iam/accounts/{account_id}/principals`
+* **说明:** 在指定账号下新增主体（人、服务、运行时等）。
+* **调用方法:**
+  ```bash
+  curl -X POST http://<gateway-host>:8081/api/iam/accounts/acct-123/principals \
+       -H 'Content-Type: application/json' \
+       -d '{
+             "name": "runtime-a",
+             "principal_type": "Runtime",
+             "attributes": { "values": { "cluster": "prod" } }
+           }'
+  ```
+* **请求头:** `Content-Type: application/json`
+* **请求体:**  
+  ```json
+  {
+    "name": "string",
+    "principal_type": "Human|Service|Runtime|External|Unknown",
+    "attributes": {
+      "values": {
+        "key": "value"
+      }
+    }
+  }
+  ```
+* **响应:** 返回创建成功的主体。
+* **返回码:** `201 Created` / `404 Not Found`（账号不存在）
+* **返回示例:**
+  ```json
+  {
+    "principal": {
+      "id": "prn-123",
+      "account_id": "acct-123",
+      "name": "runtime-a",
+      "principal_type": "Runtime",
+      "attributes": { "values": { "cluster": "prod" } },
+      "created_at": "2025-12-04T06:01:00Z"
+    }
+  }
+  ```
+
+#### 1.3 注册资源 (Register Resource)
+
+* **端点:** `POST /api/iam/resources`
+* **说明:** 按资源类型生成唯一 ARN，用于后续策略引用。
+* **调用方法:**
+  ```bash
+  curl -X POST http://<gateway-host>:8081/api/iam/resources \
+       -H 'Content-Type: application/json' \
+       -d '{
+             "owner_account_id": "acct-123",
+             "resource_type": "kbs/key",
+             "tags": { "tier": "gold" }
+           }'
+  ```
+* **请求头:** `Content-Type: application/json`
+* **请求体:**  
+  ```json
+  {
+    "owner_account_id": "acct-123",
+    "resource_type": "namespace/type",
+    "tags": { "key": "value" },
+    "attributes": { "values": { "key": "value" } }
+  }
+  ```
+* **响应:** 包含生成的 `arn:trustee::...`。
+* **返回码:** `201 Created` / `404 Not Found`（账号不存在）
+* **返回示例:**
+  ```json
+  {
+    "resource": {
+      "arn": "arn:trustee::acct-123:kbs/key/res-001",
+      "owner_account_id": "acct-123",
+      "resource_type": "kbs/key",
+      "tags": { "tier": "gold" },
+      "created_at": "2025-12-04T06:02:00Z"
+    }
+  }
+  ```
+
+#### 1.4 创建角色 (Create Role)
+
+* **端点:** `POST /api/iam/roles`
+* **说明:** 同时写入信任策略与访问策略，供主体 `AssumeRole` 使用。
+* **调用方法:**
+  ```bash
+  curl -X POST http://<gateway-host>:8081/api/iam/roles \
+       -H 'Content-Type: application/json' \
+       -d '{
+             "name": "trusted-runtime",
+             "trust_policy": {
+               "statements": [{
+                 "effect": "Allow",
+                 "actions": ["sts:AssumeRole"],
+                 "resources": ["role/*"],
+                 "conditions": [{
+                   "operator": "StringEquals",
+                   "key": "principal.accountId",
+                   "values": ["acct-123"]
+                 }]
+               }]
+             },
+             "access_policy": {
+               "statements": [{
+                 "effect": "Allow",
+                 "actions": ["kbs:GetKey"],
+                 "resources": ["arn:trustee::acct-123:kbs/key/*"]
+               }]
+             }
+           }'
+  ```
+* **请求头:** `Content-Type: application/json`
+* **请求体:** `name` + `trust_policy` + `access_policy`（PolicyDocument 结构）
+* **响应:** 返回角色详情。
+* **返回码:** `201 Created` / `400 Bad Request`
+* **返回示例:**  
+  ```json
+  {
+    "role": {
+      "id": "role-abc",
+      "name": "trusted-runtime",
+      "created_at": "2025-12-04T06:03:00Z",
+      "trust_policy": { ... },
+      "access_policy": { ... }
+    }
+  }
+  ```
+
+#### 1.5 AssumeRole 获取会话令牌
+
+* **端点:** `POST /api/iam/sts/assume-role`
+* **说明:** 执行信任策略 + 可选 Attestation 校验，返回短期 STS Token。
+* **调用方法:**
+  ```bash
+  curl -X POST http://<gateway-host>:8081/api/iam/sts/assume-role \
+       -H 'Content-Type: application/json' \
+       -d '{
+             "principal_id": "prn-123",
+             "role_id": "role-abc",
+             "session_name": "runtime-session",
+             "attestation_token": "<base64-json-claims>"
+           }'
+  ```
+* **请求头:** `Content-Type: application/json`
+* **请求体:** `principal_id`、`role_id`、可选 `attestation_token`/`requested_duration_seconds`。
+* **响应:** 成功时返回 token 及过期时间。
+* **返回码:** `200 OK` / `401 Unauthorized`
+* **返回示例:**
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "expires_at": "2025-12-04T08:00:00Z"
+  }
+  ```
+
+#### 1.6 鉴权评估 (Access Evaluation)
+
+* **端点:** `POST /api/iam/authz/evaluate`
+* **说明:** 校验 token 是否有效，并基于角色访问策略返回 Allow/Deny。
+* **调用方法:**
+  ```bash
+  curl -X POST http://<gateway-host>:8081/api/iam/authz/evaluate \
+       -H 'Content-Type: application/json' \
+       -d '{
+             "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+             "action": "kbs:GetKey",
+             "resource": "arn:trustee::acct-123:kbs/key/key-001",
+             "context": { "ip": "10.0.0.5" }
+           }'
+  ```
+* **请求头:** `Content-Type: application/json`
+* **请求体:**  
+  ```json
+  {
+    "token": "session-token",
+    "action": "service:Verb",
+    "resource": "arn:trustee::acct-123:type/id",
+    "context": { "key": "value" }
+  }
+  ```
+* **响应:** `{ "allowed": true|false }`
+* **返回码:** `200 OK` / `401 Unauthorized`
+* **返回示例:**  
+  ```json
+  { "allowed": true }
+  ```
 
 ---
 
