@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1.4
+
+FROM rust:1.75-bullseye AS builder
+
+WORKDIR /app
+
+# Cache dependency compilation.
+COPY Cargo.toml Cargo.lock ./
+COPY rvds/Cargo.toml rvds/Cargo.toml
+RUN mkdir -p rvds/src && echo "fn main() {}" > rvds/src/main.rs
+RUN cargo build -p rvds --release || true
+
+# Build with sources.
+COPY . .
+RUN cargo build -p rvds --release
+
+FROM debian:bullseye-slim
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /srv/rvds
+COPY --from=builder /app/target/release/rvds /usr/local/bin/rvds
+
+ENV RVDS_LISTEN_ADDR=0.0.0.0:8090 \
+    RVDS_DATA_DIR=/var/lib/rvds \
+    RVDS_FORWARD_TIMEOUT_SECS=10 \
+    RUST_LOG=info
+
+VOLUME ["/var/lib/rvds"]
+EXPOSE 8090
+
+ENTRYPOINT ["rvds"]
+
+

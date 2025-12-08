@@ -1,0 +1,23 @@
+ [package]
+ name = "rvds"
+ version = "0.1.0"
+ edition = "2021"
+ authors = ["The Confidential Container Authors"]
+ description = "Reference Value Distribution Service"
+ license = "Apache-2.0"
+
+ [dependencies]
+ actix-web = { workspace = true }
+ anyhow = { workspace = true }
+ chrono = { workspace = true }
+ env_logger = { workspace = true }
+ futures = "0.3"
+ log = { workspace = true }
+ reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+ serde = { workspace = true, features = ["derive"] }
+ serde_json = { workspace = true }
+ thiserror = { workspace = true }
+ tokio = { workspace = true, features = ["full"] }
+ url = "2"
+
+

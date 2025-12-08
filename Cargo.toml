@@ -3,6 +3,7 @@ members = [
     "kbs",
     "attestation-service",
     "rvps",
+    "rvds",
     "deps/verifier",
     "deps/eventlog",
     "deps/kms",
