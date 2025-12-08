@@ -30,7 +30,9 @@ RUN cargo install --bin rvps --path rvps --locked
 
 FROM ${BASE_IMAGE}
 
-RUN yum install -y openssl curl pkg-config
+RUN yum install -y openssl curl pkg-config && \
+    curl -L "https://github.com/slsa-framework/slsa-verifier/releases/download/v2.7.1/slsa-verifier-linux-amd64" -o /usr/local/bin/slsa-verifier && \
+    chmod +x /usr/local/bin/slsa-verifier
 
 COPY --from=builder /root/.cargo/bin/rvps /usr/local/bin/rvps
 
