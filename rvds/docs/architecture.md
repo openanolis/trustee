@@ -14,6 +14,7 @@
 - **HTTP API（Actix-web）**：暴露 `/rvds/*` 接口，负责参数校验与响应封装。
 - **订阅注册表（Subscriber Registry）**：用 `HashSet` 存储已注册的 Trustee 基址，持久化于 `data/rvds/subscribers.json`。
 - **事件转发器（Forwarder）**：接收发布事件后，构造 RVPS 期望的 `message` 包裹并并发调用各 Trustee 的 `/api/rvps/register`。
+- **账本记录器（Ledger Recorder）**：对 `PublishEventRequest` 做规范化哈希，写入外部不可篡改账本（默认 noop，可配置 HTTP / 以太坊网关），返回记录凭据，并将审计凭据随 payload 一并下发。
 - **配置与启动器（Config / Bootstrap）**：从环境变量加载监听地址、数据目录、下游调用超时等参数。
 
 ## 数据模型
@@ -27,7 +28,14 @@
   {
     "artifact_type": "rpm",
     "slsa_provenance": ["..."],      // 多个 provenance（原文或 base64），数组形式
-    "artifacts_download_url": ["https://...rpm"]
+    "artifacts_download_url": ["https://...rpm"],
+    "audit_proof": {                 // 可选，账本回执
+      "backend": "ethereum-gateway",
+      "handle": "0x<tx_hash>",
+      "event_hash": "<sha256(canonical payload)>",
+      "payload_hash": "<sha256(payload)>",
+      "payload_b64": "<base64 of payload>"
+    }
   }
   ```
 - **转发给 RVPS 的请求**
@@ -45,7 +53,7 @@
   - 返回：已新增的地址列表。
 - `POST /rvds/rv-publish-event`
   - 功能：校验事件并转发到全部 Trustee。
-  - 返回：每个 Trustee 的投递结果（成功/失败与错误信息）。
+  - 返回：每个 Trustee 的投递结果（成功/失败与错误信息），以及可选的 ledger 记录凭据。
 
 ## 工作流程
 

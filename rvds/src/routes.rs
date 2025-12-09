@@ -29,6 +29,9 @@ async fn rv_publish_event(
     state: web::Data<AppState>,
     payload: web::Json<PublishEventRequest>,
 ) -> Result<HttpResponse, ApiError> {
-    let results = state.forward_publish_event(payload.into_inner()).await?;
-    Ok(HttpResponse::Ok().json(PublishResponse { forwarded: results }))
+    let (results, receipt) = state.forward_publish_event(payload.into_inner()).await?;
+    Ok(HttpResponse::Ok().json(PublishResponse {
+        forwarded: results,
+        ledger_receipt: receipt,
+    }))
 }

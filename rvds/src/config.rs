@@ -4,12 +4,27 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 
+#[derive(Clone, Debug)]
+pub struct LedgerConfig {
+    /// Backend type: "none" (default) or "http" (external ledger gateway).
+    pub backend: String,
+    /// HTTP endpoint for the ledger gateway.
+    pub http_endpoint: Option<String>,
+    /// Optional API key for the ledger gateway.
+    pub http_api_key: Option<String>,
+    /// Ethereum gateway endpoint that relays tx to chain.
+    pub eth_gateway_endpoint: Option<String>,
+    /// Optional API key for the ethereum gateway.
+    pub eth_gateway_api_key: Option<String>,
+}
+
 /// Application level configuration loaded from environment variables.
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub listen_addr: String,
     pub data_dir: PathBuf,
     pub request_timeout: Duration,
+    pub ledger: LedgerConfig,
 }
 
 impl AppConfig {
@@ -36,10 +51,23 @@ impl AppConfig {
             ));
         }
 
+        let ledger_backend = env::var("RVDS_LEDGER_BACKEND").unwrap_or_else(|_| "none".to_string());
+        let ledger_http_endpoint = env::var("RVDS_LEDGER_HTTP_ENDPOINT").ok();
+        let ledger_http_api_key = env::var("RVDS_LEDGER_HTTP_API_KEY").ok();
+        let eth_gateway_endpoint = env::var("RVDS_LEDGER_ETH_GATEWAY").ok();
+        let eth_gateway_api_key = env::var("RVDS_LEDGER_ETH_GATEWAY_API_KEY").ok();
+
         Ok(Self {
             listen_addr,
             data_dir,
             request_timeout: Duration::from_secs(request_timeout_secs),
+            ledger: LedgerConfig {
+                backend: ledger_backend,
+                http_endpoint: ledger_http_endpoint,
+                http_api_key: ledger_http_api_key,
+                eth_gateway_endpoint,
+                eth_gateway_api_key,
+            },
         })
     }
 }

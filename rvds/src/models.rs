@@ -1,6 +1,18 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
+/// Generic audit proof that can point to different ledger backends.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AuditProof {
+    pub backend: String,
+    pub handle: String,
+    pub event_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload_b64: Option<String>,
+}
+
 /// Register trustee subscription request body.
 #[derive(Debug, Deserialize)]
 pub struct SubscribeRequest {
@@ -24,6 +36,9 @@ pub struct PublishEventRequest {
     /// A list of SLSA provenance documents (raw JSON or base64-encoded JSON).
     pub slsa_provenance: Vec<String>,
     pub artifacts_download_url: Vec<String>,
+    /// Optional audit proof (ledger) attached by RVDS.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audit_proof: Option<AuditProof>,
 }
 
 impl PublishEventRequest {
@@ -75,4 +90,5 @@ pub struct SubscribeResponse {
 #[derive(Debug, Serialize)]
 pub struct PublishResponse {
     pub forwarded: Vec<ForwardResult>,
+    pub ledger_receipt: Option<crate::ledger::LedgerReceipt>,
 }

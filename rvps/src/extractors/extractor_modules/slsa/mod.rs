@@ -8,7 +8,10 @@ use chrono::{Months, Timelike, Utc};
 use serde::Deserialize;
 use tempfile::NamedTempFile;
 
-use crate::{reference_value::REFERENCE_VALUE_VERSION, ReferenceValue};
+use crate::{
+    reference_value::{AuditProof, REFERENCE_VALUE_VERSION},
+    ReferenceValue,
+};
 
 use super::Extractor;
 
@@ -18,6 +21,8 @@ struct RvdsPayload {
     slsa_provenance: Vec<String>,
     #[allow(dead_code)]
     artifacts_download_url: Vec<String>,
+    #[serde(default)]
+    audit_proof: Option<AuditProof>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -236,7 +241,8 @@ impl Extractor for SlsaExtractor {
             let mut rv = ReferenceValue::new()?
                 .set_version(REFERENCE_VALUE_VERSION)
                 .set_name(&subject.name)
-                .set_expiration(expiration);
+                .set_expiration(expiration)
+                .set_audit_proof(envelope.audit_proof.clone());
 
             for (alg, value) in subject.digest.iter() {
                 rv = rv.add_hash_value(alg.to_string(), value.to_string());

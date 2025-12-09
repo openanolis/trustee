@@ -69,6 +69,24 @@ pub struct ReferenceValue {
     pub expiration: DateTime<Utc>,
     #[serde(rename = "hash-value")]
     pub hash_value: Vec<HashValuePair>,
+    /// Optional audit proof pointing to immutable ledger evidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub audit_proof: Option<AuditProof>,
+}
+
+/// Minimal audit proof metadata kept alongside reference values.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AuditProof {
+    pub backend: String,
+    pub handle: String,
+    pub event_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub payload_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub payload_b64: Option<String>,
 }
 
 /// Set the default version for ReferenceValue
@@ -89,6 +107,7 @@ impl ReferenceValue {
                 .with_nanosecond(0)
                 .ok_or_else(|| anyhow!("set nanosecond failed."))?,
             hash_value: Vec::new(),
+            audit_proof: None,
         })
     }
 
@@ -121,6 +140,12 @@ impl ReferenceValue {
     /// Set hash value of the ReferenceValue.
     pub fn add_hash_value(mut self, alg: String, value: String) -> Self {
         self.hash_value.push(HashValuePair::new(alg, value));
+        self
+    }
+
+    /// Set audit proof metadata.
+    pub fn set_audit_proof(mut self, proof: Option<AuditProof>) -> Self {
+        self.audit_proof = proof;
         self
     }
 

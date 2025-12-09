@@ -62,6 +62,7 @@ impl Extractor for SampleExtractor {
                         name: name.to_string(),
                         expiration,
                         hash_value: rvs,
+                        audit_proof: None,
                     }),
                     None => {
                         warn!("Expired time calculated overflowed for reference value of {name}.");
