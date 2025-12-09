@@ -19,5 +19,13 @@
  thiserror = { workspace = true }
  tokio = { workspace = true, features = ["full"] }
  url = "2"
+sha2 = { workspace = true }
+async-trait = { workspace = true }
+hex = { workspace = true }
+rand = "0.8"
+web3 = { version = "0.19", default-features = false, features = ["http", "signing"] }
+ethabi = "18"
+secp256k1 = { version = "0.27", features = ["rand"] }
+base64 = { workspace = true }
 
 

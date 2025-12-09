@@ -13,6 +13,9 @@
 - `RVDS_LISTEN_ADDR`：监听地址，默认 `0.0.0.0:8090`
 - `RVDS_DATA_DIR`：订阅持久化目录，默认 `data/rvds`
 - `RVDS_FORWARD_TIMEOUT_SECS`：转发超时秒数，默认 `10`
+- `RVDS_LEDGER_BACKEND`：`none`（默认）、`http`、`eth`
+- `RVDS_LEDGER_HTTP_ENDPOINT` / `RVDS_LEDGER_HTTP_API_KEY`：账本网关（http）配置
+- `RVDS_LEDGER_ETH_GATEWAY` / `RVDS_LEDGER_ETH_GATEWAY_API_KEY`：以太坊网关配置
 - `RUST_LOG`：日志等级，如 `info,rvds=debug`
 
 ## 源码构建运行
@@ -73,5 +76,6 @@ curl -k -X POST http://localhost:8090/rvds/rv-publish-event \
 
 - 在 release workflow 中生成 `PublishEventRequest`，通过 `curl`/`gh api` 等 POST 到 RVDS。
 - RVDS 会自动并发转发到已注册的 Trustee；失败结果会返回在响应中，供重试或告警。
+- 若配置了 ledger，RVDS 会在响应和下游 payload 中附带 `audit_proof`（含 event_hash/payload_hash/payload_b64、tx 句柄等），便于 RVPS/审计使用。
 
 

@@ -12,6 +12,7 @@ use url::Url;
 
 use crate::config::AppConfig;
 use crate::error::ApiError;
+use crate::ledger::{build_ledger, LedgerAdapter, LedgerReceipt};
 use crate::models::{
     ForwardResult, PublishEventRequest, RvpsMessageEnvelope, RvpsRegisterRequest, SubscribeRequest,
 };
@@ -22,6 +23,7 @@ pub struct AppState {
     storage_path: PathBuf,
     http_client: Client,
     request_timeout: Duration,
+    ledger: std::sync::Arc<dyn LedgerAdapter>,
 }
 
 impl AppState {
@@ -38,12 +40,14 @@ impl AppState {
             .timeout(cfg.request_timeout)
             .build()
             .context("build reqwest client")?;
+        let ledger = build_ledger(&cfg.ledger, http_client.clone());
 
         Ok(Self {
             subscribers: std::sync::Arc::new(RwLock::new(subscribers)),
             storage_path,
             http_client,
             request_timeout: cfg.request_timeout,
+            ledger,
         })
     }
 
@@ -79,8 +83,8 @@ impl AppState {
     /// Forward publish events to every registered trustee.
     pub async fn forward_publish_event(
         &self,
-        event: PublishEventRequest,
-    ) -> Result<Vec<ForwardResult>, ApiError> {
+        mut event: PublishEventRequest,
+    ) -> Result<(Vec<ForwardResult>, Option<LedgerReceipt>), ApiError> {
         event
             .validate()
             .map_err(|e| ApiError::Validation(e.to_string()))?;
@@ -91,7 +95,7 @@ impl AppState {
         let message_envelope = RvpsMessageEnvelope {
             version: "0.1.0".to_string(),
             typ: "slsa".to_string(),
-            payload: payload_json,
+            payload: payload_json.clone(),
         };
         let envelope_str = serde_json::to_string(&message_envelope)
             .map_err(|e| ApiError::Internal(format!("serialize envelope: {e}")))?;
@@ -108,13 +112,35 @@ impl AppState {
             warn!("No trustee subscribers registered; skipping forward.");
         }
 
+        // Record in external ledger (if enabled).
+        let ledger_receipt = match self.ledger.record_event(&event, &payload_json).await {
+            Ok(r) => {
+                info!(
+                    "Ledger recorded event_hash={} via {}",
+                    r.event_hash, r.backend
+                );
+                event.audit_proof = Some(crate::models::AuditProof {
+                    backend: r.backend.clone(),
+                    handle: r.handle.clone(),
+                    event_hash: r.event_hash.clone(),
+                    payload_hash: r.payload_hash.clone(),
+                    payload_b64: r.payload_b64.clone(),
+                });
+                Some(r)
+            }
+            Err(e) => {
+                warn!("Ledger recording failed: {e}");
+                None
+            }
+        };
+
         // Dispatch webhooks concurrently to reduce tail latency.
         let futs = subscribers
             .into_iter()
             .map(|target| self.send_to_trustee(target, register_request.clone()));
 
         let results = join_all(futs).await;
-        Ok(results)
+        Ok((results, ledger_receipt))
     }
 
     /// Persist subscriber registry to disk.

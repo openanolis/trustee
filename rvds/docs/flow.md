@@ -23,12 +23,14 @@
 }
 ```
    - 并发调用每个 Trustee 的 `https://<trustee>/api/rvps/register`。
+   - 同步将事件摘要（canonical + sha256）写入外部账本（若启用），返回 ledger 凭据，并把审计字段（`audit_proof`，含 event_hash/payload_hash/payload_b64）附在 payload 中下发。
 4. **校验与入库**
    - Trustee Gateway 将请求转给 RVPS gRPC `RegisterReferenceValue`。
    - RVPS 通过 `slsa` extractor：
      - 解析 `payload` 得到 `artifact_type/slsa_provenance[]/artifacts_download_url`。
      - 针对每个 provenance（raw JSON 或 base64 JSON）解析 subject，支持多份 provenance。
      - 抽取 `subject[].digest`（优先 `sha256`），生成 `ReferenceValue`（默认 12 个月有效）。
+     - 将 `audit_proof` 落在 ReferenceValue（便于后续第三方审计）。
      - 调用存储接口写入参考值。
 5. **消费**
    - 上游（如 AS）调用 RVPS `query_reference_value` 获取可信哈希用于度量验证。
