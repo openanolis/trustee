@@ -14,5 +14,6 @@ VOLUME /etc/trustee
 
 EXPOSE 8081
 EXPOSE 8082
+EXPOSE 8090
 
 CMD ["/usr/bin/start.sh"]

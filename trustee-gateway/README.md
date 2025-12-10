@@ -1,10 +1,10 @@
 # Trustee Gateway
 
-Trustee Gateway 是 Trustee 项目的重要组件，它作为 KBS（Key Broker Service）和 RVPS（Reference Value Provider Service）等后端服务的 API 网关。Gateway 提供了统一的接入点、访问控制和审计功能，简化了 Trustee 系统的整体架构。
+Trustee Gateway 是 Trustee 项目的重要组件，它作为 KBS（Key Broker Service）、IAM（Identity & Access Management）和 RVPS（Reference Value Provider Service）等后端服务的 API 网关。Gateway 提供了统一的接入点、访问控制和审计功能，简化了 Trustee 系统的整体架构。
 
 ## 功能特性
 
-- **统一接入点**：为 KBS 和 RVPS 等后端服务提供统一的 API 接入点
+- **统一接入点**：为 KBS、IAM 和 RVPS 等后端服务提供统一的 API 接入点
 - **请求转发**：智能代理请求到相应的后端服务
 - **访问控制**：可对 API 请求进行身份验证和授权
 - **审计日志**：记录关键操作，包括证明请求和资源访问
@@ -46,6 +46,9 @@ server:
 kbs:
   url: "http://kbs:8080"  # KBS 服务地址
 
+iam:
+  url: "http://iam:8090"  # IAM 服务地址
+
 rvps:
   grpc_addr: "rvps:50003"  # RVPS gRPC 服务地址
 
@@ -68,6 +71,15 @@ Gateway 提供以下主要 API 端点：
 - `/api/kbs/v0/attestation-policy` - 证明策略管理
 - `/api/kbs/v0/resource-policy` - 资源策略管理
 - `/api/kbs/v0/resource/:repository/:type/:tag` - 资源管理
+
+### IAM 相关 API
+
+- `/api/iam/accounts` - 账号管理
+- `/api/iam/accounts/{account_id}/principals` - 主体管理
+- `/api/iam/resources` - 资源注册
+- `/api/iam/roles` - 角色管理
+- `/api/iam/sts/assume-role` - 获取会话令牌
+- `/api/iam/authz/evaluate` - 鉴权评估
 
 ### RVPS 相关 API
 

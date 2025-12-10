@@ -11,6 +11,11 @@ kbs:
   insecure_http: true
   ca_cert_file: ""
 
+iam:
+  url: "http://localhost:8090"
+  insecure_http: true
+  ca_cert_file: ""
+
 attestation_service:
   url: "http://localhost:50005"
   insecure_http: true

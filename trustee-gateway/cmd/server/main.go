@@ -69,6 +69,7 @@ func main() {
 	kbsHandler := handlers.NewKBSHandler(p, auditRepo)
 	rvpsHandler := handlers.NewRVPSHandler(p, rvpsClient)
 	attestationServiceHandler := handlers.NewAttestationServiceHandler(p, auditRepo)
+	iamHandler := handlers.NewIAMHandler(p)
 	auditHandler := handlers.NewAuditHandler(auditRepo)
 	healthCheckHandler := handlers.NewHealthCheckHandler(p, rvpsClient)
 	aaInstanceHandler := handlers.NewAAInstanceHandler(aaInstanceRepo, &cfg.AttestationAgentInstanceInfo)
@@ -87,7 +88,7 @@ func main() {
 	router.Use(middleware.Logger())
 
 	// API routes
-	setupRoutes(router, kbsHandler, rvpsHandler, attestationServiceHandler, auditHandler, healthCheckHandler, p, aaInstanceHandler)
+	setupRoutes(router, kbsHandler, rvpsHandler, attestationServiceHandler, iamHandler, auditHandler, healthCheckHandler, p, aaInstanceHandler)
 
 	// Setup HTTP server
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
@@ -144,7 +145,7 @@ func main() {
 	logrus.Info("Server shutdown complete")
 }
 
-func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandler *handlers.RVPSHandler, attestationServiceHandler *handlers.AttestationServiceHandler, auditHandler *handlers.AuditHandler, healthCheckHandler *handlers.HealthCheckHandler, p *proxy.Proxy, aaInstanceHandler *handlers.AAInstanceHandler) {
+func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandler *handlers.RVPSHandler, attestationServiceHandler *handlers.AttestationServiceHandler, iamHandler *handlers.IAMHandler, auditHandler *handlers.AuditHandler, healthCheckHandler *handlers.HealthCheckHandler, p *proxy.Proxy, aaInstanceHandler *handlers.AAInstanceHandler) {
 	// KBS API routes
 	kbs := router.Group("/api/kbs/v0")
 	{
@@ -201,6 +202,13 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 	rvps := router.Group("/api/rvps")
 	{
 		rvps.Any("/*path", rvpsHandler.HandleRVPSRequest)
+	}
+
+	// IAM API routes
+	iam := router.Group("/api/iam")
+	{
+		iam.Any("", iamHandler.HandleIAMProxy)
+		iam.Any("/*path", iamHandler.HandleIAMProxy)
 	}
 
 	// Audit routes

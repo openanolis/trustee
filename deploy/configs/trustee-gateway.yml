@@ -11,6 +11,11 @@ kbs:
   insecure_http: true
   ca_cert_file: ""
 
+iam:
+  url: "http://iam:8090"
+  insecure_http: true
+  ca_cert_file: ""
+
 attestation_service:
   url: "http://as-restful:50005"
   insecure_http: true

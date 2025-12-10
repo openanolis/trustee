@@ -1,5 +1,18 @@
 version: '3.2'
 services:
+  iam:
+    build:
+      context: .
+      network: host
+      dockerfile: Dockerfile.iam
+    restart: always
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./iam/config/iam.toml:/app/config/iam.toml:ro
+    depends_on:
+      - as
+
   kbs:
     build:
       context: .
@@ -110,6 +123,7 @@ services:
     - kbs
     - as
     - rvps
+    - iam
 
   frontend:
     build:

@@ -26,14 +26,18 @@ const (
 	KBSService ServiceType = "kbs"
 	// AttestationServiceType represents the Attestation Service
 	AttestationServiceType ServiceType = "attestation-service"
+	// IAMService represents the IAM service
+	IAMService ServiceType = "iam"
 )
 
 // Proxy handles the forwarding of requests to backend services
 type Proxy struct {
 	kbsURL                *url.URL
 	attestationServiceURL *url.URL // Added URL for Attestation Service
+	iamURL                *url.URL
 	kbsClient             *http.Client
 	attestationClient     *http.Client
+	iamClient             *http.Client
 }
 
 // NewProxy creates a new proxy instance
@@ -48,6 +52,11 @@ func NewProxy(cfg *config.Config) (*Proxy, error) {
 		return nil, fmt.Errorf("invalid Attestation Service URL: %w", err)
 	}
 
+	iamURL, err := url.Parse(cfg.IAM.URL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid IAM URL: %w", err)
+	}
+
 	// Create HTTP client for KBS
 	kbsClient, err := createHTTPClient(&cfg.KBS)
 	if err != nil {
@@ -60,11 +69,18 @@ func NewProxy(cfg *config.Config) (*Proxy, error) {
 		return nil, fmt.Errorf("failed to create Attestation Service client: %w", err)
 	}
 
+	iamClient, err := createHTTPClient(&cfg.IAM)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create IAM client: %w", err)
+	}
+
 	return &Proxy{
 		kbsURL:                kbsURL,
 		attestationServiceURL: attestationServiceURL,
+		iamURL:                iamURL,
 		kbsClient:             kbsClient,
 		attestationClient:     attestationClient,
+		iamClient:             iamClient,
 	}, nil
 }
 
@@ -115,6 +131,11 @@ func (p *Proxy) ForwardToAttestationService(c *gin.Context) (*http.Response, err
 	return p.forwardRequest(c, AttestationServiceType)
 }
 
+// ForwardToIAM forwards a request to the IAM service
+func (p *Proxy) ForwardToIAM(c *gin.Context) (*http.Response, error) {
+	return p.forwardRequest(c, IAMService)
+}
+
 // RequestBodyBuffer is a buffer that records the request body while forwarding it
 type RequestBodyBuffer struct {
 	*bytes.Buffer
@@ -160,6 +181,8 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 		targetURL = p.kbsURL
 	case AttestationServiceType:
 		targetURL = p.attestationServiceURL
+	case IAMService:
+		targetURL = p.iamURL
 	default:
 		return nil, fmt.Errorf("unknown service type: %s", serviceType)
 	}
@@ -179,6 +202,11 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 			targetPath = strings.TrimPrefix(targetPath, "/api/attestation-service")
 		} else if strings.HasPrefix(targetPath, "/api/as") {
 			targetPath = strings.TrimPrefix(targetPath, "/api/as")
+		}
+	} else if serviceType == IAMService {
+		targetPath = strings.TrimPrefix(targetPath, "/api/iam")
+		if targetPath == "" {
+			targetPath = "/"
 		}
 	}
 
@@ -244,6 +272,8 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 		client = p.kbsClient
 	case AttestationServiceType:
 		client = p.attestationClient
+	case IAMService:
+		client = p.iamClient
 	default:
 		return nil, fmt.Errorf("unknown service type: %s", serviceType)
 	}

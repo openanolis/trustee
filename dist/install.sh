@@ -48,10 +48,12 @@ install -m 644 system/as.service ${BUILDROOT}${PREFIX}/lib/systemd/system/as.ser
 install -m 644 system/rvps.service ${BUILDROOT}${PREFIX}/lib/systemd/system/rvps.service
 install -m 644 system/as-restful.service ${BUILDROOT}${PREFIX}/lib/systemd/system/as-restful.service
 install -m 644 system/trustee.service ${BUILDROOT}${PREFIX}/lib/systemd/system/trustee.service
+install -m 644 system/iam.service ${BUILDROOT}${PREFIX}/lib/systemd/system/iam.service
 install -d -p ${BUILDROOT}/etc/trustee
 install -m 644 configs/kbs-config.toml ${BUILDROOT}${CONFIG_DIR}/kbs-config.toml
 install -m 644 configs/as-config.json ${BUILDROOT}${CONFIG_DIR}/as-config.json
 install -m 644 configs/rvps.json ${BUILDROOT}${CONFIG_DIR}/rvps.json
+install -m 644 configs/iam.toml ${BUILDROOT}${CONFIG_DIR}/iam.toml
 install -d -p ${BUILDROOT}${PREFIX}/bin
 install -m 755 ../target/release/kbs ${BUILDROOT}${PREFIX}/bin/kbs
 install -m 755 ../target/release/restful-as ${BUILDROOT}${PREFIX}/bin/restful-as
@@ -59,6 +61,7 @@ install -m 755 ../target/release/grpc-as ${BUILDROOT}${PREFIX}/bin/grpc-as
 install -m 755 ../target/release/rvps ${BUILDROOT}${PREFIX}/bin/rvps
 install -m 755 ../target/release/kbs-client ${BUILDROOT}${PREFIX}/bin/kbs-client
 install -m 755 ../target/release/rvps-tool ${BUILDROOT}${PREFIX}/bin/rvps-tool
+install -m 755 ../target/release/iam ${BUILDROOT}${PREFIX}/bin/iam
 install -d -p ${BUILDROOT}${PREFIX}/include
 install -d -p ${BUILDROOT}${PREFIX}/lib64
 cp intel-deps/include/sgx_* ${BUILDROOT}${PREFIX}/include/

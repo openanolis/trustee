@@ -5,6 +5,9 @@ server:
 kbs:
   url: "http://127.0.0.1:8080"
 
+iam:
+  url: "http://127.0.0.1:8090"
+
 rvps:
   grpc_addr: "127.0.0.1:50003"
 
