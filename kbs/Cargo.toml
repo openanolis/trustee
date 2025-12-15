@@ -9,6 +9,9 @@ edition.workspace = true
 [features]
 default = ["coco-as-builtin", "coco-as-grpc"]
 
+# Enable encrypted local resource backend
+encrypted-local-fs = []
+
 # Support a backend attestation service for KBS
 as = []
 

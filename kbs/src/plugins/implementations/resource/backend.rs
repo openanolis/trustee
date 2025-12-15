@@ -9,6 +9,8 @@ use regex::Regex;
 use serde::Deserialize;
 use std::fmt;
 
+#[cfg(feature = "encrypted-local-fs")]
+use super::encrypted_local_fs;
 use super::local_fs;
 
 type RepositoryInstance = Arc<dyn StorageBackend>;
@@ -75,6 +77,10 @@ impl fmt::Display for ResourceDesc {
 pub enum RepositoryConfig {
     LocalFs(local_fs::LocalFsRepoDesc),
 
+    #[cfg(feature = "encrypted-local-fs")]
+    #[serde(alias = "encrypted_local_fs", alias = "encrypted-local-fs")]
+    EncryptedLocalFs(encrypted_local_fs::EncryptedLocalFsRepoDesc),
+
     #[cfg(feature = "aliyun")]
     #[serde(alias = "aliyun")]
     Aliyun(super::aliyun_kms::AliyunKmsBackendConfig),
@@ -99,6 +105,14 @@ impl TryFrom<RepositoryConfig> for ResourceStorage {
             RepositoryConfig::LocalFs(desc) => {
                 let backend = local_fs::LocalFs::new(&desc)
                     .context("Failed to initialize Resource Storage")?;
+                Ok(Self {
+                    backend: Arc::new(backend),
+                })
+            }
+            #[cfg(feature = "encrypted-local-fs")]
+            RepositoryConfig::EncryptedLocalFs(desc) => {
+                let backend = encrypted_local_fs::EncryptedLocalFs::new(&desc)
+                    .context("Failed to initialize encrypted local Resource Storage")?;
                 Ok(Self {
                     backend: Arc::new(backend),
                 })

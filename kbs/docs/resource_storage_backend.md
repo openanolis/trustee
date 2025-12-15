@@ -21,6 +21,48 @@ defined below:
 The KBS root file system resource path is specified in the KBS config file
 as well, and the default value is `/opt/confidential-containers/kbs/repository`.
 
+### Encrypted Local File System Backend
+
+The encrypted local backend (`EncryptedLocalFs`) keeps resources on the local
+filesystem. Reads attempt to decrypt with a configured RSA private key; if the
+payload is not in the expected encrypted format, it is returned as-is
+(plaintext passthrough).
+
+**Payload format (JSON, Base64 fields)**
+```
+{
+  "alg": "RSA-OAEP-256",        # or "RSA1_5" (deprecated)
+  "enc_key": "<base64 RSA-encrypted CEK>",
+  "iv": "<base64 12-byte GCM nonce>",
+  "ciphertext": "<base64 ciphertext>",
+  "tag": "<base64 16-byte GCM tag>"
+}
+```
+
+**Encryption steps (client side)**
+1) Generate a 32-byte CEK (AES-256-GCM) and a 12-byte IV (nonce).
+2) Encrypt plaintext with AES-GCM (no AAD) to get ciphertext and a 16-byte tag.
+3) Encrypt the CEK with the RSA public key using RSA-OAEP-256 (or RSA1_5, not recommended) to get `enc_key`.
+4) Base64-encode `enc_key` / `iv` / `ciphertext` / `tag`, then store them in the JSON above as the resource file.
+5) A ready-to-use helper script is available at `kbs/sdk/python/encrypt_resource.py`.
+
+**Runtime behavior**
+- Read: If the payload parses as the JSON above, it will be decrypted; otherwise it is returned verbatim (plaintext).
+- Write: Same as `LocalFs`; no encryption is performed on write.
+
+This backend is guarded by the Cargo feature `encrypted-local-fs`. Enable it
+when building KBS to use this backend.
+
+Config example:
+
+```
+[[plugins]]
+name = "resource"
+type = "EncryptedLocalFs"
+dir_path = "/opt/confidential-containers/kbs/repository"
+private_key_path = "/etc/kbs/resource-private.pem"
+```
+
 ### Aliyun KMS
 
 [Alibaba Cloud KMS](https://www.alibabacloud.com/en/product/kms?_p_lc=1)(a.k.a Aliyun KMS)

@@ -2,6 +2,7 @@ AS_TYPE ?= coco-as
 ALIYUN ?= false
 NEBULA_CA_PLUGIN ?= false
 TPM_PCA_PLUGIN ?= false
+ENCRYPTED_LOCAL_FS ?= false
 
 BUILD_ARCH := $(shell uname -m)
 ARCH ?= $(shell uname -m)
@@ -48,6 +49,10 @@ endif
 
 ifeq ($(ALIYUN), true)
   FEATURES += aliyun
+endif
+
+ifeq ($(ENCRYPTED_LOCAL_FS), true)
+  FEATURES += encrypted-local-fs
 endif
 
 ifeq ($(NEBULA_CA_PLUGIN), true)
