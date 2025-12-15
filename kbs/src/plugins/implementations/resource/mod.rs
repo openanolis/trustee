@@ -4,6 +4,9 @@
 
 pub mod local_fs;
 
+#[cfg(feature = "encrypted-local-fs")]
+pub mod encrypted_local_fs;
+
 #[cfg(feature = "aliyun")]
 pub mod aliyun_kms;
 
