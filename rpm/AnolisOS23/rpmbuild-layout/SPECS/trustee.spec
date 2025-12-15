@@ -24,6 +24,12 @@ BuildRequires:  ca-certificates gcc golang perl-FindBin
 %description
 Trustee are daemon services for attestation and secret distribution.
 
+%package -n attestation-challenge-client
+Summary:        Challenge-mode remote attestation one-shot CLI
+
+%description -n attestation-challenge-client
+A standalone CLI that fetches evidence from attestation-agent and verifies it locally using the attestation-service library, producing an EAR token.
+
 %package -n trustee-frontend
 Summary:        Web frontend for trustee services
 Requires:       trustee = %{version}-%{release}
@@ -109,6 +115,7 @@ fi
 %{_prefix}/bin/rvps
 %{_prefix}/bin/trustee-gateway
 %{_prefix}/bin/rvps-tool
+%exclude %{_prefix}/bin/attestation-challenge-client
 %{config_dir}/kbs-config.toml
 %{config_dir}/as-config.json
 %{config_dir}/rvps.json
@@ -128,6 +135,9 @@ fi
 /etc/nginx/conf.d/trustee-frontend.conf
 %{_prefix}/lib/systemd/system/trustee-frontend.service
 %{_prefix}/bin/trustee-frontend-start
+
+%files -n attestation-challenge-client
+%{_prefix}/bin/attestation-challenge-client
 
 %changelog
 * Mon Dec 1 2025 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.7.4-1
