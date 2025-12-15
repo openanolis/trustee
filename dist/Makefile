@@ -46,6 +46,7 @@ build:
 	cargo build --bin grpc-as --release --features grpc-bin --locked
 	cargo build --bin rvps --release
 	cargo build --bin rvps-tool --release
+	cargo build --bin attestation-challenge-client --release
 	@echo "编译 trustee-gateway..."
 	@echo "编译完成"
 
@@ -88,6 +89,7 @@ install:
 	install -m 755 ../target/release/grpc-as $(BUILDROOT)$(PREFIX)/bin/grpc-as
 	install -m 755 ../target/release/rvps $(BUILDROOT)$(PREFIX)/bin/rvps
 	install -m 755 ../target/release/rvps-tool $(BUILDROOT)$(PREFIX)/bin/rvps-tool
+	install -m 755 ../target/release/attestation-challenge-client $(BUILDROOT)$(PREFIX)/bin/attestation-challenge-client
 	install -m 755 ../trustee-gateway/gateway $(BUILDROOT)$(PREFIX)/bin/trustee-gateway
 	
 	install -d -p $(BUILDROOT)$(PREFIX)/include
