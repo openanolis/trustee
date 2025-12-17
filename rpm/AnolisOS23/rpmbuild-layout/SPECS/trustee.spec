@@ -1,5 +1,7 @@
 %define alinux_release 1
 %global config_dir /etc/trustee
+%global debug_package %{nil}
+%global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
 Version:        1.7.4
