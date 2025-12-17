@@ -3,11 +3,19 @@ name: Build and Release RPM Packages
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Existing release tag (e.g. v1.2.3) to build RPMs for'
+        required: true
+        type: string
 
 jobs:
   create-build-materials:
     name: Create Build Artifacts
     runs-on: ubuntu-22.04
+    env:
+      TAG_NAME: ${{ github.event.release.tag_name || inputs.tag_name }}
     outputs:
       artifact_subjects: ${{ steps.generate-materials-hashes.outputs.subjects }}
     steps:
@@ -40,9 +48,9 @@ jobs:
         id: create-tarball
         run: |
           cd rpm/AnolisOS23
-          tar -czf build-artifacts-${{ github.event.release.tag_name }}.tar.gz -C rpmbuild-layout .
+          tar -czf build-artifacts-${{ env.TAG_NAME }}.tar.gz -C rpmbuild-layout .
           cd ..
-          tar -czf build-materials-${{ github.event.release.tag_name }}.tar.gz --exclude='AnolisOS23/rpmbuild-layout' AnolisOS23
+          tar -czf build-materials-${{ env.TAG_NAME }}.tar.gz --exclude='AnolisOS23/rpmbuild-layout' AnolisOS23
 
       - name: Generate materials hashes
         id: generate-materials-hashes
@@ -55,28 +63,31 @@ jobs:
           # Output as base64 subjects
           echo "subjects=$(base64 -w0 < "materials-hash.txt")" >> $GITHUB_OUTPUT
 
-
       - name: Upload total build materials to release
         uses: softprops/action-gh-release@v2
         with:
           fail_on_unmatched_files: true
+          overwrite_files: false
+          tag_name: ${{ env.TAG_NAME }}
           files: rpm/build-materials-*.tar.gz
 
   build-rpm:
     name: Build RPM Package
     runs-on: ubuntu-22.04
     needs: [create-build-materials]
+    env:
+      TAG_NAME: ${{ github.event.release.tag_name || inputs.tag_name }}
     steps:
       - name: Download and extract build materials from release
         run: |
           # Download the total build artifacts tarball from the release
-          build_materials_filename=build-materials-${{ github.event.release.tag_name }}.tar.gz
-          wget -O ${build_materials_filename} "https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/${build_materials_filename}"
+          build_materials_filename=build-materials-${{ env.TAG_NAME }}.tar.gz
+          wget -O ${build_materials_filename} "https://github.com/${{ github.repository }}/releases/download/${{ env.TAG_NAME }}/${build_materials_filename}"
           tar -xzf ${build_materials_filename}
       - name: Build builder image
         run: |
           cd AnolisOS23
-          docker build -t rpm-builder:${{ github.event.release.tag_name }} .
+          docker build -t rpm-builder:${{ env.TAG_NAME }} .
       - name: Build RPM using builder image
         run: |
           cd AnolisOS23
@@ -84,8 +95,8 @@ jobs:
           docker run --rm \
             -v "$PWD:/input" \
             -v "$PWD/rpm-out:/output" \
-            rpm-builder:${{ github.event.release.tag_name }} \
-            build-artifacts-${{ github.event.release.tag_name }}.tar.gz
+            rpm-builder:${{ env.TAG_NAME }} \
+            build-artifacts-${{ env.TAG_NAME }}.tar.gz
       - name: Upload RPM packages
         uses: actions/upload-artifact@v4
         with:
@@ -176,6 +187,8 @@ jobs:
     name: Publish RPMs
     runs-on: ubuntu-22.04
     needs: [create-build-materials, build-rpm]
+    env:
+      TAG_NAME: ${{ github.event.release.tag_name || inputs.tag_name }}
     outputs:
       package_subjects: ${{ steps.generate-hashes.outputs.subjects }}
     steps:
@@ -203,6 +216,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           fail_on_unmatched_files: true
+          overwrite_files: false
+          tag_name: ${{ env.TAG_NAME }}
           files: |
             rpm-packages/SRPMS/*.src.rpm
             rpm-packages/RPMS/*/*.rpm
@@ -274,6 +289,8 @@ jobs:
     name: Upload Provenance to Rekor
     runs-on: ubuntu-22.04
     needs: [provenance]
+    env:
+      TAG_NAME: ${{ github.event.release.tag_name || inputs.tag_name }}
     steps:
       - name: Download provenance files from release
         run: |
@@ -285,7 +302,7 @@ jobs:
           
           # Get release assets using GitHub API
           assets_url=$(curl -s \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.release.tag_name }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ env.TAG_NAME }}" \
             | jq -r '.assets[] | select(.name | endswith(".intoto.jsonl")) | .browser_download_url')
           
           # Download each .intoto.jsonl file
