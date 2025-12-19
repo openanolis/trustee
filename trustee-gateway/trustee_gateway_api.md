@@ -1742,11 +1742,17 @@ from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 def sign_jwt(key_path):
     with open(key_path, 'rb') as f: key = load_pem_private_key(f.read(), None)
-    now = datetime.datetime.utcnow()
-    return jwt.encode({
-        'iat': int(now.timestamp()),
-        'exp': int((now + datetime.timedelta(hours=2)).timestamp())
-    }, key, algorithm='EdDSA')
+    now = datetime.datetime.now(datetime.timezone.utc)
+    token = jwt.encode(
+        {
+            'iat': int(now.timestamp()),
+            'exp': int((now + datetime.timedelta(hours=2)).timestamp()),
+        },
+        key,
+        algorithm='EdDSA',
+    )
+    # PyJWT 1.x returns bytes; 2.x returns str
+    return token.decode('utf-8') if isinstance(token, (bytes, bytearray)) else token
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
@@ -1757,3 +1763,4 @@ if __name__ == '__main__':
     except Exception as e:
         print(f'Error: {e}')
         sys.exit(1)
+```
