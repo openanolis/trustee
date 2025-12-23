@@ -187,6 +187,7 @@ impl AttestationService for Arc<RwLock<AttestationServer>> {
                 runtime_data,
                 runtime_data_hash_algorithm,
                 init_data,
+                additional_data: Some(verification_request.additional_data),
             });
         }
         let policy_ids = match request.policy_ids.is_empty() {

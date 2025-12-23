@@ -14,6 +14,7 @@ use crate::config::DEFAULT_WORK_DIR;
 
 pub mod ear_broker;
 pub mod simple;
+pub mod oidc;
 
 pub const DEFAULT_TOKEN_DURATION: i64 = 5;
 pub const COCO_AS_ISSUER_NAME: &str = "CoCo-Attestation-Service";
@@ -53,6 +54,7 @@ pub trait AttestationTokenBroker: Send + Sync {
 pub enum AttestationTokenConfig {
     Simple(simple::Configuration),
     Ear(ear_broker::Configuration),
+    OIDC(oidc::Configuration),
 }
 
 impl Default for AttestationTokenConfig {
@@ -70,6 +72,10 @@ impl AttestationTokenConfig {
                 as Box<dyn AttestationTokenBroker + Send + Sync>),
             AttestationTokenConfig::Ear(cfg) => Ok(Box::new(
                 ear_broker::EarAttestationTokenBroker::new(cfg.clone())?,
+            )
+                as Box<dyn AttestationTokenBroker + Send + Sync>),
+            AttestationTokenConfig::OIDC(cfg) => Ok(Box::new(
+                oidc::OIDCAttestationTokenBroker::new(cfg.clone())?,
             )
                 as Box<dyn AttestationTokenBroker + Send + Sync>),
         }

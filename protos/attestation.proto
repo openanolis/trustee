@@ -70,6 +70,8 @@ message IndividualAttestationRequest {
     // Hash algorithm used to calculate runtime data. Currently can be "sha256",
     // "sha384" or "sha512". If not specified, "sha384" will be selected.
     string runtime_data_hash_algorithm = 8;
+
+    string additional_data = 9;
 }
 
 message AttestationResponse {
