@@ -64,11 +64,44 @@ attestation-challenge-client verify \
 - 默认打印 EAR JWT
 - 若加 `--claims`，随后会打印 payload 的 JSON（不再校验签名，只做展示）
 
+## 设置参考值（set-reference-value）
+`attestation-challenge-client` 也可以在本地调用内置 RVPS 注册参考值，常见场景是先把可信来源生成的 provenance（或 sample 格式）写入本地 RVPS，再执行 `verify`。
+
+命令入口：
+```bash
+attestation-challenge-client set-reference-value --provenance-type <slsa|sample> [args...]
+```
+
+### SLSA 模式
+```bash
+attestation-challenge-client set-reference-value \
+  --provenance-type slsa \
+  --artifact-type <artifact_type> \
+  --artifact-name <artifact_name> \
+  [--rekor-url https://rekor.sigstore.dev]
+```
+- 逻辑：对 `artifact-name` 做 sha256 作为索引，查询 Rekor intoto 条目，过滤并提取 SLSA provenance (包含度量参考值)，组装为 RVPS 能识别的 message 后注册。
+- `--rekor-url` 可选，默认 `https://rekor.sigstore.dev`。
+
+### Sample 模式
+```bash
+attestation-challenge-client set-reference-value \
+  --provenance-type sample \
+  --payload /path/to/payload.json
+```
+- 逻辑：直接读取 `payload.json`（需符合 RVPS sample extractor 格式），封装为 RVPS message 后注册。
+
+注册成功后，内置 RVPS 会持久化到 `/var/lib/attestation/reference_values.json`，后续 `verify` 会使用这些参考值。
+
+
 ## 典型流程
 1. 在机密虚拟机TEE内启动 `api-server-rest`（确保可通过本地或端口转发访问）
-2. 准备挑战值/nonce，调用 `get-evidence` 获取 `evidence.json`
-3. 在验证端运行 `verify`，指定相同的 runtime data 与正确的 `--tee`，得到 EAR 令牌
-4. 如需查看令牌内容，加 `--claims` 直接展示 payload
+2. 准备挑战值/nonce，调用 `get-evidence` 获取 `evidence.json` 
+3.（可选）先向本地 RVPS 注册参考值：
+   - SLSA：`attestation-challenge-client set-reference-value --provenance-type slsa --artifact-type <type> --artifact-name <name> [--rekor-url ...]`
+   - Sample：`attestation-challenge-client set-reference-value --provenance-type sample --payload /path/to/payload.json`
+4. 在验证端运行 `verify`，指定相同的 runtime data 与正确的 `--tee`，得到 EAR 令牌
+5. 如需查看令牌内容，加 `--claims` 直接展示 payload
 
 ## 注意事项
 - 证据文件应为 JSON 文本；如果内容格式异常，验证会直接返回错误。
