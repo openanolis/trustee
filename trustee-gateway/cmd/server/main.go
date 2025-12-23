@@ -176,6 +176,8 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 		attestationSvc.POST("/attestation", attestationServiceHandler.HandleAttestation)
 		attestationSvc.POST("/challenge", attestationServiceHandler.HandleGeneralRequest)
 		attestationSvc.GET("/certificate", attestationServiceHandler.HandleGeneralRequest)
+		attestationSvc.GET("/jwks", attestationServiceHandler.HandleGeneralRequest)
+		attestationSvc.GET("/.well-known/openid-configuration", attestationServiceHandler.HandleGeneralRequest)
 
 		// Policy routes
 		attestationSvc.POST("/policy", attestationServiceHandler.HandleSetAttestationPolicy)
@@ -190,6 +192,8 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 		as.POST("/attestation", attestationServiceHandler.HandleAttestation)
 		as.POST("/challenge", attestationServiceHandler.HandleGeneralRequest)
 		as.GET("/certificate", attestationServiceHandler.HandleGeneralRequest)
+		as.GET("/jwks", attestationServiceHandler.HandleGeneralRequest)
+		as.GET("/.well-known/openid-configuration", attestationServiceHandler.HandleGeneralRequest)
 
 		// Policy routes
 		as.POST("/policy", attestationServiceHandler.HandleSetAttestationPolicy)

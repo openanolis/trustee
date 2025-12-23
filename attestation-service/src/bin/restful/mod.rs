@@ -85,6 +85,7 @@ pub struct IndividualAttestationRequest {
     runtime_data: Option<RuntimeData>,
     init_data: Option<InitDataInput>,
     runtime_data_hash_algorithm: Option<String>,
+    additional_data: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -216,6 +217,7 @@ pub async fn attestation(
             runtime_data,
             runtime_data_hash_algorithm,
             init_data,
+            additional_data: attestation_request.additional_data,
         });
     }
 
@@ -381,6 +383,58 @@ pub async fn get_certificate(
             error!("Failed to get certificate: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Failed to get certificate: {}", e)
+            }))
+        }
+    }
+}
+
+pub async fn get_jwks(
+    attestation_service: web::Data<Arc<RwLock<AttestationService>>>,
+) -> impl Responder {
+    let service = attestation_service.read().await;
+    match service.get_token_broker_public_key().await {
+        Ok(Some(public_key_content)) => {
+            // Return certificate content
+            HttpResponse::Ok()
+                .content_type("application/json")
+                .body(public_key_content)
+        }
+        Ok(None) => {
+            // No certificate configured
+            HttpResponse::NotFound().json(serde_json::json!({
+                "error": "No public key configured"
+            }))
+        }
+        Err(e) => {
+            error!("Failed to get public key: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to get public key: {}", e)
+            }))
+        }
+    }
+}
+
+pub async fn get_openid_configuration(
+    attestation_service: web::Data<Arc<RwLock<AttestationService>>>,
+) -> impl Responder {
+    let service = attestation_service.read().await;
+    match service.get_token_broker_oid_config().await {
+        Ok(Some(oid_config_content)) => {
+            // Return certificate content
+            HttpResponse::Ok()
+                .content_type("application/json")
+                .body(oid_config_content)
+        }
+        Ok(None) => {
+            // No certificate configured
+            HttpResponse::NotFound().json(serde_json::json!({
+                "error": "No OpenId config configured"
+            }))
+        }
+        Err(e) => {
+            error!("Failed to get OpenID config: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to get OpenID config: {}", e)
             }))
         }
     }

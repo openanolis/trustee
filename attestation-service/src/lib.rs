@@ -12,13 +12,17 @@ pub mod token;
 use crate::token::AttestationTokenBroker;
 
 use anyhow::{anyhow, bail, Context, Result};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use canon_json::CanonicalFormatter;
 use config::Config;
 pub use kbs_types::{Attestation, Tee};
 use log::{debug, info};
+use openssl::rsa::Rsa;
 use reqwest::Client;
 use rvps::{RvpsApi, RvpsError};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 pub use serde_json::Value;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::collections::HashMap;
@@ -85,6 +89,7 @@ pub struct TeeClaims {
     claims: TeeEvidenceParsedClaim,
     init_data_claims: serde_json::Value,
     runtime_data_claims: serde_json::Value,
+    additional_data: serde_json::Value,
 }
 
 /// Runtime Data used to check the binding relationship with report data
@@ -160,12 +165,20 @@ pub struct VerificationRequest {
     /// The concrete way of checking is decide by the enum type. If this parameter is set `None`, the comparation
     /// will not be performed.
     pub init_data: Option<InitDataInput>,
+    pub additional_data: Option<String>,
 }
 
 pub struct AttestationService {
     _config: Config,
     rvps: Box<dyn RvpsApi + Send + Sync>,
     token_broker: Box<dyn AttestationTokenBroker + Send + Sync>,
+}
+
+#[derive(serde::Serialize, Debug, Clone)]
+struct Jwk {
+    kty: String,
+    n: String,
+    e: String,
 }
 
 impl AttestationService {
@@ -268,12 +281,21 @@ impl AttestationService {
                 verification_request.tee
             );
 
+            let additional_data: Value = match verification_request.additional_data {
+                Some(ad) => match serde_json::from_str::<Value>(&ad) {
+                    Ok(v) => v,
+                    Err(_) => Value::String(ad),
+                },
+                None => Value::Null,
+            };
+
             tee_claims.push(TeeClaims {
                 tee: verification_request.tee,
                 tee_class,
                 claims: claims_from_tee_evidence,
                 init_data_claims,
                 runtime_data_claims,
+                additional_data,
             });
         }
 
@@ -368,6 +390,14 @@ impl AttestationService {
                     Ok(None)
                 }
             }
+            token::AttestationTokenConfig::OIDC(cfg) => {
+                if let Some(signer) = &cfg.signer {
+                    self.get_cert_content(signer.cert_path.as_deref(), signer.cert_url.as_deref())
+                        .await
+                } else {
+                    Ok(None)
+                }
+            }
         }
     }
 
@@ -409,6 +439,64 @@ impl AttestationService {
             Ok(Some(content.to_vec()))
         } else {
             Ok(None)
+        }
+    }
+
+    pub async fn get_token_broker_public_key(&self) -> Result<Option<String>> {
+        match &self._config.attestation_token_broker {
+            token::AttestationTokenConfig::Simple(_) => {
+                Ok(None)
+            }
+            token::AttestationTokenConfig::Ear(_) => {
+                Ok(None)
+            }
+            token::AttestationTokenConfig::OIDC(cfg) => {
+                if let Some(signer) = &cfg.signer {
+                    let pem_data = std::fs::read(&signer.key_path)
+                        .map_err(|e| anyhow!("Read Token Signer private key failed: {:?}", e))?;
+                    let private_key = Rsa::private_key_from_pem(&pem_data)?;
+                    let n = private_key.n().to_vec();
+                    let e = private_key.e().to_vec();
+
+                    let jwk = Jwk {
+                        kty: "RSA".to_string(),
+                        n: URL_SAFE_NO_PAD.encode(n),
+                        e: URL_SAFE_NO_PAD.encode(e),
+                    };
+
+                    let jwks = json!({
+                        "keys": vec![jwk],
+                    });
+
+                    Ok(Some(serde_json::to_string(&jwks)?))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
+
+    pub async fn get_token_broker_oid_config(&self) -> Result<Option<String>> {
+        match &self._config.attestation_token_broker {
+            token::AttestationTokenConfig::Simple(_) => {
+                Ok(None)
+            }
+            token::AttestationTokenConfig::Ear(_) => {
+                Ok(None)
+            }
+            token::AttestationTokenConfig::OIDC(cfg) => {
+                if let Some(oid_config) = &cfg.oid_config {
+                    let oid_info = json!({
+                        "issuer": oid_config.issuer,
+                        "jwks_uri": oid_config.jwks_uri,
+                        "id_token_signing_alg_values_supported": oid_config.id_token_signing_alg_values_supported
+                    });
+
+                    Ok(Some(serde_json::to_string(&oid_info)?))
+                } else {
+                    Ok(None)
+                }
+            }
         }
     }
 }
