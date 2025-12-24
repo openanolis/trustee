@@ -235,6 +235,10 @@ impl Extractor for SlsaExtractor {
             .and_then(|t| t.checked_add_months(Months::new(12)))
             .ok_or_else(|| anyhow!("failed to compute expiration time"))?;
 
+        // Try to derive an artifact version identifier from the provenance documents.
+        // If we cannot determine it, keep it empty (None).
+        let artifact_version = extract_artifact_version_from_provenance(&envelope.slsa_provenance);
+
         let mut rvs = Vec::new();
         for subject in subjects {
             // Skip subjects without digest entries to avoid empty reference values.
@@ -249,7 +253,12 @@ impl Extractor for SlsaExtractor {
                 .set_audit_proof(envelope.audit_proof.clone());
 
             for (alg, value) in subject.digest.iter() {
-                rv = rv.add_hash_value(alg.to_string(), value.to_string());
+                rv = rv.add_hash_value_with_meta(
+                    alg.to_string(),
+                    value.to_string(),
+                    artifact_version.clone(),
+                    envelope.audit_proof.clone(),
+                );
             }
 
             rvs.push(rv);
@@ -261,6 +270,49 @@ impl Extractor for SlsaExtractor {
 
         Ok(rvs)
     }
+}
+
+fn extract_artifact_version_from_provenance(docs: &[String]) -> Option<String> {
+    for raw in docs {
+        // Accept raw JSON or base64-wrapped JSON.
+        let slsa_str = match base64::engine::general_purpose::STANDARD.decode(raw) {
+            Ok(bytes) => String::from_utf8(bytes).unwrap_or_else(|_| raw.to_string()),
+            Err(_) => raw.to_string(),
+        };
+
+        let v: serde_json::Value = match serde_json::from_str(&slsa_str) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Use commit id as artifact version.
+        // Note: We intentionally avoid using refs/tags/heads as they can be rewritten or ambiguous.
+        let commit_paths = [
+            // SLSA: configSource digest (Git commit)
+            "/predicate/invocation/configSource/digest/sha1",
+            "/predicate/invocation/configSource/digest/sha",
+            // SLSA: materials digest (Git commit)
+            "/predicate/materials/0/digest/sha1",
+            "/predicate/materials/0/digest/sha",
+            // GitHub Actions env (commonly present in slsa-github-generator payload)
+            "/predicate/invocation/environment/github_sha",
+            "/predicate/invocation/environment/github_sha1",
+            // GitHub event payload (push/tag events)
+            "/predicate/invocation/environment/github_event_payload/head_commit/id",
+            "/predicate/invocation/environment/github_event_payload/commits/0/id",
+            "/predicate/invocation/environment/github_event_payload/after",
+        ];
+        for p in commit_paths {
+            if let Some(s) = v.pointer(p).and_then(|x| x.as_str()) {
+                let s = s.trim();
+                if !s.is_empty() {
+                    return Some(s.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Select a preferred digest (sha256 if present, otherwise first available).

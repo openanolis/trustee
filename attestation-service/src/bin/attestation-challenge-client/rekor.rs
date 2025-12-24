@@ -197,7 +197,8 @@ fn extract_slsa_from_entry(entry: &Value) -> Result<String> {
     let decoded = BASE64_STANDARD
         .decode(body_b64)
         .context("decode Rekor entry body")?;
-    let body_json: Value = serde_json::from_slice(&decoded).context("parse Rekor entry body as json")?;
+    let body_json: Value =
+        serde_json::from_slice(&decoded).context("parse Rekor entry body as json")?;
 
     let kind = body_json
         .get("kind")
@@ -219,7 +220,8 @@ fn extract_slsa_from_entry(entry: &Value) -> Result<String> {
     let payload_str =
         String::from_utf8(payload_bytes).context("intoto DSSE payload is not valid UTF-8")?;
 
-    let payload_json: Value = serde_json::from_str(&payload_str).context("parse intoto payload as json")?;
+    let payload_json: Value =
+        serde_json::from_str(&payload_str).context("parse intoto payload as json")?;
     validate_slsa_payload(&payload_json)?;
 
     if let Some(statement_type) = payload_json.get("_type").and_then(|v| v.as_str()) {
