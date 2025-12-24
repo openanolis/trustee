@@ -176,7 +176,11 @@ impl SlsaExtractor {
 
             // Basic SLSA statement checks to guard obviously malformed provenance.
             if let Some(st) = &slsa.statement_type {
-                if st != "https://in-toto.io/Statement/v1" {
+                // Rekor may return in-toto Statement v0.1 for SLSA v0.2 provenance.
+                // Accept both v0.1 and v1.
+                if st != "https://in-toto.io/Statement/v1"
+                    && st != "https://in-toto.io/Statement/v0.1"
+                {
                     return Err(anyhow!("unexpected statement _type: {st}"));
                 }
             }

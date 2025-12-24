@@ -92,6 +92,7 @@ pub enum Commands {
             ArgGroup::new("slsa_args")
                 .args(["artifact_type", "artifact_name", "rekor_url"])
                 .requires_all(&["artifact_type", "artifact_name"])
+                .multiple(true)
         ),
         group(ArgGroup::new("sample_args").args(["payload"]).requires_all(&["payload"]))
     )]

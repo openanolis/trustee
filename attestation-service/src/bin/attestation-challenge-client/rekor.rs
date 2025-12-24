@@ -46,8 +46,8 @@ impl RekorClient {
         let mut seen = HashSet::new();
         let mut last_error: Option<anyhow::Error> = None;
 
-        for body in bodies {
-            match extract_slsa_from_entry(&body) {
+        for entry in bodies {
+            match extract_slsa_from_entry(&entry) {
                 Ok(doc) => {
                     if seen.insert(doc.clone()) {
                         slsa_docs.push(doc);
@@ -92,16 +92,20 @@ impl RekorClient {
         parse_uuid_list(parsed)
     }
 
-    async fn retrieve_entries(&self, uuids: &[String]) -> Result<Vec<String>> {
+    async fn retrieve_entries(&self, uuids: &[String]) -> Result<Vec<Value>> {
         if uuids.is_empty() {
             return Ok(Vec::new());
         }
+
+        debug!("Retrieving Rekor entries for uuids: {uuids:?}");
 
         let url = format!("{}/api/v1/log/entries/retrieve", self.base);
         let resp = self
             .http
             .post(url)
-            .json(&serde_json::json!({ "uuids": uuids }))
+            // Rekor expects `entryUUIDs` in request body. Using the wrong field name (e.g. `uuids`)
+            // may return `[]` with HTTP 200, which then fails parsing downstream.
+            .json(&serde_json::json!({ "entryUUIDs": uuids }))
             .send()
             .await
             .context("send Rekor entries retrieve request")?;
@@ -112,21 +116,36 @@ impl RekorClient {
             bail!("Rekor entries query failed, HTTP {status}: {text}");
         }
 
-        let parsed: Value = serde_json::from_str(&text).context("parse Rekor entries response")?;
-        let entries = parsed
-            .as_object()
-            .ok_or_else(|| anyhow!("unexpected Rekor entries response format"))?;
+        debug!("Rekor entries response: {text}");
 
-        let mut bodies = Vec::new();
-        for (uuid, entry) in entries {
-            let body = entry
-                .get("body")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Rekor entry {uuid} missing body field"))?;
-            bodies.push(body.to_string());
+        let parsed: Value = serde_json::from_str(&text).context("parse Rekor entries response")?;
+        // Rekor may return either:
+        // - an object map: { "<uuid>": { ... }, ... }
+        // - or an array of such objects: [ { "<uuid>": { ... } }, ... ]
+        let entries_obj = if let Some(obj) = parsed.as_object() {
+            obj.clone()
+        } else if let Some(arr) = parsed.as_array() {
+            let mut merged = serde_json::Map::new();
+            for item in arr {
+                let obj = item
+                    .as_object()
+                    .ok_or_else(|| anyhow!("unexpected Rekor entries response format"))?;
+                for (k, v) in obj {
+                    merged.insert(k.clone(), v.clone());
+                }
+            }
+            merged
+        } else {
+            return Err(anyhow!("unexpected Rekor entries response format"));
+        };
+
+        let mut entries_out = Vec::new();
+        for (_uuid, entry) in entries_obj {
+            // Keep the full entry so we can parse either `attestation.data` or `body`.
+            entries_out.push(entry);
         }
 
-        Ok(bodies)
+        Ok(entries_out)
     }
 }
 
@@ -155,12 +174,30 @@ fn parse_uuid_list(value: Value) -> Result<Vec<String>> {
     bail!("Failed to parse Rekor index response: {value}");
 }
 
-fn extract_slsa_from_entry(body_b64: &str) -> Result<String> {
+fn extract_slsa_from_entry(entry: &Value) -> Result<String> {
+    // Newer Rekor responses may include the in-toto Statement directly in `attestation.data`.
+    // This is base64(UTF-8 JSON). Prefer this path when present.
+    if let Some(data_b64) = entry.pointer("/attestation/data").and_then(|v| v.as_str()) {
+        let decoded = BASE64_STANDARD
+            .decode(data_b64)
+            .context("decode Rekor entry attestation.data")?;
+        let payload_str =
+            String::from_utf8(decoded).context("attestation.data is not valid UTF-8")?;
+        let payload_json: Value =
+            serde_json::from_str(&payload_str).context("parse attestation.data as json")?;
+        validate_slsa_payload(&payload_json)?;
+        return Ok(payload_str);
+    }
+
+    let body_b64 = entry
+        .get("body")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("Rekor entry missing body field"))?;
+
     let decoded = BASE64_STANDARD
         .decode(body_b64)
         .context("decode Rekor entry body")?;
-    let body_json: Value =
-        serde_json::from_slice(&decoded).context("parse Rekor entry body as json")?;
+    let body_json: Value = serde_json::from_slice(&decoded).context("parse Rekor entry body as json")?;
 
     let kind = body_json
         .get("kind")
@@ -182,8 +219,17 @@ fn extract_slsa_from_entry(body_b64: &str) -> Result<String> {
     let payload_str =
         String::from_utf8(payload_bytes).context("intoto DSSE payload is not valid UTF-8")?;
 
-    let payload_json: Value =
-        serde_json::from_str(&payload_str).context("parse intoto payload as json")?;
+    let payload_json: Value = serde_json::from_str(&payload_str).context("parse intoto payload as json")?;
+    validate_slsa_payload(&payload_json)?;
+
+    if let Some(statement_type) = payload_json.get("_type").and_then(|v| v.as_str()) {
+        debug!("intoto statement type: {statement_type}");
+    }
+
+    Ok(payload_str)
+}
+
+fn validate_slsa_payload(payload_json: &Value) -> Result<()> {
     let predicate_type = payload_json
         .get("predicateType")
         .and_then(|v| v.as_str())
@@ -191,10 +237,5 @@ fn extract_slsa_from_entry(body_b64: &str) -> Result<String> {
     if !predicate_type.to_lowercase().contains("slsa") {
         bail!("intoto predicateType `{predicate_type}` is not SLSA");
     }
-
-    if let Some(statement_type) = payload_json.get("_type").and_then(|v| v.as_str()) {
-        debug!("intoto statement type: {statement_type}");
-    }
-
-    Ok(payload_str)
+    Ok(())
 }
