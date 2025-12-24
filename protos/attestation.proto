@@ -71,7 +71,9 @@ message IndividualAttestationRequest {
     // "sha384" or "sha512". If not specified, "sha384" will be selected.
     string runtime_data_hash_algorithm = 8;
 
-    string additional_data = 9;
+    oneof additional_data {
+        string additional_data_string = 9;
+    }
 }
 
 message AttestationResponse {
