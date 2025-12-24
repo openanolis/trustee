@@ -20,11 +20,39 @@ pub const REFERENCE_VALUE_VERSION: &str = "0.1.0";
 pub struct HashValuePair {
     alg: String,
     value: String,
+    /// Optional artifact version identifier for this digest entry.
+    /// For example: a git tag/commit, or a package version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    artifact_version: Option<String>,
+    /// Optional audit proof attached for this specific digest entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    audit_proof: Option<AuditProof>,
 }
 
 impl HashValuePair {
     pub fn new(alg: String, value: String) -> Self {
-        Self { alg, value }
+        Self {
+            alg,
+            value,
+            artifact_version: None,
+            audit_proof: None,
+        }
+    }
+
+    pub fn new_with_meta(
+        alg: String,
+        value: String,
+        artifact_version: Option<String>,
+        audit_proof: Option<AuditProof>,
+    ) -> Self {
+        Self {
+            alg,
+            value,
+            artifact_version,
+            audit_proof,
+        }
     }
 
     pub fn alg(&self) -> &String {
@@ -33,6 +61,14 @@ impl HashValuePair {
 
     pub fn value(&self) -> &String {
         &self.value
+    }
+
+    pub fn artifact_version(&self) -> Option<&String> {
+        self.artifact_version.as_ref()
+    }
+
+    pub fn audit_proof(&self) -> Option<&AuditProof> {
+        self.audit_proof.as_ref()
     }
 }
 
@@ -140,6 +176,23 @@ impl ReferenceValue {
     /// Set hash value of the ReferenceValue.
     pub fn add_hash_value(mut self, alg: String, value: String) -> Self {
         self.hash_value.push(HashValuePair::new(alg, value));
+        self
+    }
+
+    /// Add hash value with per-digest metadata.
+    pub fn add_hash_value_with_meta(
+        mut self,
+        alg: String,
+        value: String,
+        artifact_version: Option<String>,
+        audit_proof: Option<AuditProof>,
+    ) -> Self {
+        self.hash_value.push(HashValuePair::new_with_meta(
+            alg,
+            value,
+            artifact_version,
+            audit_proof,
+        ));
         self
     }
 
