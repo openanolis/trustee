@@ -139,10 +139,10 @@ impl OIDCAttestationTokenBroker {
     pub fn new(config: Configuration) -> Result<Self> {
         let policy_engine = PolicyEngineType::OPA.to_policy_engine(
             Path::new(&config.policy_dir),
-            include_str!("oidc_default_policy.rego"),
+            include_str!("ear_default_policy_cpu.rego"),
             "default.rego",
         )?;
-        info!("Loading default AS policy \"oidc_default_policy.rego\"");
+        info!("Loading default AS policy \"ear_default_policy_cpu.rego\"");
 
         if config.signer.is_none() {
             log::info!("No Token Signer key in config file, create an ephemeral key and without CA pubkey cert");
