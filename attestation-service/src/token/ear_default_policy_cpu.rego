@@ -160,11 +160,28 @@ validate_aael_file_measurements(uefi_event_logs) if {
 	}
 }
 
+# Function to check the AI model measurements from Measurement_tool integrity
+validate_aael_model_measurements(uefi_event_logs) if {
+	aael := [e |
+		e := uefi_event_logs[_]
+		e.type_name == "EV_EVENT_TAG"
+		e.details.unicode_name == "AAEL"
+		e.details.data.domain == "ai_model"
+	]
+	every e in aael {
+		key := sprintf("measurement.%s.%s", [e.details.data.domain, e.details.data.operation])
+		e.details.data.content in data.reference[key]
+	}
+}
+
 ##### TDX
 
 executables := 3 if {
 	# Check the kernel, initrd, shim and grub measurements for any supported algorithm
 	validate_boot_measurements_uefi_event_log(input.tdx.uefi_event_logs)
+
+	# Check AI model measurement
+	# validate_aael_model_measurements(input.tdx.uefi_event_logs)
 }
 
 hardware := 2 if {
@@ -205,6 +222,9 @@ file_system := 2 if {
 executables := 3 if {
 	# Check the kernel, initrd, shim and grub measurements for any supported algorithm
 	validate_boot_measurements(input.tpm)
+
+	# Check AI model measurement
+	# validate_aael_model_measurements(input.tdx.uefi_event_logs)
 }
 
 hardware := 2 if {
@@ -241,6 +261,9 @@ file_system := 2 if {
 executables := 3 if {
 	# Check the kernel, initrd, shim and grub measurements
 	validate_boot_measurements_uefi_event_log(input.csv.uefi_event_logs)
+
+	# Check AI model measurement
+	# validate_aael_model_measurements(input.tdx.uefi_event_logs)
 }
 
 # Check cryptpilot config. Uncomment this due to your need
