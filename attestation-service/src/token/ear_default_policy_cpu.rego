@@ -34,7 +34,7 @@ default file_system := 35
 
 # Generic function to validate measurements for any platform and algorithm
 validate_boot_measurements(measurements_data) if {
-	some algorithm in {"SHA1", "SHA256", "SHA384"}
+	some algorithm in {"SHA-1", "SHA-256", "SHA-384"}
 	components := ["grub", "shim", "initrd", "kernel"]
 	every component in components {
 		measurement_key := sprintf("measurement.%s.%s", [component, algorithm])
@@ -44,7 +44,7 @@ validate_boot_measurements(measurements_data) if {
 
 # Generic function to validate kernel cmdline for any platform and algorithm
 validate_kernel_cmdline(measurements_data, cmdline_data) if {
-	some algorithm in {"SHA1", "SHA256", "SHA384"}
+	some algorithm in {"SHA-1", "SHA-256", "SHA-384"}
 	measurement_key := sprintf("measurement.kernel_cmdline.%s", [algorithm])
 	measurements_data[measurement_key] in data.reference[measurement_key]
 }
