@@ -1,3 +1,4 @@
+{{- $policyConfigMap := default (default "attestation-service-policy" .Values.asPolicy.configMapName) .Values.asPolicy.existingConfigMap }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,6 +22,21 @@ spec:
         app: attestation-service-restful
         {{- include "coco-kbs.selectorLabels" . | nindent 8 }}
     spec:
+      initContainers:
+        - name: init-as-policy
+          image: alpine:3.20
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              mkdir -p /opt/confidential-containers/attestation-service/token/ear/policies/opa
+              cp /tmp/policy-default/default.rego /opt/confidential-containers/attestation-service/token/ear/policies/opa/default.rego
+          volumeMounts:
+            - name: policy
+              mountPath: /opt/confidential-containers/attestation-service/token/ear/policies/opa
+            - name: policy-default
+              mountPath: /tmp/policy-default
       {{- with .Values.asrestful.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -61,7 +77,7 @@ spec:
             - name: sgx-config
               mountPath: /etc/sgx-config
             - name: policy
-              mountPath: /opt/confidential-containers/attestation-service/opa
+              mountPath: /opt/confidential-containers/attestation-service/token/ear/policies/opa
       dnsConfig:
         nameservers:
           - 100.100.2.136
@@ -93,6 +109,9 @@ spec:
             name: sgx-config
         - name: policy
           emptyDir: {}
+        - name: policy-default
+          configMap:
+            name: {{ $policyConfigMap }}
       {{- with .Values.asrestful.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

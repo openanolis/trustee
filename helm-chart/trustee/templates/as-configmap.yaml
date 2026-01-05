@@ -22,7 +22,8 @@ data:
         },
         "attestation_token_broker": {
             "type": "Ear",
-            "duration_min": 5
+            "duration_min": 5,
+            "policy_dir": "/opt/confidential-containers/attestation-service/token/ear/policies"
         }
     }
 
