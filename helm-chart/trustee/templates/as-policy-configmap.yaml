@@ -1,0 +1,17 @@
+{{- if not .Values.asPolicy.existingConfigMap }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ default "attestation-service-policy" .Values.asPolicy.configMapName }}
+  labels:
+    {{- include "coco-kbs.labels" . | nindent 4 }}
+data:
+  # Default policy for attestation-service (EAR token)
+  default.rego: |
+{{- if .Values.asPolicy.defaultPolicy }}
+{{ .Values.asPolicy.defaultPolicy | nindent 4 }}
+{{- else }}
+{{ .Files.Get "files/ear_default_policy_cpu.rego" | nindent 4 }}
+{{- end }}
+{{- end }}
+
