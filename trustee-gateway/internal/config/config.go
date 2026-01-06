@@ -45,11 +45,21 @@ type RVPSConfig struct {
 
 // DatabaseConfig holds database configuration
 type DatabaseConfig struct {
-	Type                   string `mapstructure:"type"`
-	Path                   string `mapstructure:"path"`
+	Type string `mapstructure:"type"` // "sqlite" or "mysql"
+
+	// SQLite configuration
+	Path                   string `mapstructure:"path"` // SQLite file path
 	UseMemory              bool   `mapstructure:"use_memory"`
 	BackupInterval         string `mapstructure:"backup_interval"`
 	EnableBackupOnShutdown bool   `mapstructure:"enable_backup_on_shutdown"`
+
+	// MySQL configuration using DSN (Data Source Name) URL
+	// Format: user:password@tcp(host:port)/dbname?charset=utf8mb4&parseTime=True&loc=Local
+	// Example: root:123456@tcp(localhost:3306)/trustee_gateway?charset=utf8mb4&parseTime=True&loc=Local
+	DSN             string `mapstructure:"dsn"`
+	MaxOpenConns    int    `mapstructure:"max_open_conns"`
+	MaxIdleConns    int    `mapstructure:"max_idle_conns"`
+	ConnMaxLifetime string `mapstructure:"conn_max_lifetime"`
 }
 
 // LoggingConfig holds logging configuration
@@ -85,6 +95,11 @@ func LoadConfig(configPath string) (*Config, error) {
 	viper.SetDefault("database.use_memory", true)
 	viper.SetDefault("database.backup_interval", "2m")
 	viper.SetDefault("database.enable_backup_on_shutdown", true)
+	// MySQL defaults (DSN format: user:password@tcp(host:port)/dbname?params)
+	viper.SetDefault("database.dsn", "")
+	viper.SetDefault("database.max_open_conns", 10)
+	viper.SetDefault("database.max_idle_conns", 5)
+	viper.SetDefault("database.conn_max_lifetime", "1h")
 	viper.SetDefault("logging.level", "info")
 	viper.SetDefault("audit.max_records", 1000)
 	viper.SetDefault("audit.retention_days", 3)

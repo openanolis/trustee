@@ -6,6 +6,7 @@ import (
 	"github.com/openanolis/trustee/gateway/internal/models"
 	"github.com/openanolis/trustee/gateway/internal/persistence/storage"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // AAInstanceRepository handles database operations for attestation agent instance heartbeats
@@ -20,25 +21,23 @@ func NewAAInstanceRepository(database *storage.Database) *AAInstanceRepository {
 	}
 }
 
-// UpsertHeartbeat creates or updates a heartbeat record
+// UpsertHeartbeat creates or updates a heartbeat record using database-native upsert
+// Uses ON CONFLICT (SQLite) / ON DUPLICATE KEY UPDATE (MySQL) for atomic upsert
+// Requires unique index on instance_id column
 func (r *AAInstanceRepository) UpsertHeartbeat(heartbeat *models.AAInstanceHeartbeat) error {
-	// First try to find existing record by instance_id
-	var existing models.AAInstanceHeartbeat
-	err := r.db.Where("instance_id = ?", heartbeat.InstanceInfo.InstanceID).First(&existing).Error
+	heartbeat.LastHeartbeat = time.Now()
 
-	if err == gorm.ErrRecordNotFound {
-		// Create new record
-		return r.db.Create(heartbeat).Error
-	} else if err != nil {
-		// Some other error occurred
-		return err
-	} else {
-		// Update existing record
-		existing.InstanceInfo = heartbeat.InstanceInfo
-		existing.ClientIP = heartbeat.ClientIP
-		existing.LastHeartbeat = heartbeat.LastHeartbeat
-		return r.db.Save(&existing).Error
-	}
+	return r.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "instance_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"image_id",
+			"instance_name",
+			"owner_account_id",
+			"client_ip",
+			"last_heartbeat",
+			"updated_at",
+		}),
+	}).Create(heartbeat).Error
 }
 
 // GetActiveHeartbeats retrieves all heartbeats that are newer than the cutoff time
