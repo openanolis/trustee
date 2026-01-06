@@ -30,7 +30,14 @@ func TestProxy_ForwardRequest(t *testing.T) {
 			t.Errorf("Request body not forwarded correctly, got: %s", string(body))
 		}
 
-		// Set a cookie
+		// Verify cookies are not duplicated when proxy forwards requests.
+		// The proxy copies headers and also adds cookies; it must not do both for Cookie header.
+		cookies := r.Cookies()
+		if len(cookies) != 1 || cookies[0].Name != "kbs-session-id" || cookies[0].Value != "test-session-id" {
+			t.Fatalf("expected exactly one kbs-session-id cookie, got: %#v (raw Cookie header=%q)", cookies, r.Header.Get("Cookie"))
+		}
+
+		// Set a cookie back to the client
 		http.SetCookie(w, &http.Cookie{
 			Name:  "kbs-session-id",
 			Value: "test-session-id",
@@ -63,6 +70,7 @@ func TestProxy_ForwardRequest(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/test", bytes.NewBufferString("test request body"))
 	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "kbs-session-id", Value: "test-session-id"})
 	c.Request = req
 
 	// Forward the request
