@@ -222,6 +222,12 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 
 	// Copy all headers from the original request
 	for k, vv := range c.Request.Header {
+		// Cookies will be added via targetReq.AddCookie() below.
+		// If we also copy the raw "Cookie" header, it can result in duplicated cookies
+		// (e.g. "kbs-session-id=...; kbs-session-id=...") which breaks KBS session parsing.
+		if http.CanonicalHeaderKey(k) == "Cookie" {
+			continue
+		}
 		for _, v := range vv {
 			targetReq.Header.Add(k, v)
 		}
@@ -280,6 +286,11 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 // CopyHeaders copies headers from a source response to the destination gin context
 func CopyHeaders(dst *gin.Context, src *http.Response) {
 	for k, vv := range src.Header {
+		// Cookies will be set via http.SetCookie() in CopyCookies().
+		// Avoid duplicating Set-Cookie header.
+		if http.CanonicalHeaderKey(k) == "Set-Cookie" {
+			continue
+		}
 		for _, v := range vv {
 			dst.Writer.Header().Add(k, v)
 		}
@@ -291,7 +302,12 @@ func CopyHeaders(dst *gin.Context, src *http.Response) {
 func CopyHeadersExceptContentLength(dst *gin.Context, src *http.Response) {
 	for k, vv := range src.Header {
 		// Skip Content-Length header to avoid conflicts
-		if k == "Content-Length" {
+		ck := http.CanonicalHeaderKey(k)
+		if ck == "Content-Length" {
+			continue
+		}
+		// Avoid duplicating Set-Cookie header; CopyCookies handles it.
+		if ck == "Set-Cookie" {
 			continue
 		}
 		for _, v := range vv {
