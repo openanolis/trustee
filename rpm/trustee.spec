@@ -10,18 +10,18 @@ Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
 BuildArch:      x86_64
 
-License:        Apache-2.0
-URL:            https://github.com/openanolis/trustee
-Source0:        trustee-%{version}.tar.gz
-Source1:        vendor.tar.gz
-Source2:        config.toml
-Source3:        go-vendor.tar.gz
-Source4:        frontend_node_modules.tar.gz
+License:	Apache-2.0
+URL: 		  https://github.com/openanolis/trustee
+Source0:  trustee-%{version}.tar.gz
+Source1:	vendor.tar.gz
+Source2: 	config.toml
+Source3:  go-vendor.tar.gz
+Source4:  frontend_node_modules.tar.gz
 
 Requires: openssl tzdata sqlite-libs
 
 BuildRequires:  cargo clang perl protobuf-devel git libtdx-attest-devel libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel libsgx-dcap-quote-verify-devel libsgx-dcap-quote-verify libsgx-headers
-BuildRequires:  ca-certificates gcc golang perl-FindBin
+BuildRequires:  ca-certificates gcc golang
 
 %description
 Trustee are daemon services for attestation and secret distribution.

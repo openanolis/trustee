@@ -7,7 +7,7 @@ PREFIX ?= /usr
 CONFIG_DIR ?= /etc/trustee
 
 # 获取版本号
-VERSION ?= $(shell grep "^Version:" ../rpm/AnolisOS23/rpmbuild-layout/SPECS/trustee.spec | awk '{print $$2}')
+VERSION ?= $(shell grep "^Version:" ../rpm/trustee.spec | awk '{print $$2}')
 
 # 设置默认目标
 .DEFAULT_GOAL := build
@@ -131,7 +131,7 @@ create-build-artifacts:
 
 	# Create SOURCES directory
 	@echo "  Creating SOURCES directory..."
-	mkdir -p ../rpm/AnolisOS23/rpmbuild-layout/SOURCES
+	mkdir -p ../tmp
 
 	# Create Source0: Main source tarball
 	@echo "  Creating main source tarball..."
@@ -141,22 +141,22 @@ create-build-artifacts:
 	--exclude='trustee-$(VERSION)/dist/frontend_node_modules.tar.gz' --exclude='trustee-$(VERSION)/frontend/node_modules' \
 	--exclude='trustee-$(VERSION)/trustee-gateway/vendor' --exclude='trustee-$(VERSION)/.gitignore' \
 	--exclude='trustee-$(VERSION)/*.tar.gz' -czf /tmp/trustee-$(VERSION).tar.gz trustee-$(VERSION)) && \
-	mv /tmp/trustee-$(VERSION).tar.gz ../rpm/AnolisOS23/rpmbuild-layout/SOURCES/ && rm -rf /tmp/trustee-$(VERSION)
+	mv /tmp/trustee-$(VERSION).tar.gz ../tmp/ && rm -rf /tmp/trustee-$(VERSION)
 	
 	# Create Source1: Rust vendor tarball and Source2: Cargo config.toml
 	@echo "  Creating Rust vendor tarball and Cargo config.toml..."
 	cd .. && \
-    cargo vendor --locked vendor > rpm/AnolisOS23/rpmbuild-layout/SOURCES/config.toml && \
-    printf '\n[net]\ngit-fetch-with-cli = true\n' >> rpm/AnolisOS23/rpmbuild-layout/SOURCES/config.toml && \
-    tar -czf rpm/AnolisOS23/rpmbuild-layout/SOURCES/vendor.tar.gz vendor
+    cargo vendor --locked vendor > tmp/config.toml && \
+    printf '\n[net]\ngit-fetch-with-cli = true\n' >> tmp/config.toml && \
+    tar -czf tmp/vendor.tar.gz vendor
 	
 	# Create Source3: Go vendor tarball for trustee-gateway
 	@echo "  Creating Go vendor tarball..."
-	cd ../trustee-gateway && go mod vendor && cd .. && tar -czf rpm/AnolisOS23/rpmbuild-layout/SOURCES/go-vendor.tar.gz -C trustee-gateway vendor
+	cd ../trustee-gateway && go mod vendor && cd .. && tar -czf tmp/go-vendor.tar.gz -C trustee-gateway vendor
 	
 	# Create Source4: Frontend node_modules tarball
 	@echo "  Creating frontend node_modules tarball..."
-	cd ../frontend && npm ci --production=false && cd .. && tar -czf rpm/AnolisOS23/rpmbuild-layout/SOURCES/frontend_node_modules.tar.gz -C frontend node_modules
+	cd ../frontend && npm ci --production=false && cd .. && tar -czf tmp/frontend_node_modules.tar.gz -C frontend node_modules
 	
 	@echo "Build artifacts created successfully:"
 	@echo "  - trustee-$(VERSION).tar.gz (Source0)"
@@ -165,13 +165,15 @@ create-build-artifacts:
 	@echo "  - go-vendor.tar.gz (Source3)"
 	@echo "  - frontend_node_modules.tar.gz (Source4)"
 
+	# Create a single tarball containing all build artifacts
+	@echo "  Creating combined build artifacts tarball..."
+	cd .. && tar -czf build-artifacts-v$(VERSION).tar.gz -C tmp .
+
 # Clean build artifacts
 clean-build-artifacts:
 	@echo "Cleaning build artifacts..."
-	rm -f ../rpm/AnolisOS23/rpmbuild-layout/SOURCES/trustee-$(VERSION).tar.gz
-	rm -f ../rpm/AnolisOS23/rpmbuild-layout/SOURCES/vendor.tar.gz
-	rm -f ../rpm/AnolisOS23/rpmbuild-layout/SOURCES/go-vendor.tar.gz
-	rm -f ../rpm/AnolisOS23/rpmbuild-layout/SOURCES/frontend_node_modules.tar.gz
+	rm -rf ../tmp/
+	rm -rf ../build-artifacts-v$(VERSION).tar.gz
 	rm -rf ../vendor/
 	rm -rf ../trustee-gateway/vendor/
 	@echo "Build artifacts cleaned successfully."
