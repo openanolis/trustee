@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -30,19 +31,38 @@ func NewRVPSHandler(proxy *proxy.Proxy, client *rvps.GrpcClient) *RVPSHandler {
 
 // HandleRVPSRequest is a generic handler for RVPS requests
 func (h *RVPSHandler) HandleRVPSRequest(c *gin.Context) {
-	path := strings.TrimPrefix(c.Param("path"), "/")
+	rawPath := c.Request.URL.RawPath
+	if rawPath == "" {
+		rawPath = c.Request.URL.Path
+	}
+	// Remove the `/api/rvps` prefix that Gin routes with.
+	path := strings.TrimPrefix(rawPath, "/api/rvps")
+	path = strings.TrimPrefix(path, "/")
+
+	decodedPath, err := url.PathUnescape(path)
+	if err != nil {
+		logrus.Errorf("Failed to decode RVPS path: %v", err)
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid path encoding"})
+		return
+	}
 
 	// Try gRPC first if client is available
 	if h.client != nil {
 		switch {
-		case c.Request.Method == "GET" && path == "query":
+		case c.Request.Method == "GET" && decodedPath == "query":
 			h.handleQueryReferenceValue(c)
 			return
-		case c.Request.Method == "POST" && path == "register":
+		case c.Request.Method == "POST" && decodedPath == "register":
 			h.handleRegisterReferenceValue(c)
 			return
-		case c.Request.Method == "DELETE" && strings.HasPrefix(path, "delete/"):
-			name := strings.TrimPrefix(path, "delete/")
+		case c.Request.Method == "DELETE" && strings.HasPrefix(decodedPath, "delete/"):
+			nameRaw := strings.TrimPrefix(path, "delete/")
+			name, err := url.PathUnescape(nameRaw)
+			if err != nil || name == "" {
+				logrus.Errorf("Invalid reference value name encoding: %v", err)
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid reference value name"})
+				return
+			}
 			h.handleDeleteReferenceValue(c, name)
 			return
 		}

@@ -167,8 +167,11 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 	// Create a buffer to store the request body
 	requestBodyBuf := new(bytes.Buffer)
 
-	// Create a new request to the target URL
-	targetPath := c.Request.URL.Path
+	// Prefer RawPath to preserve encoded characters. Fallback to Path when RawPath is empty.
+	targetPath := c.Request.URL.RawPath
+	if targetPath == "" {
+		targetPath = c.Request.URL.Path
+	}
 
 	// For KBS, we need to strip the prefix if necessary
 	if serviceType == KBSService && !strings.HasPrefix(targetPath, "/kbs/v0") {
@@ -183,12 +186,17 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 	}
 
 	targetQuery := c.Request.URL.RawQuery
-	targetURL = targetURL.JoinPath(targetPath)
 
-	// If there's a query string, add it to the target URL
-	if targetQuery != "" {
-		targetURL.RawQuery = targetQuery
+	// Build the target URL while keeping both escaped and unescaped forms aligned.
+	unescapedPath, pathErr := url.PathUnescape(targetPath)
+	if pathErr != nil {
+		return nil, fmt.Errorf("invalid path encoding: %w", pathErr)
 	}
+	targetURLCopy := *targetURL
+	targetURLCopy.Path = unescapedPath
+	targetURLCopy.RawPath = targetPath
+	targetURLCopy.RawQuery = targetQuery
+	targetURL = &targetURLCopy
 
 	// Copy the request body if it exists
 	var targetReq *http.Request
