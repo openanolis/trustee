@@ -72,7 +72,12 @@ const ResourcesPage: React.FC = () => {
   const handleSaveResource = async (values: ResourceFormValues) => {
     try {
       if (values.uploadType === 'text') {
-        await resourceApi.setResource(values.repository, values.type, values.tag, values.content);
+        const content = values.content;
+        if (!content) {
+          message.error('请输入资源内容');
+          return;
+        }
+        await resourceApi.setResource(values.repository, values.type, values.tag, content);
       } else {
         // 二进制文件提交
         if (fileList.length === 0) {
