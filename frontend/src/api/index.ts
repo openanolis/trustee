@@ -138,8 +138,15 @@ export const attestationServicePolicyApi = {
 export const resourceApi = {
   getResource: (repository: string, type: string, tag: string) => 
     apiClient.get<any>(`/kbs/v0/resource/${repository}/${type}/${tag}`),
-  setResource: (repository: string, type: string, tag: string, data: any) => 
-    apiClient.post(`/kbs/v0/resource/${repository}/${type}/${tag}`, data),
+  setResource: (repository: string, type: string, tag: string, data: string) => {
+    const encoder = new TextEncoder();
+    const binaryData = encoder.encode(data);
+    return apiClient.post(`/kbs/v0/resource/${repository}/${type}/${tag}`, binaryData, {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+      },
+    });
+  },
   deleteResource: (repository: string, type: string, tag: string) => 
     apiClient.delete(`/kbs/v0/resource/${repository}/${type}/${tag}`),
   listResources: (params?: { repository?: string; type?: string }) => 
