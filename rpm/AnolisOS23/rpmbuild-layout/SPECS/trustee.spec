@@ -4,7 +4,7 @@
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.7.6
+Version:        1.7.7
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -142,6 +142,11 @@ fi
 %{_prefix}/bin/attestation-challenge-client
 
 %changelog
+* Wed Jan 7 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.7.7-1
+* Release v1.7.6 images and helm-chart by @jialez0 
+* Fix repeat kbs-session-id header nits of gateway by @jialez0 
+* Gateway: support mysql by @wdsun1008 
+
 * Mon Dec 29 2025 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.7.6-1
 - Support skip GPU evidence verification via ENV by @jialez0 in #107
 - KBS /resource API: support parse attest token from Attestation header by @jialez0 in #108
