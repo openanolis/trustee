@@ -1,0 +1,74 @@
+version: 1
+
+container:
+  image: "openanolis/anolisos@sha256:b0067a96f6f8a02d378304bd27ef7c3081f28d75a0003e2f145bf4412001d37c"
+
+inputs:
+  source:
+    url: "https://github.com/inclavare-containers/trustee/releases/download/${GITHUB_RELEASE}/build-artifacts-v${VERSION}.tar.gz"
+    targetPath: "/home/build-artifacts-v${VERSION}.tar.gz"
+
+environment:
+  systemPackages:
+    - name: "anolis-epao-release"
+      version: "23-4.an23"
+    - name: "rpm-build"
+      version: "4.18.2-4.an23"
+    - name: "dnf-plugins-core"
+      version: "4.3.1-3.an23"
+    - name: "gzip"
+      version: "1.12-3.an23"
+    - name: "tar"
+      version: "2:1.35-1.an23"
+    - name: "wget"
+      version: "1.24.5-1.an23"
+    - name: "make"
+      version: "4.4.1-2.an23"
+    - name: "git"
+      version: "2.47.3-1.an23"
+    - name: "libgudev-devel"
+      version: "238-1.an23"
+    - name: "libtdx-attest-devel"
+      version: "1.22-1.an23"
+    - name: "openssl-devel"
+      version: "3.0.12-15.an23"
+    - name: "protobuf-devel"
+      version: "3.19.6-6.an23"
+    - name: "tpm2-tss-devel"
+      version: "4.0.1-6.an23"
+    - name: "perl-FindBin"
+      version: "1.53-17.an23"
+  tools:
+    - name: "cargo"
+      version: "1.84.1-4.an23"
+    - name: "rust"
+      version: "1.84.1-4.an23"
+    - name: "gcc"
+      version: "12.3.0-13.an23"
+    - name: "clang"
+      version: "17.0.6-8.an23"
+    - name: "perl"
+      version: "5.36.3-18.an23"
+    - name: "golang"
+      version: "1.24.0-12.an23"
+    - name: "nodejs-npm"
+      version: "10.9.2-1.22.16.0.1"
+
+phases:
+  prepare:
+    commands:
+      - mkdir -p /home/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+      - tar -xzf "/home/build-artifacts-v${VERSION}.tar.gz" -C /home/rpmbuild/SOURCES/
+      - tar -xzf /home/rpmbuild/SOURCES/trustee-${VERSION}.tar.gz -C /home/rpmbuild/SPECS --strip-components=2 trustee-${VERSION}/rpm/trustee.spec
+      - mkdir -p /home/rpms
+      - tar -xzf /home/rpmbuild/SOURCES/trustee-${VERSION}.tar.gz -C /home/rpms --strip-components=3 trustee-${VERSION}/rpm/deps/
+      - dnf install -y /home/rpms/*.rpm
+  build:
+    commands:
+      - rpmbuild --define "_topdir /home/rpmbuild" -ba /home/rpmbuild/SPECS/trustee.spec
+
+outputs:
+  - path: /home/rpmbuild/SRPMS/trustee-${VERSION}-${RELEASE}.an23.src.rpm
+  - path: /home/rpmbuild/RPMS/x86_64/trustee-${VERSION}-${RELEASE}.an23.x86_64.rpm
+  - path: /home/rpmbuild/RPMS/x86_64/trustee-frontend-${VERSION}-${RELEASE}.an23.x86_64.rpm
+  - path: /home/rpmbuild/RPMS/x86_64/attestation-challenge-client-${VERSION}-${RELEASE}.an23.x86_64.rpm
