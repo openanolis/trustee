@@ -102,7 +102,10 @@ jobs:
 
       - name: OPA policy.rego check
         run: |
-          opa check attestation-service/src/token/*.rego
+          for file in attestation-service/src/token/*.rego;
+          do
+            opa check $file
+          done
 
       - name: Install protoc
         run: |
