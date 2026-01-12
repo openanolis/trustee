@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: Code checkout
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Install Rust toolchain (${{ env.RUSTC_VERSION }})
       run: |
@@ -91,7 +91,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Code checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -152,7 +152,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Code checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
