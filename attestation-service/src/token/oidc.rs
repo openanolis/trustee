@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use crate::policy_engine::{PolicyEngine, PolicyEngineType};
 use crate::token::{AttestationTokenBroker, DEFAULT_TOKEN_WORK_DIR};
-use crate::{TeeClaims, TeeEvidenceParsedClaim};
+use crate::TeeClaims;
 
 use super::{COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
 
@@ -240,17 +240,22 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
         policy_ids: Vec<String>,
         reference_data_map: HashMap<String, Vec<String>>,
     ) -> Result<String> {
-        // Take claims from all verifiers, flatten them and add them to one map.
-        let mut flattened_claims: Map<String, Value> = Map::new();
+        let mut collected_claims: Map<String, Value> = Map::new();
         for tee_claims in &all_tee_claims {
-            flattened_claims.append(&mut flatten_claims(tee_claims.tee, &tee_claims.claims)?);
+            collect_claims(
+                tee_claims.claims.clone(),
+                tee_claims.init_data_claims.clone(),
+                tee_claims.runtime_data_claims.clone(),
+                tee_claims.tee,
+                &mut collected_claims,
+            );
         }
 
         let reference_data = json!({
             "reference": reference_data_map,
         });
         let reference_data = serde_json::to_string(&reference_data)?;
-        let tcb_claims = serde_json::to_string(&flattened_claims)?;
+        let tcb_claims = serde_json::to_string(&collected_claims)?;
 
         let rules = vec!["allow".to_string()];
 
@@ -324,10 +329,41 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
                 .as_ref()
                 .map_or_else(|| vec![], |k| {
                     k.iter().map(|s| {
-                        flattened_claims.get(s).map(|v| match v {
-                            Value::String(s) => s.clone(),
-                            other => other.to_string(),
-                        }).unwrap_or_else(|| "".to_string())
+                        // Extract value from collected_claims which has top-level keys like "tdx", "sev", "sgx"
+                        // and the corresponding values are objects containing nested fields
+                        let mut current_value = &collected_claims;
+                        let mut segments = s.split('.');
+
+                        // Get the first segment which should be the TEE type like "tdx", "sev", "sgx"
+                        if let Some(first_segment) = segments.next() {
+                            if let Some(tee_obj) = current_value.get(first_segment) {
+                                // Navigate through the nested object using remaining segments
+                                let mut current_obj = tee_obj;
+                                for segment in segments {
+                                    match current_obj {
+                                        Value::Object(map) => {
+                                            if let Some(next_value) = map.get(segment) {
+                                                current_obj = next_value;
+                                            } else {
+                                                return "".to_string();
+                                            }
+                                        }
+                                        _ => return "".to_string(),
+                                    }
+                                }
+                                // Convert the final value to string
+                                match current_obj {
+                                    Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                }
+                            } else {
+                                // Key doesn't exist in collected_claims
+                                "".to_string()
+                            }
+                        } else {
+                            // Empty key
+                            "".to_string()
+                        }
                     })
                     .collect::<Vec<String>>()
                 });
@@ -430,80 +466,20 @@ struct Jwk {
     pub x5c: Option<Vec<String>>,
 }
 
-/// This funciton will transpose the following structured json
-/// ```json
-/// {
-///     "a" : {
-///         "b": "c"
-///     },
-///     "d": "e"
-/// }
-/// ```
-/// into a flatten one with '.' to separate and also be added a prefix of tee name, e.g.
-/// ```json
-/// {
-///     "sample.a.b": "c",
-///     "sample.d": "e"
-/// }
-/// ```
-///
-/// But the key `init_data` and `report_data` will not be added the prefix.
-fn flatten_claims(
+pub fn collect_claims(
+    mut input_claims: Value,
+    init_data_claims: Value,
+    runtime_data_claims: Value,
     tee: kbs_types::Tee,
-    claims: &TeeEvidenceParsedClaim,
-) -> Result<Map<String, Value>> {
-    let mut map = Map::new();
-    let tee_type = to_variant_name(&tee)?;
-    match claims {
-        Value::Object(obj) => {
-            for (k, v) in obj {
-                if k != "report_data" && k != "init_data" {
-                    flatten_helper(&mut map, v, format!("{tee_type}.{}", k.clone()));
-                }
-            }
-            let report_data = obj
-                .get("report_data")
-                .cloned()
-                .unwrap_or(Value::String(String::new()));
-            map.insert("report_data".to_string(), report_data.clone());
-
-            let report_data = obj
-                .get("init_data")
-                .cloned()
-                .unwrap_or(Value::String(String::new()));
-            map.insert("init_data".to_string(), report_data.clone());
-        }
-        _ => bail!("input claims must be a map"),
+    output_claims: &mut Map<String, Value>,
+) {
+    // Ensure input_claims is an object so we can insert fields into it.
+    if let Some(obj) = input_claims.as_object_mut() {
+        obj.insert("init_data_claims".to_string(), init_data_claims);
+        obj.insert("runtime_data_claims".to_string(), runtime_data_claims);
     }
 
-    Ok(map)
-}
-
-/// Recursion algorithm helper of `flatten_claims`
-fn flatten_helper(parent: &mut Map<String, Value>, child: &serde_json::Value, prefix: String) {
-    match child {
-        Value::Null => {
-            let _ = parent.insert(prefix, Value::Null);
-        }
-        Value::Bool(v) => {
-            let _ = parent.insert(prefix, Value::Bool(*v));
-        }
-        Value::Number(v) => {
-            let _ = parent.insert(prefix, Value::Number(v.clone()));
-        }
-        Value::String(str) => {
-            let _ = parent.insert(prefix, Value::String(str.clone()));
-        }
-        Value::Array(arr) => {
-            let _ = parent.insert(prefix, Value::Array(arr.clone()));
-        }
-        Value::Object(obj) => {
-            for (k, v) in obj {
-                let sub_prefix = format!("{prefix}.{k}");
-                flatten_helper(parent, v, sub_prefix);
-            }
-        }
-    }
+    output_claims.insert(to_variant_name(&tee).unwrap().to_string(), input_claims);
 }
 
 #[cfg(test)]
@@ -543,71 +519,5 @@ mod tests {
             )
             .await
             .unwrap();
-    }
-
-    #[test]
-    fn flatten() {
-        let json = json!({
-            "ccel": {
-                "kernel": "5b7aa6572f649714ff00b6a2b9170516a068fd1a0ba72aa8de27574131d454e6396d3bfa1727d9baf421618a942977fa",
-                "kernel_parameters": {
-                    "console": "hvc0",
-                    "root": "/dev/vda1",
-                    "rw": null
-                }
-            },
-            "quote": {
-                "header":{
-                    "version": "0400",
-                    "att_key_type": "0200",
-                    "tee_type": "81000000",
-                    "reserved": "00000000",
-                    "vendor_id": "939a7233f79c4ca9940a0db3957f0607",
-                    "user_data": "d099bfec0a477aa85a605dceabf2b10800000000"
-                },
-                "body":{
-                    "mr_config_id": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-                    "mr_owner": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-                    "mr_owner_config": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-                    "mr_td": "705ee9381b8633a9fbe532b52345e8433343d2868959f57889d84ca377c395b689cac1599ccea1b7d420483a9ce5f031",
-                    "mrsigner_seam": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-                    "report_data": "7c71fe2c86eff65a7cf8dbc22b3275689fd0464a267baced1bf94fc1324656aeb755da3d44d098c0c87382f3a5f85b45c8a28fee1d3bdb38342bf96671501429",
-                    "seam_attributes": "0000000000000000",
-                    "td_attributes": "0100001000000000",
-                    "mr_seam": "2fd279c16164a93dd5bf373d834328d46008c2b693af9ebb865b08b2ced320c9a89b4869a9fab60fbe9d0c5a5363c656",
-                    "tcb_svn": "03000500000000000000000000000000",
-                    "xfam": "e742060000000000"
-                }
-            },
-            "report_data": "7c71fe2c86eff65a7cf8dbc22b3275689fd0464a267baced1bf94fc1324656aeb755da3d44d098c0c87382f3a5f85b45c8a28fee1d3bdb38342bf96671501429",
-            "init_data": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-        });
-        let flatten = flatten_claims(kbs_types::Tee::Tdx, &json).expect("flatten failed");
-        let expected = json!({
-                "tdx.ccel.kernel": "5b7aa6572f649714ff00b6a2b9170516a068fd1a0ba72aa8de27574131d454e6396d3bfa1727d9baf421618a942977fa",
-                "tdx.ccel.kernel_parameters.console": "hvc0",
-                "tdx.ccel.kernel_parameters.root": "/dev/vda1",
-                "tdx.ccel.kernel_parameters.rw": null,
-                "tdx.quote.header.version": "0400",
-                "tdx.quote.header.att_key_type": "0200",
-                "tdx.quote.header.tee_type": "81000000",
-                "tdx.quote.header.reserved": "00000000",
-                "tdx.quote.header.vendor_id": "939a7233f79c4ca9940a0db3957f0607",
-                "tdx.quote.header.user_data": "d099bfec0a477aa85a605dceabf2b10800000000",
-                "tdx.quote.body.mr_config_id": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-                "tdx.quote.body.mr_owner": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-                "tdx.quote.body.mr_owner_config": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-                "tdx.quote.body.mr_td": "705ee9381b8633a9fbe532b52345e8433343d2868959f57889d84ca377c395b689cac1599ccea1b7d420483a9ce5f031",
-                "tdx.quote.body.mrsigner_seam": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-                "tdx.quote.body.report_data": "7c71fe2c86eff65a7cf8dbc22b3275689fd0464a267baced1bf94fc1324656aeb755da3d44d098c0c87382f3a5f85b45c8a28fee1d3bdb38342bf96671501429",
-                "tdx.quote.body.seam_attributes": "0000000000000000",
-                "tdx.quote.body.td_attributes": "0100001000000000",
-                "tdx.quote.body.mr_seam": "2fd279c16164a93dd5bf373d834328d46008c2b693af9ebb865b08b2ced320c9a89b4869a9fab60fbe9d0c5a5363c656",
-                "tdx.quote.body.tcb_svn": "03000500000000000000000000000000",
-                "tdx.quote.body.xfam": "e742060000000000",
-                "report_data": "7c71fe2c86eff65a7cf8dbc22b3275689fd0464a267baced1bf94fc1324656aeb755da3d44d098c0c87382f3a5f85b45c8a28fee1d3bdb38342bf96671501429",
-                "init_data": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-        });
-        assert_json_eq!(expected, flatten);
     }
 }
