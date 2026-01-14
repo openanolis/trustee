@@ -158,12 +158,17 @@ create-build-artifacts:
 	@echo "  Creating frontend node_modules tarball..."
 	cd ../frontend && npm ci --production=false && cd .. && tar -czf tmp/frontend_node_modules.tar.gz -C frontend node_modules
 	
+	# Copy Source5: EAR default policy for attestation-challenge-client
+	@echo "  Copying challenge-ra-policy.rego..."
+	cp ../rpm/challenge-ra-policy.rego ../tmp/challenge-ra-policy.rego
+	
 	@echo "Build artifacts created successfully:"
 	@echo "  - trustee-$(VERSION).tar.gz (Source0)"
 	@echo "  - vendor.tar.gz (Source1)"
 	@echo "  - config.toml (Source2)"
 	@echo "  - go-vendor.tar.gz (Source3)"
 	@echo "  - frontend_node_modules.tar.gz (Source4)"
+	@echo "  - challenge-ra-policy.rego (Source5)"
 
 	# Create a single tarball containing all build artifacts
 	@echo "  Creating combined build artifacts tarball..."
