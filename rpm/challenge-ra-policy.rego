@@ -2,32 +2,9 @@ package policy
 
 import rego.v1
 
-# This policy validates multiple TEE platforms
-# The policy is meant to capture the TCB requirements
-# for confidential containers.
-
-# This policy is used to generate an EAR Appraisal.
-# Specifically it generates an AR4SI result.
-# More informatino on AR4SI can be found at
-# <https://datatracker.ietf.org/doc/draft-ietf-rats-ar4si/>
-
-# For the `executables` trust claim, the value 33 stands for
-# "Runtime memory includes executables, scripts, files, and/or
-#  objects which are not recognized."
 default executables := 33
-
-# For the `hardware` trust claim, the value 97 stands for
-# "A Verifier does not recognize an Attester's hardware or
-#  firmware, but it should be recognized."
 default hardware := 97
-
-# For the `configuration` trust claim the value 36 stands for
-# "Elements of the configuration relevant to security are
-#  unavailable to the Verifier."
 default configuration := 36
-
-# For the `filesystem` trust claim, the value 35 stands for
-# "File system integrity cannot be verified or is compromised."
 default file_system := 35
 
 ##### Common Helper Functions
@@ -224,13 +201,13 @@ validate_aael_model_measurements(uefi_event_logs) if {
 
 executables := 3 if {
 	# Check the kernel, initrd, shim and grub measurements for any supported algorithm
-	validate_boot_measurements_uefi_event_log(input.tdx.uefi_event_logs)
+	# validate_boot_measurements_uefi_event_log(input.tdx.uefi_event_logs)
 
 	# Check AI model measurement
 	# validate_aael_model_measurements(input.tdx.uefi_event_logs)
 
 	# Check /bin measurements
-	# validate_aael_bin_measurements(input.tdx.uefi_event_logs)
+	validate_aael_bin_measurements(input.tdx.uefi_event_logs)
 }
 
 hardware := 2 if {
@@ -246,25 +223,20 @@ hardware := 2 if {
 configuration := 2 if {
 	# Check the TD has the expected attributes (e.g., debug not enabled) and features.
 	# input.tdx.td_attributes.debug == false
-	input.tdx.quote.body.xfam in data.reference["tdx.xfam"]
+	# input.tdx.quote.body.xfam in data.reference["tdx.xfam"]
 
 	# Check kernel command line parameters have the expected value for any supported algorithm
-	validate_kernel_cmdline_uefi(input.tdx.uefi_event_logs)
+	# validate_kernel_cmdline_uefi(input.tdx.uefi_event_logs)
 
 	# Check /etc measurements
-	# validate_aael_etc_measurements(input.tdx.uefi_event_logs)
-	# Check cryptpilot config
-	# validate_cryptpilot_config(input.tdx.uefi_event_logs)
+	validate_aael_etc_measurements(input.tdx.uefi_event_logs)
 }
 
 file_system := 2 if {
 	input.tdx
 
 	# Check /system, /lib, /include measurements
-	# validate_aael_system_measurements(input.tdx.uefi_event_logs)
-
-	# Check rootfs integrity
-	# validate_cryptpilot_fde(input.tdx.uefi_event_logs)
+	validate_aael_system_measurements(input.tdx.uefi_event_logs)
 
 	# Check measured files - iterate through all file measurements
 	# validate_aael_file_measurements(input.tdx.uefi_event_logs)
@@ -274,13 +246,13 @@ file_system := 2 if {
 
 executables := 3 if {
 	# Check the kernel, initrd, shim and grub measurements for any supported algorithm
-	validate_boot_measurements(input.tpm)
+	# validate_boot_measurements(input.tpm)
 
 	# Check AI model measurement
 	# validate_aael_model_measurements(input.tdx.uefi_event_logs)
 
 	# Check /bin measurements
-	# validate_aael_bin_measurements(input.tpm.uefi_event_logs)
+	validate_aael_bin_measurements(input.tpm.uefi_event_logs)
 }
 
 hardware := 2 if {
@@ -295,22 +267,17 @@ hardware := 2 if {
 
 configuration := 2 if {
 	# Check kernel command line parameters have the expected value for any supported algorithm
-	validate_kernel_cmdline(input.tpm, input.tpm.kernel_cmdline)
+	# validate_kernel_cmdline(input.tpm, input.tpm.kernel_cmdline)
 
 	# Check /etc measurements
-	# validate_aael_etc_measurements(input.tpm.uefi_event_logs)
-	# Check cryptpilot config
-	# validate_cryptpilot_config(input.tpm.uefi_event_logs)
+	validate_aael_etc_measurements(input.tpm.uefi_event_logs)
 }
 
 file_system := 2 if {
 	input.tpm
 
 	# Check /system, /lib, /include measurements
-	# validate_aael_system_measurements(input.tpm.uefi_event_logs)
-
-	# Check rootfs integrity
-	# validate_cryptpilot_fde(input.tpm.uefi_event_logs)
+	validate_aael_system_measurements(input.tpm.uefi_event_logs)
 
 	# Check measured files - iterate through all file measurements
 	# validate_aael_file_measurements(input.tpm.uefi_event_logs)
@@ -326,7 +293,7 @@ executables := 3 if {
 	# validate_aael_model_measurements(input.tdx.uefi_event_logs)
 
 	# Check /bin measurements
-	# validate_aael_bin_measurements(input.csv.uefi_event_logs)
+	validate_aael_bin_measurements(input.csv.uefi_event_logs)
 }
 
 # Check cryptpilot config. Uncomment this due to your need
@@ -355,19 +322,17 @@ configuration := 2 if {
 	# input.csv.user_pubkey_digest in data.reference["csv.user_pubkey_digest"]
 
 	# Check kernel command line parameters have the expected value for any supported algorithm
-	validate_kernel_cmdline_uefi(input.csv.uefi_event_logs)
+	# validate_kernel_cmdline_uefi(input.csv.uefi_event_logs)
 
 	# Check /etc measurements
-	# validate_aael_etc_measurements(input.csv.uefi_event_logs)
-	# Check cryptpilot config. Uncomment this due to your need
-	# validate_cryptpilot_config(input.csv.uefi_event_logs)
+	validate_aael_etc_measurements(input.csv.uefi_event_logs)
 }
 
 file_system := 2 if {
 	input.csv
 
 	# Check /system, /lib, /include measurements
-	# validate_aael_system_measurements(input.csv.uefi_event_logs)
+	validate_aael_system_measurements(input.csv.uefi_event_logs)
 
 	# Check rootfs integrity
 	# validate_cryptpilot_fde(input.tpm.uefi_event_logs)

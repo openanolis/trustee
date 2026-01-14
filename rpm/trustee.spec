@@ -17,6 +17,7 @@ Source1:	vendor.tar.gz
 Source2: 	config.toml
 Source3:  go-vendor.tar.gz
 Source4:  frontend_node_modules.tar.gz
+Source5:  challenge-ra-policy.rego
 
 Requires: openssl tzdata sqlite-libs
 
@@ -68,6 +69,10 @@ popd
 pushd dist/
 make install-frontend BUILDROOT=%{buildroot} PREFIX=%{_prefix} CONFIG_DIR=%{config_dir}
 popd
+
+# Install default EAR policy for attestation-challenge-client
+install -d %{buildroot}/var/lib/attestation/token/ear/policies/opa
+install -m 0644 %{SOURCE5} %{buildroot}/var/lib/attestation/token/ear/policies/opa/default.rego
 
 %post
 systemctl daemon-reload
@@ -140,6 +145,7 @@ fi
 
 %files -n attestation-challenge-client
 %{_prefix}/bin/attestation-challenge-client
+/var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
 * Wed Jan 7 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.7.7-1
