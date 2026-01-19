@@ -16,8 +16,6 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       TAG_NAME: ${{ github.event.release.tag_name || inputs.tag_name }}
-    outputs:
-      artifact_subjects: ${{ steps.generate-artifacts-hashes.outputs.subjects }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -75,13 +73,19 @@ jobs:
             > rpm/Alinux3/trustee.al8.buildspec.yaml
 
       - name: Generate artifacts hashes
-        id: generate-artifacts-hashes
         run: |
           echo "Generating hashes for build artifacts..."
           sha256sum build-artifacts-*.tar.gz > artifacts-hash.txt
           sha256sum rpm/AnolisOS23/trustee.an23.buildspec.yaml | awk '{sub(/^.*\//,"",$2); print}' >> artifacts-hash.txt
           sha256sum rpm/Alinux3/trustee.al8.buildspec.yaml | awk '{sub(/^.*\//,"",$2); print}' >> artifacts-hash.txt
-          echo "subjects=$(base64 -w0 < "artifacts-hash.txt")" >> $GITHUB_OUTPUT
+          # Encode the artifacts hash file to base64 and save to file
+          base64 -w0 artifacts-hash.txt > artifact_subjects_base64.txt
+
+      - name: Upload artifact subjects as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-subjects-data
+          path: artifact_subjects_base64.txt
 
       - name: Upload total build artifacts to release
         uses: softprops/action-gh-release@v2
@@ -116,7 +120,7 @@ jobs:
         run: |
           echo "Downloading buildspec for ${{ matrix.os_flavor.name }}"
           curl -L \
-            "https://github.com/1570005763/trustee/releases/download/${{ env.TAG_NAME }}/${{ matrix.os_flavor.buildspec_asset }}" \
+            "https://github.com/openanolis/trustee/releases/download/${{ env.TAG_NAME }}/${{ matrix.os_flavor.buildspec_asset }}" \
             -o "${{ matrix.os_flavor.buildspec_asset }}"
 
       - name: Build RPM package
@@ -146,8 +150,6 @@ jobs:
           - id: anolisos23
             name: "AnolisOS23"
             artifact_name: "rpm-packages-anolisos23"
-    outputs:
-      binary_subjects: ${{ steps.generate-binary-hashes.outputs.subjects }}
     steps:
       - name: Download RPM packages
         uses: actions/download-artifact@v4
@@ -161,7 +163,6 @@ jobs:
           sudo apt-get install -y rpm cpio
 
       - name: Generate binary hashes for RPM packages
-        id: generate-binary-hashes
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -198,8 +199,8 @@ jobs:
             popd >/dev/null
 
             # Additionally, generate a "name index hash" for the RPM package itself.
-            # Key name: "package-name"
-            # Key value: Hash("<package-basename>"), e.g. "attestation-agent-1.4.5-1.an23.x86_64.rpm".
+            # Key name: "package-name:<package-basename>", e.g. "package-name:attestation-agent-1.4.5-1.an23.x86_64.rpm".
+            # Key value: Hash("<package-basename>"), e.g. `Hash("attestation-agent-1.4.5-1.an23.x86_64.rpm")`.
             # We reuse sha256 here and compute it over the exact package basename string.
             pkg_name="${rpm##*/}"
             pkg_hash="$(printf "%s" "$pkg_name" | sha256sum | awk '{print $1}')"
@@ -215,8 +216,15 @@ jobs:
 
           echo "Generated subjects for ${{ matrix.os_flavor.name }}:"
           cat "$subjects_txt"
-          echo "subjects=$(base64 -w0 < "$subjects_txt")" >> $GITHUB_OUTPUT
+          # Encode the subjects to base64 and save to file with matrix-specific name
+          base64 -w0 "$subjects_txt" > "binary_subjects_${{ matrix.os_flavor.id }}_base64.txt"
           rm -rf "$temp_dir"
+
+      - name: Upload binary subjects as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-subjects-${{ matrix.os_flavor.id }}-data
+          path: binary_subjects_${{ matrix.os_flavor.id }}_base64.txt
 
   publish-rpm:
     name: Publish RPMs (${{ matrix.os_flavor.name }})
@@ -233,8 +241,6 @@ jobs:
           - id: anolisos23
             name: "AnolisOS23"
             artifact_name: "rpm-packages-anolisos23"
-    outputs:
-      package_subjects: ${{ steps.generate-hashes.outputs.subjects }}
     steps:
       - name: Download RPM packages
         uses: actions/download-artifact@v4
@@ -243,7 +249,6 @@ jobs:
           path: rpm-packages
 
       - name: Generate hashes for RPM packages
-        id: generate-hashes
         run: |
           true > hashes.txt
           while IFS= read -r -d '' file; do
@@ -253,8 +258,14 @@ jobs:
 
           echo "Generated hashes.txt content:"
           cat hashes.txt || echo "hashes.txt not found or empty"
-          # output as package subjects
-          echo "subjects=$(base64 -w0 < "hashes.txt")" >> $GITHUB_OUTPUT
+          # encode as base64 and save to file with matrix-specific name
+          base64 -w0 hashes.txt > "package_subjects_${{ matrix.os_flavor.id }}_base64.txt"
+
+      - name: Upload package subjects as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-subjects-${{ matrix.os_flavor.id }}-data
+          path: package_subjects_${{ matrix.os_flavor.id }}_base64.txt
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -267,65 +278,89 @@ jobs:
             rpm-packages/RPMS/*/*.rpm
 
   combine-subjects:
-    name: Combine Provenance Subjects (${{ matrix.os_flavor.name }})
+    name: Combine Provenance Subjects
     runs-on: ubuntu-22.04
     needs:
       - create-build-artifacts
       - generate-binary-subjects
       - publish-rpm
-    strategy:
-      matrix:
-        os_flavor:
-          - id: alinux3
-            name: "Alinux3"
-          - id: anolisos23
-            name: "AnolisOS23"
     outputs:
-      combined_subjects: ${{ steps.combine.outputs.subjects }}
+      alinux3_combined_subjects:  ${{ steps.combine.outputs.alinux3_subjects }}
+      anolisos23_combined_subjects: ${{ steps.combine.outputs.anolisos23_subjects }}
     steps:
-      - name: Combine artifact, binary, and package subjects
-        id: combine
-        env:
-          ARTIFACT_SUBJECTS: ${{ needs.create-build-artifacts.outputs.artifact_subjects }}
-          # 注意：因为 generate-binary-subjects/publish-rpm 是 matrix job，
-          # 这里会取对应 matrix 变体（即同一个 os_flavor）的 outputs
-          BINARY_SUBJECTS: ${{ needs.generate-binary-subjects.outputs.binary_subjects }}
-          PACKAGE_SUBJECTS: ${{ needs.publish-rpm.outputs.package_subjects }}
-        run: |
-          # Get the base64 encoded subjects from previous jobs
-          artifact_subjects=$(echo "$ARTIFACT_SUBJECTS" | base64 -d)
-          binary_subjects=$(echo "$BINARY_SUBJECTS" | base64 -d)
-          package_subjects=$(echo "$PACKAGE_SUBJECTS" | base64 -d)
+      - name: Download artifact subjects (common)
+        uses: actions/download-artifact@v4
+        with:
+          name: artifact-subjects-data
+          path: ./artifacts
 
-          echo "artifact_subjects: $artifact_subjects"
-          echo "binary_subjects: $binary_subjects"
-          echo "package_subjects: $package_subjects"
-          
-          # Check if inputs are empty
-          if [ -z "$artifact_subjects" ]; then
-            echo "WARNING: artifact_subjects is empty"
-          fi
-          if [ -z "$binary_subjects" ]; then
-            echo "WARNING: binary_subjects is empty"
-          fi
-          if [ -z "$package_subjects" ]; then
-            echo "WARNING: package_subjects is empty"
-          fi
-          
-          # Combine all subjects, removing empty lines
-          all_subjects=$(echo -e "${artifact_subjects}\n${binary_subjects}\n${package_subjects}\n" | sed '/^$/d')
-          echo "Combined subjects:"
-          echo "$all_subjects"
-          
-          # Check if combined subjects are empty
-          if [ -z "$all_subjects" ]; then
-            echo "ERROR: No subjects found to combine"
-            exit 1
-          fi
-          
-          # Output the combined subjects as base64 following the requested pattern
-          echo "subjects=$(echo "$all_subjects" | base64 -w0)" >> "$GITHUB_OUTPUT"
-          echo "Final base64 subjects length: ${#all_subjects}"
+      - name: Download binary subjects (alinux3)
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-subjects-alinux3-data
+          path: ./binary-alinux3
+
+      - name: Download package subjects (alinux3)
+        uses: actions/download-artifact@v4
+        with:
+          name: package-subjects-alinux3-data
+          path: ./packages-alinux3
+
+      - name: Download binary subjects (anolisos23)
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-subjects-anolisos23-data
+          path: ./binary-anolisos23
+
+      - name: Download package subjects (anolisos23)
+        uses: actions/download-artifact@v4
+        with:
+          name: package-subjects-anolisos23-data
+          path: ./packages-anolisos23
+
+      - name: Combine subjects for all flavors
+        id: combine
+        run: |
+          artifact_subjects=$(base64 -d < ./artifacts/artifact_subjects_base64.txt)
+
+          combine_one() {
+            local flavor="$1"
+            local binary_dir="$2"
+            local package_dir="$3"
+
+            local binary_b64_file="$binary_dir/binary_subjects_${flavor}_base64.txt"
+            local package_b64_file="$package_dir/package_subjects_${flavor}_base64.txt"
+
+            if [ ! -f "$binary_b64_file" ]; then
+              echo "ERROR: binary subjects file not found: $binary_b64_file" >&2
+              exit 1
+            fi
+            if [ ! -f "$package_b64_file" ]; then
+              echo "ERROR: package subjects file not found: $package_b64_file" >&2
+              exit 1
+            fi
+
+            local binary_subjects=$(base64 -d < "$binary_b64_file")
+            local package_subjects=$(base64 -d < "$package_b64_file")
+
+            local all_subjects=$(printf '%s\n%s\n%s\n' \
+              "$artifact_subjects" \
+              "$binary_subjects" \
+              "$package_subjects" | sed '/^$/d')
+
+            if [ -z "$all_subjects" ]; then
+              echo "ERROR: No subjects found to combine for $flavor" >&2
+              exit 1
+            fi
+
+            printf '%s' "$all_subjects" | base64 -w0
+          }
+
+          alinux3_b64=$(combine_one "alinux3" "./binary-alinux3" "./packages-alinux3")
+          anolisos23_b64=$(combine_one "anolisos23" "./binary-anolisos23" "./packages-anolisos23")
+
+          echo "alinux3_subjects=$alinux3_b64"        >> "$GITHUB_OUTPUT"
+          echo "anolisos23_subjects=$anolisos23_b64"  >> "$GITHUB_OUTPUT"
 
   provenance:
     name: Generate SLSA Provenance (${{ matrix.os_flavor.name }})
@@ -344,9 +379,12 @@ jobs:
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       compile-generator: false
-      base64-subjects: ${{ needs.combine-subjects.outputs.combined_subjects }}
+      base64-subjects: ${{ matrix.os_flavor.id == 'alinux3'
+                          && needs.combine-subjects.outputs.alinux3_combined_subjects
+                          || needs.combine-subjects.outputs.anolisos23_combined_subjects }}
       upload-assets: true
       provenance-name: "trustee-${{ matrix.os_flavor.id }}-slsaprovenance.intoto.jsonl"
+
 
   upload-rekor-provenance:
     name: Upload Provenance to Rekor
