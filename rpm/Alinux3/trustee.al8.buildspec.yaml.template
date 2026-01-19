@@ -5,7 +5,7 @@ container:
 
 inputs:
   source:
-    url: "https://github.com/inclavare-containers/trustee/releases/download/${GITHUB_RELEASE}/build-artifacts-v${VERSION}.tar.gz"
+    url: "https://github.com/openanolis/trustee/releases/download/${GITHUB_RELEASE}/build-artifacts-v${VERSION}.tar.gz"
     targetPath: "/home/build-artifacts-v${VERSION}.tar.gz"
 
 environment:
