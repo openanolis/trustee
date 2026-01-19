@@ -12,7 +12,8 @@ use crate::ReferenceValue;
 
 #[cfg(feature = "in-toto")]
 pub mod in_toto;
-
+#[cfg(feature = "reproducible-build")]
+pub mod reproducible_build;
 pub mod sample;
 pub mod slsa;
 
@@ -53,6 +54,14 @@ impl Default for ExtractorModuleList {
             let instantiate_func: ExtractorInstantiateFunc =
                 Box::new(|| -> ExtractorInstance { Box::new(in_toto::InTotoExtractor::new()) });
             mod_list.insert("in-toto".to_string(), instantiate_func);
+        }
+
+        #[cfg(feature = "reproducible-build")]
+        {
+            let instantiate_func: ExtractorInstantiateFunc = Box::new(|| -> ExtractorInstance {
+                Box::new(reproducible_build::ReproducibleBuildExtractor::new())
+            });
+            mod_list.insert("reproducible-build".to_string(), instantiate_func);
         }
 
         ExtractorModuleList { mod_list }

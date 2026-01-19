@@ -11,6 +11,9 @@ bin = [ "clap", "config", "env_logger", "prost", "shadow-rs", "tokio", "tonic" ]
 # Support in-toto provenance (not ready)
 in-toto =[ "path-clean", "sha2" ]
 
+# Enable reproducible build feature
+reproducible-build = [ "sha2", "rpm", "serde_yaml", "reqwest", "hex", "git2" ]
+
 rebuild-grpc-protos = []
 
 [[bin]]
@@ -30,11 +33,16 @@ chrono = { workspace = true, features = [ "serde" ] }
 clap = { workspace = true, optional = true }
 config = { workspace = true, optional = true }
 env_logger = { workspace = true, optional = true }
+git2 = { version = "0.15.0", optional = true }
+hex = { version = "0.4", optional = true }
 log.workspace = true
 path-clean = { version = "1.0.1", optional = true }
 prost = { workspace = true, optional = true }
+reqwest = { version = "0.11", features = ["blocking"], optional = true  }
+rpm = { version = "0.16", optional = true }
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml = { workspace = true, optional = true  }
 sha2 = { workspace = true, optional = true }
 shadow-rs = { workspace = true, optional = true }
 sled = "0.34.7"
