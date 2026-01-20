@@ -401,7 +401,11 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
         };
 
         for tee_claims in &all_tee_claims {
-            if let Some(obj) = tee_claims.additional_data.as_object() {
+            if let Some(obj) = tee_claims
+                .additional_data
+                .as_ref()
+                .and_then(|v| v.as_object())
+            {
                 for (k, v) in obj {
                     if let Some(_v_str) = v.as_str() {
                         if additional_claims.contains(k.as_str()) {
@@ -487,7 +491,6 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::TeeClaims;
-    use assert_json_diff::assert_json_eq;
     use kbs_types::Tee;
     use serde_json::json;
 
@@ -495,8 +498,6 @@ mod tests {
         oidc::{Configuration, OIDCAttestationTokenBroker},
         AttestationTokenBroker,
     };
-
-    use super::flatten_claims;
 
     #[tokio::test]
     async fn test_issue_oidc_ephemeral_key() {
@@ -513,6 +514,7 @@ mod tests {
                     claims: json!({"claim": "claim1"}),
                     runtime_data_claims: json!({"runtime_data": "111"}),
                     init_data_claims: json!({"initdata": "111"}),
+                    additional_data: Some(json!({"additional_data": "111"})),
                 }],
                 vec!["default".into()],
                 HashMap::new(),
