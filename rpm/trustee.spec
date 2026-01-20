@@ -4,24 +4,25 @@
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.7.4
+Version:        1.7.7
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
 BuildArch:      x86_64
 
-License:        Apache-2.0
-URL:            https://github.com/openanolis/trustee
-Source0:        trustee-%{version}.tar.gz
-Source1:        vendor.tar.gz
-Source2:        config.toml
-Source3:        go-vendor.tar.gz
-Source4:        frontend_node_modules.tar.gz
+License:	Apache-2.0
+URL: 		  https://github.com/openanolis/trustee
+Source0:  trustee-%{version}.tar.gz
+Source1:	vendor.tar.gz
+Source2: 	config.toml
+Source3:  go-vendor.tar.gz
+Source4:  frontend_node_modules.tar.gz
+Source5:  challenge-ra-policy.rego
 
 Requires: openssl tzdata sqlite-libs
 
 BuildRequires:  cargo clang perl protobuf-devel git libtdx-attest-devel libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel libsgx-dcap-quote-verify-devel libsgx-dcap-quote-verify libsgx-headers
-BuildRequires:  ca-certificates gcc golang perl-FindBin
+BuildRequires:  ca-certificates gcc golang
 
 %description
 Trustee are daemon services for attestation and secret distribution.
@@ -68,6 +69,10 @@ popd
 pushd dist/
 make install-frontend BUILDROOT=%{buildroot} PREFIX=%{_prefix} CONFIG_DIR=%{config_dir}
 popd
+
+# Install default EAR policy for attestation-challenge-client
+install -d %{buildroot}/var/lib/attestation/token/ear/policies/opa
+install -m 0644 %{SOURCE5} %{buildroot}/var/lib/attestation/token/ear/policies/opa/default.rego
 
 %post
 systemctl daemon-reload
@@ -140,8 +145,30 @@ fi
 
 %files -n attestation-challenge-client
 %{_prefix}/bin/attestation-challenge-client
+/var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Wed Jan 7 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.7.7-1
+- Release v1.7.6 images and helm-chart by @jialez0 
+- Fix repeat kbs-session-id header nits of gateway by @jialez0 
+- Gateway: support mysql by @wdsun1008 
+
+* Mon Dec 29 2025 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.7.6-1
+- Support skip GPU evidence verification via ENV by @jialez0 in #107
+- KBS /resource API: support parse attest token from Attestation header by @jialez0 in #108
+- Add RPM release workflow and update Makefile by @1570005763 in #105
+- Feat: iml Reference-Value-Distribution-Service (RVDS) by @jialez0 in #109
+- RVDS: support ledger eventlog record and ethereumAdapter by @jialez0 in #110
+- KBS: support encrypted local fs storage backend by @wdsun1008 in #113
+- Challenge RA: impl attestation-oneshot-client by @jialez0 in #114
+- Sample verify: support verify ccel and measurement register by @jialez0 in #115
+- Add manual trigger support for RPM build workflow with tag name input by @1570005763 in #116
+- Challenge RA client: support retrieve reference-value from Rekor by @jialez0 in #118
+- slsa provenance: use absolute path as file measurement name by @jialez0 in #119
+- Update c-ra client and rvps slsa logic by @jialez0 in #121
+- EAR policy: add AI model measurement parse by @jialez0 in #122
+- EAR policy: fix tpm measurement algorithm strings by @jialez0 in #123
+
 * Mon Dec 1 2025 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.7.4-1
 - Resource Policy: Fix file_system to file-system by @jialez0 in #103
 

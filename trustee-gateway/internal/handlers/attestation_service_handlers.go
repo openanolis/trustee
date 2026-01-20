@@ -46,6 +46,7 @@ func parseAAInstanceInfoAS(c *gin.Context) (*models.InstanceInfo, error) {
 	if err := json.Unmarshal([]byte(aaInstanceInfoHeader), &aaInstanceInfo); err != nil {
 		return nil, fmt.Errorf("failed to parse AAInstanceInfo header: %v", err)
 	}
+	aaInstanceInfo.Normalize()
 
 	return &aaInstanceInfo, nil
 }

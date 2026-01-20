@@ -12,6 +12,7 @@ import (
 	"github.com/openanolis/trustee/gateway/internal/config"
 	"github.com/openanolis/trustee/gateway/internal/models"
 	"github.com/sirupsen/logrus"
+	"gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -41,8 +42,8 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		return nil, err
 	}
 
-	// Start backup scheduler if using memory mode
-	if cfg.Database.UseMemory {
+	// Start backup scheduler only for SQLite memory mode
+	if cfg.Database.Type == "sqlite" && cfg.Database.UseMemory {
 		db.startBackupScheduler()
 	}
 
@@ -55,30 +56,12 @@ func (d *Database) initialize() error {
 
 	switch d.config.Type {
 	case "sqlite":
-		if d.config.UseMemory {
-			// Use a shared-cache in-memory database. This is crucial for preventing "no such table" errors
-			// as GORM uses a connection pool, and each connection needs to access the same database.
-			d.DB, err = gorm.Open(sqlite.Open("file:trustee_gateway?mode=memory&cache=shared"), &gorm.Config{})
-			if err != nil {
-				return fmt.Errorf("failed to create in-memory database: %w", err)
-			}
-			logrus.Info("Created in-memory SQLite database with shared cache")
-
-			// Restore from backup if it exists
-			if err := d.restoreFromBackup(); err != nil {
-				logrus.Warnf("Failed to restore from backup (starting fresh): %v", err)
-			}
-		} else {
-			dir := filepath.Dir(d.config.Path)
-			if err := os.MkdirAll(dir, 0700); err != nil {
-				return fmt.Errorf("failed to create database directory: %w", err)
-			}
-
-			d.DB, err = gorm.Open(sqlite.Open(d.config.Path), &gorm.Config{})
-			if err != nil {
-				return fmt.Errorf("failed to open database file: %w", err)
-			}
-			logrus.Infof("Using file-based SQLite database: %s", d.config.Path)
+		if err := d.initializeSQLite(); err != nil {
+			return err
+		}
+	case "mysql":
+		if err := d.initializeMySQL(); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("unsupported database type: %s", d.config.Type)
@@ -87,10 +70,81 @@ func (d *Database) initialize() error {
 	logrus.Info("Connected to database")
 
 	// Auto-migrate the schema
-	if err := d.migrateSchema(); err != nil {
+	if err = d.migrateSchema(); err != nil {
 		return fmt.Errorf("failed to migrate schema: %w", err)
 	}
 
+	return nil
+}
+
+// initializeSQLite sets up the SQLite database connection
+func (d *Database) initializeSQLite() error {
+	var err error
+
+	if d.config.UseMemory {
+		// Use a shared-cache in-memory database. This is crucial for preventing "no such table" errors
+		// as GORM uses a connection pool, and each connection needs to access the same database.
+		d.DB, err = gorm.Open(sqlite.Open("file:trustee_gateway?mode=memory&cache=shared"), &gorm.Config{})
+		if err != nil {
+			return fmt.Errorf("failed to create in-memory database: %w", err)
+		}
+		logrus.Info("Created in-memory SQLite database with shared cache")
+
+		// Restore from backup if it exists
+		if err := d.restoreFromBackup(); err != nil {
+			logrus.Warnf("Failed to restore from backup (starting fresh): %v", err)
+		}
+	} else {
+		dir := filepath.Dir(d.config.Path)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return fmt.Errorf("failed to create database directory: %w", err)
+		}
+
+		d.DB, err = gorm.Open(sqlite.Open(d.config.Path), &gorm.Config{})
+		if err != nil {
+			return fmt.Errorf("failed to open database file: %w", err)
+		}
+		logrus.Infof("Using file-based SQLite database: %s", d.config.Path)
+	}
+
+	return nil
+}
+
+// initializeMySQL sets up the MySQL database connection
+func (d *Database) initializeMySQL() error {
+	if d.config.DSN == "" {
+		return fmt.Errorf("MySQL DSN is required, please set database.dsn in config")
+	}
+
+	var err error
+	d.DB, err = gorm.Open(mysql.Open(d.config.DSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to MySQL database: %w", err)
+	}
+
+	// Configure connection pool
+	sqlDB, err := d.DB.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	if d.config.MaxOpenConns > 0 {
+		sqlDB.SetMaxOpenConns(d.config.MaxOpenConns)
+	}
+	if d.config.MaxIdleConns > 0 {
+		sqlDB.SetMaxIdleConns(d.config.MaxIdleConns)
+	}
+
+	if d.config.ConnMaxLifetime != "" {
+		lifetime, err := time.ParseDuration(d.config.ConnMaxLifetime)
+		if err != nil {
+			logrus.Warnf("Invalid conn_max_lifetime '%s', using default 1h", d.config.ConnMaxLifetime)
+			lifetime = time.Hour
+		}
+		sqlDB.SetConnMaxLifetime(lifetime)
+	}
+
+	logrus.Info("Connected to MySQL database")
 	return nil
 }
 
@@ -109,7 +163,104 @@ func (d *Database) migrateSchema() error {
 		return fmt.Errorf("failed to migrate database schema: %w", err)
 	}
 
+	// Add unique index on instance_id for AAInstanceHeartbeat table
+	// This prevents duplicate heartbeat records for the same instance
+	if d.config.Type == "mysql" {
+		if err := d.migrateAAInstanceHeartbeatIndexMySQL(); err != nil {
+			logrus.Warnf("Failed to migrate AAInstanceHeartbeat index: %v", err)
+		}
+	} else {
+		// SQLite - file-based SQLite has built-in file locking
+		// In-memory SQLite is per-process, so no cross-process conflict
+		d.migrateAAInstanceHeartbeatIndexSQLite()
+	}
+
 	return nil
+}
+
+// migrateAAInstanceHeartbeatIndexMySQL handles unique index creation for MySQL with distributed locking
+func (d *Database) migrateAAInstanceHeartbeatIndexMySQL() error {
+	const lockName = "trustee_gateway_migrate_lock"
+	const lockTimeout = 30 // seconds
+
+	// Try to acquire MySQL advisory lock to prevent concurrent migrations
+	var lockResult int
+	if err := d.DB.Raw("SELECT GET_LOCK(?, ?)", lockName, lockTimeout).Scan(&lockResult).Error; err != nil {
+		return fmt.Errorf("failed to acquire migration lock: %w", err)
+	}
+
+	if lockResult != 1 {
+		logrus.Info("Another instance is running migration, skipping")
+		return nil
+	}
+
+	// Ensure lock is released when done
+	defer func() {
+		if err := d.DB.Exec("SELECT RELEASE_LOCK(?)", lockName).Error; err != nil {
+			logrus.Warnf("Failed to release migration lock: %v", err)
+		}
+	}()
+
+	logrus.Info("Acquired migration lock, proceeding with index migration")
+
+	// Check if index already exists (re-check after acquiring lock)
+	var exists int
+	d.DB.Raw("SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'aa_instance_heartbeats' AND index_name = 'idx_aa_heartbeat_instance_id'").Scan(&exists)
+	if exists > 0 {
+		logrus.Info("Unique index on instance_id already exists, skipping")
+		return nil
+	}
+
+	// Alter column to VARCHAR(255) for index compatibility
+	if err := d.DB.Exec("ALTER TABLE aa_instance_heartbeats MODIFY instance_id VARCHAR(255)").Error; err != nil {
+		logrus.Warnf("Failed to alter instance_id column: %v", err)
+	}
+
+	// Clean up duplicate instance_id records before creating unique index
+	// Keep only the latest record (by id) for each instance_id
+	cleanupSQL := `
+		DELETE t1 FROM aa_instance_heartbeats t1
+		INNER JOIN aa_instance_heartbeats t2
+		WHERE t1.instance_id = t2.instance_id AND t1.id < t2.id
+	`
+	if err := d.DB.Exec(cleanupSQL).Error; err != nil {
+		logrus.Warnf("Failed to clean up duplicate instance_id records: %v", err)
+	} else {
+		logrus.Info("Cleaned up duplicate instance_id records in aa_instance_heartbeats")
+	}
+
+	if err := d.DB.Exec("CREATE UNIQUE INDEX idx_aa_heartbeat_instance_id ON aa_instance_heartbeats(instance_id)").Error; err != nil {
+		return fmt.Errorf("failed to create unique index on instance_id: %w", err)
+	}
+
+	logrus.Info("Created unique index on aa_instance_heartbeats.instance_id")
+	return nil
+}
+
+// migrateAAInstanceHeartbeatIndexSQLite handles unique index creation for SQLite
+func (d *Database) migrateAAInstanceHeartbeatIndexSQLite() {
+	migrator := d.DB.Migrator()
+	if migrator.HasIndex(&models.AAInstanceHeartbeat{}, "idx_aa_heartbeat_instance_id") {
+		return
+	}
+
+	// Clean up duplicate instance_id records before creating unique index
+	// Keep only the latest record (by id) for each instance_id
+	cleanupSQL := `
+		DELETE FROM aa_instance_heartbeats
+		WHERE id NOT IN (
+			SELECT MAX(id) FROM aa_instance_heartbeats GROUP BY instance_id
+		)
+	`
+	if err := d.DB.Exec(cleanupSQL).Error; err != nil {
+		logrus.Warnf("Failed to clean up duplicate instance_id records: %v", err)
+	} else {
+		logrus.Info("Cleaned up duplicate instance_id records in aa_instance_heartbeats")
+	}
+
+	if err := d.DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_aa_heartbeat_instance_id ON aa_instance_heartbeats(instance_id)").Error; err != nil {
+		logrus.Warnf("Failed to create unique index on instance_id: %v", err)
+	}
 }
 
 // restoreFromBackup restores data from backup file to in-memory database using native backup API
@@ -232,8 +383,9 @@ func (d *Database) performBackup(ctx context.Context) error {
 	d.backupMux.Lock()
 	defer d.backupMux.Unlock()
 
-	if !d.config.UseMemory {
-		return nil // No backup needed for file-based database
+	// Backup is only for SQLite memory mode
+	if d.config.Type != "sqlite" || !d.config.UseMemory {
+		return nil
 	}
 
 	// Create temporary backup file
@@ -282,8 +434,8 @@ func (d *Database) Close() error {
 
 	// Stop backup scheduler
 	if d.backupCancel != nil {
-		// Perform final backup if enabled
-		if d.config.UseMemory && d.config.EnableBackupOnShutdown {
+		// Perform final backup if enabled (SQLite memory mode only)
+		if d.config.Type == "sqlite" && d.config.UseMemory && d.config.EnableBackupOnShutdown {
 			if err := d.performBackup(context.Background()); err != nil {
 				logrus.Errorf("Final backup failed: %v", err)
 			} else {

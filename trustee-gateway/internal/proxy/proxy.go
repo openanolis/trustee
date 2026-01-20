@@ -167,8 +167,11 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 	// Create a buffer to store the request body
 	requestBodyBuf := new(bytes.Buffer)
 
-	// Create a new request to the target URL
-	targetPath := c.Request.URL.Path
+	// Prefer RawPath to preserve encoded characters. Fallback to Path when RawPath is empty.
+	targetPath := c.Request.URL.RawPath
+	if targetPath == "" {
+		targetPath = c.Request.URL.Path
+	}
 
 	// For KBS, we need to strip the prefix if necessary
 	if serviceType == KBSService && !strings.HasPrefix(targetPath, "/kbs/v0") {
@@ -183,12 +186,17 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 	}
 
 	targetQuery := c.Request.URL.RawQuery
-	targetURL = targetURL.JoinPath(targetPath)
 
-	// If there's a query string, add it to the target URL
-	if targetQuery != "" {
-		targetURL.RawQuery = targetQuery
+	// Build the target URL while keeping both escaped and unescaped forms aligned.
+	unescapedPath, pathErr := url.PathUnescape(targetPath)
+	if pathErr != nil {
+		return nil, fmt.Errorf("invalid path encoding: %w", pathErr)
 	}
+	targetURLCopy := *targetURL
+	targetURLCopy.Path = unescapedPath
+	targetURLCopy.RawPath = targetPath
+	targetURLCopy.RawQuery = targetQuery
+	targetURL = &targetURLCopy
 
 	// Copy the request body if it exists
 	var targetReq *http.Request
@@ -222,6 +230,12 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 
 	// Copy all headers from the original request
 	for k, vv := range c.Request.Header {
+		// Cookies will be added via targetReq.AddCookie() below.
+		// If we also copy the raw "Cookie" header, it can result in duplicated cookies
+		// (e.g. "kbs-session-id=...; kbs-session-id=...") which breaks KBS session parsing.
+		if http.CanonicalHeaderKey(k) == "Cookie" {
+			continue
+		}
 		for _, v := range vv {
 			targetReq.Header.Add(k, v)
 		}
@@ -280,6 +294,11 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 // CopyHeaders copies headers from a source response to the destination gin context
 func CopyHeaders(dst *gin.Context, src *http.Response) {
 	for k, vv := range src.Header {
+		// Cookies will be set via http.SetCookie() in CopyCookies().
+		// Avoid duplicating Set-Cookie header.
+		if http.CanonicalHeaderKey(k) == "Set-Cookie" {
+			continue
+		}
 		for _, v := range vv {
 			dst.Writer.Header().Add(k, v)
 		}
@@ -291,7 +310,12 @@ func CopyHeaders(dst *gin.Context, src *http.Response) {
 func CopyHeadersExceptContentLength(dst *gin.Context, src *http.Response) {
 	for k, vv := range src.Header {
 		// Skip Content-Length header to avoid conflicts
-		if k == "Content-Length" {
+		ck := http.CanonicalHeaderKey(k)
+		if ck == "Content-Length" {
+			continue
+		}
+		// Avoid duplicating Set-Cookie header; CopyCookies handles it.
+		if ck == "Set-Cookie" {
 			continue
 		}
 		for _, v := range vv {

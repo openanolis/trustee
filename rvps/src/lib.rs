@@ -22,7 +22,7 @@ use pre_processor::{PreProcessor, PreProcessorAPI};
 use anyhow::{bail, Context, Result};
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Default version of Message
 static MESSAGE_VERSION: &str = "0.1.0";
@@ -53,6 +53,35 @@ pub struct Rvps {
     pre_processor: PreProcessor,
     extractors: Extractors,
     storage: Box<dyn ReferenceValueStorage + Send + Sync>,
+}
+
+fn merge_reference_values(old: ReferenceValue, new: ReferenceValue) -> ReferenceValue {
+    // Keep the same name (should be identical). Prefer newer version string if differs.
+    let mut merged = old.clone();
+    merged.version = new.version;
+    merged.name = new.name;
+
+    // Expiration: keep the later one (more permissive, avoids accidentally expiring).
+    merged.expiration = std::cmp::max(old.expiration, new.expiration);
+
+    // Hashes: union (dedupe).
+    for hv in new.hash_value.into_iter() {
+        if !merged.hash_value.contains(&hv) {
+            merged.hash_value.push(hv);
+        }
+    }
+
+    // Audit proof: keep the newer one if present, otherwise preserve the old one.
+    merged.audit_proof = new.audit_proof.or(old.audit_proof);
+
+    merged
+}
+
+fn hash_set(rv: &ReferenceValue) -> HashSet<(String, String)> {
+    rv.hash_value
+        .iter()
+        .map(|h| (h.alg().clone(), h.value().clone()))
+        .collect()
 }
 
 impl Rvps {
@@ -91,9 +120,26 @@ impl Rvps {
 
         let rv = self.extractors.process(message)?;
         for v in rv.iter() {
-            let old = self.storage.set(v.name().to_string(), v.clone()).await?;
-            if let Some(old) = old {
-                info!("Old Reference value of {} is replaced.", old.name());
+            let name = v.name().to_string();
+            if let Some(old) = self.storage.get(&name).await? {
+                // Requirement: if hashes are identical, skip and do not replace.
+                if hash_set(&old) == hash_set(v) {
+                    info!(
+                        "Reference value of {} unchanged (same hashes); skip update.",
+                        name
+                    );
+                    continue;
+                }
+
+                let merged = merge_reference_values(old.clone(), v.clone());
+                let _ = self.storage.set(name, merged).await?;
+                info!(
+                    "Reference value of {} is extended (hash list merged) instead of replaced.",
+                    old.name()
+                );
+            } else {
+                let _ = self.storage.set(name, v.clone()).await?;
+                info!("Reference value of {} is added.", v.name());
             }
         }
 

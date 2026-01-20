@@ -8,10 +8,22 @@ import (
 
 // InstanceInfo represents the information about an attestation agent instance
 type InstanceInfo struct {
-	InstanceID     string `json:"instance_id" gorm:"column:instance_id"`           // AA instance ID
-	ImageID        string `json:"image_id" gorm:"column:image_id"`                 // AA image ID
-	InstanceName   string `json:"instance_name" gorm:"column:instance_name"`       // AA instance name
-	OwnerAccountID string `json:"owner_account_id" gorm:"column:owner_account_id"` // AA owner account ID
+	InstanceID     string `json:"instance_id" gorm:"column:instance_id;size:255"`           // AA instance ID
+	ImageID        string `json:"image_id" gorm:"column:image_id;size:255"`                 // AA image ID
+	InstanceName   string `json:"instance_name" gorm:"column:instance_name;size:255"`       // AA instance name
+	OwnerAccountID string `json:"owner_account_id" gorm:"column:owner_account_id;size:255"` // AA owner account ID
+	EasModelID     string `json:"eas_model_id" gorm:"column:eas_model_id;size:255"`         // Aliyun EAS model ID
+	EasInstanceID  string `json:"eas_instance_id" gorm:"column:eas_instance_id;size:255"`   // Aliyun EAS instance ID
+}
+
+// Normalize fills derived fields for backward/forward compatibility.
+func (info *InstanceInfo) Normalize() {
+	if info == nil {
+		return
+	}
+	if info.InstanceID == "" && info.EasInstanceID != "" {
+		info.InstanceID = info.EasInstanceID
+	}
 }
 
 // AttestationRecord represents a record of an attestation request

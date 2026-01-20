@@ -41,6 +41,7 @@ func (h *AAInstanceHandler) HandleHeartbeat(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid AAInstanceInfo format"})
 		return
 	}
+	aaInstanceInfo.Normalize()
 
 	// Validate required fields
 	if aaInstanceInfo.InstanceID == "" {
