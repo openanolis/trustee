@@ -206,17 +206,21 @@ validate_aael_system_measurements(uefi_event_logs) if {
 	}
 }
 
-# Function to check the AI model measurements from Measurement_tool integrity
+# Function to check the AI model measurements in UEFI eventlog
 validate_aael_model_measurements(uefi_event_logs) if {
 	aael := [e |
 		e := uefi_event_logs[_]
 		e.type_name == "EV_EVENT_TAG"
 		e.details.unicode_name == "AAEL"
-		e.details.data.domain == "ai_model"
+		e.details.data.domain == "trustiflux.alibaba.com"
+		contains(e.details.data.operation, "load-model")
 	]
 	every e in aael {
-		key := sprintf("measurement.%s.%s", [e.details.data.domain, e.details.data.operation])
-		e.details.data.content in data.reference[key]
+		model_hashes := json.unmarshal(e.details.data.content)
+		every model_id, hash in model_hashes {
+			key := sprintf("measurement.model.%s", [model_id])
+			hash in data.reference[key]
+		}
 	}
 }
 
@@ -373,4 +377,23 @@ file_system := 2 if {
 	# validate_cryptpilot_fde(input.tpm.uefi_event_logs)
 	# Check measured files - iterate through all file measurements
 	# validate_aael_file_measurements(input.tpm.uefi_event_logs)
+}
+
+##### SYSTEM
+
+executables := 3 if {
+	# Check AI model measurement
+	validate_aael_model_measurements(input.system.cc_eventlog)
+}
+
+hardware := 2 if {
+	input.system
+}
+
+configuration := 2 if {
+	input.system
+}
+
+file_system := 2 if {
+	input.system
 }
