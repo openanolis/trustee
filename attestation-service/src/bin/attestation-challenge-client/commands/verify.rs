@@ -50,6 +50,7 @@ pub async fn run(
         runtime_data,
         runtime_data_hash_algorithm: runtime_hash_algorithm,
         init_data,
+        additional_data: None,
     };
 
     let token = attestation_service

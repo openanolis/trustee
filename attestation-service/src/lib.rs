@@ -89,7 +89,7 @@ pub struct TeeClaims {
     claims: TeeEvidenceParsedClaim,
     init_data_claims: serde_json::Value,
     runtime_data_claims: serde_json::Value,
-    additional_data: serde_json::Value,
+    additional_data: Option<serde_json::Value>,
 }
 
 /// Runtime Data used to check the binding relationship with report data
@@ -295,7 +295,7 @@ impl AttestationService {
                 claims: claims_from_tee_evidence,
                 init_data_claims,
                 runtime_data_claims,
-                additional_data,
+                additional_data: Some(additional_data),
             });
         }
 

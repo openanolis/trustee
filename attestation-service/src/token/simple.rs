@@ -461,6 +461,7 @@ mod tests {
                     claims: json!({"claim": "claim1"}),
                     runtime_data_claims: json!({"runtime_data": "111"}),
                     init_data_claims: json!({"initdata": "111"}),
+                    additional_data: None,
                 }],
                 vec!["default".into()],
                 HashMap::new(),
