@@ -1,27 +1,23 @@
-use log::info;
+use ::eventlog::{ccel::tcg_enum::TcgAlgorithm, CcEventLog, ReferenceMeasurement};
+use log::{info, warn};
 extern crate serde;
 use self::serde::{Deserialize, Serialize};
 use super::*;
 use async_trait::async_trait;
 use base64::Engine;
+use kbs_types::HashAlgorithm;
 use serde_json::json;
-use sha2::{Digest, Sha384};
 use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct SystemEvidence {
     system_report: String,
-    measurements: String,
-    mr_register: String,
+    #[serde(default)]
+    rtmr_register: Option<String>,
+    #[serde(default)]
+    cc_eventlog: Option<String>,
     environment: HashMap<String, String>,
     report_data: String,
-}
-
-#[derive(Clone, Deserialize, Serialize, Default, Debug, PartialEq)]
-pub struct MeasurementEntry {
-    pub name: String,
-    pub algorithm: String,
-    pub digest: String,
 }
 
 #[derive(Debug, Default)]
@@ -57,19 +53,38 @@ async fn verify_evidence(
     _expected_init_data_hash: &InitDataHash<'_>,
     evidence: &SystemEvidence,
 ) -> Result<()> {
-    // Verify the measurements with MR Register.
-    let measurements: Vec<MeasurementEntry> = serde_json::from_str(&evidence.measurements)?;
-    let mut tmp_mr = Vec::new();
-    for entry in measurements.iter() {
-        let mut hasher = Sha384::new();
-        hasher.update(&tmp_mr);
-        let digest = hex::decode(&entry.digest)?;
-        hasher.update(&digest);
-        tmp_mr = hasher.finalize().to_vec();
-    }
-    let rebuild_mr_register = hex::encode(&tmp_mr);
-    if rebuild_mr_register != evidence.mr_register {
-        bail!("Rebuilded MR Register is different from that in System Evidence");
+    // Verify integrity of CC Eventlog against runtime measurement register.
+    if let Some(rtmr_register) = &evidence.rtmr_register {
+        let expected_alg = HashAlgorithm::Sha384;
+        let measure_register = hex::decode(rtmr_register)
+            .map_err(|e| anyhow!("Decode system runtime register hex: {e}"))?;
+        if measure_register.len() != expected_alg.digest_len() {
+            bail!(
+                "System runtime register length {} is invalid, expected {}",
+                measure_register.len(),
+                expected_alg.digest_len()
+            );
+        }
+
+        if let Some(el) = &evidence.cc_eventlog {
+            let ccel_data = base64::engine::general_purpose::STANDARD
+                .decode(el)
+                .map_err(|e| anyhow!("Decode system CC Eventlog: {e}"))?;
+            let ccel = CcEventLog::try_from(ccel_data)
+                .map_err(|e| anyhow!("Parse CC Eventlog failed: {:?}", e))?;
+            let compare_obj: Vec<ReferenceMeasurement> = vec![ReferenceMeasurement {
+                index: 1,
+                algorithm: TcgAlgorithm::Sha384,
+                reference: measure_register,
+            }];
+
+            ccel.replay_and_match(compare_obj)?;
+            info!("Eventlog integrity check succeeded for system evidence.");
+        } else {
+            warn!("No Eventlog included inside the system evidence.");
+        }
+    } else if evidence.cc_eventlog.is_some() {
+        warn!("System evidence contains eventlog but no runtime register.");
     }
 
     // Emulate the report data.
@@ -91,18 +106,24 @@ async fn verify_evidence(
 fn parse_evidence(quote: &SystemEvidence) -> Result<TeeEvidenceParsedClaim> {
     let mut claims_map = json!({});
 
-    let mut measurements_map = HashMap::new();
-    let measurements: Vec<MeasurementEntry> = serde_json::from_str(&quote.measurements)?;
-    for entry in measurements.iter() {
-        measurements_map.insert(entry.name.clone(), entry.digest.clone());
-    }
-
     let system_report: serde_json::Value = serde_json::from_str(&quote.system_report)?;
+    let parsed_eventlog: Option<serde_json::Value> = if let Some(el) = &quote.cc_eventlog {
+        let ccel_data = base64::engine::general_purpose::STANDARD
+            .decode(el)
+            .context("Decode system CC Eventlog when parsing claims")?;
+        let ccel = CcEventLog::try_from(ccel_data)
+            .map_err(|e| anyhow!("Parse CC Eventlog failed when parsing claims: {:?}", e))?;
+        serde_json::to_value(ccel)
+            .map(Some)
+            .context("Serialize parsed CC Eventlog for claims")?
+    } else {
+        None
+    };
 
     claims_map = json!({
         "system_report": system_report,
-        "measurements": measurements_map,
-        "mr_register": quote.mr_register,
+        "rtmr_register": quote.rtmr_register,
+        "cc_eventlog": parsed_eventlog.unwrap_or(serde_json::Value::Null),
         "environment": quote.environment,
         "report_data": quote.report_data,
     });
