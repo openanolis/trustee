@@ -327,11 +327,11 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
         let sub: String = if let Some(oidc) = &self.config.oid_config {
             let parts: Vec<String> = oidc.sub_claims
                 .as_ref()
-                .map_or_else(|| vec![], |k| {
+                .map_or_else(Vec::new, |k| {
                     k.iter().map(|s| {
                         // Extract value from collected_claims which has top-level keys like "tdx", "sev", "sgx"
                         // and the corresponding values are objects containing nested fields
-                        let mut current_value = &collected_claims;
+                        let current_value = &collected_claims;
                         let mut segments = s.split('.');
 
                         // Get the first segment which should be the TEE type like "tdx", "sev", "sgx"
@@ -401,7 +401,7 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
         };
 
         for tee_claims in &all_tee_claims {
-            tee_claims.additional_data.as_object().map(|obj| {
+            if let Some(obj) = tee_claims.additional_data.as_object() {
                 for (k, v) in obj {
                     if let Some(_v_str) = v.as_str() {
                         if additional_claims.contains(k.as_str()) {
@@ -409,7 +409,7 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
                         }
                     }
                 }
-            });
+            }
         }
 
         let claims_value = Value::Object(jwt_claims);

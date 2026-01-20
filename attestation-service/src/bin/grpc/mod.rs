@@ -181,13 +181,22 @@ impl AttestationService for Arc<RwLock<AttestationServer>> {
                     }
                 };
 
+            let additional_data = match verification_request.additional_data {
+                Some(additional_data) => match additional_data {
+                    crate::as_api::individual_attestation_request::AdditionalData::AdditionalDataString(
+                        additional_data,
+                    ) => Some(additional_data),
+                },
+                None => None,
+            };
+
             verification_requests.push(VerificationRequest {
                 evidence,
                 tee,
                 runtime_data,
                 runtime_data_hash_algorithm,
                 init_data,
-                additional_data: Some(verification_request.additional_data),
+                additional_data,
             });
         }
         let policy_ids = match request.policy_ids.is_empty() {
