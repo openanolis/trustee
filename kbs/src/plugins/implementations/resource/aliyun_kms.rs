@@ -3,21 +3,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::backend::{ResourceDesc, StorageBackend};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use derivative::Derivative;
 use kms::{plugins::aliyun::AliyunKmsClient, Annotations, Getter};
 use log::info;
 use serde::Deserialize;
+use std::env;
 
 #[derive(Derivative, Deserialize, Clone, PartialEq)]
 #[derivative(Debug)]
 pub struct AliyunKmsBackendConfig {
     #[derivative(Debug = "ignore")]
-    client_key: String,
-    kms_instance_id: String,
+    client_key: Option<String>,
+    kms_instance_id: Option<String>,
     #[derivative(Debug = "ignore")]
-    password: String,
-    cert_pem: String,
+    password: Option<String>,
+    cert_pem: Option<String>,
 }
 
 pub struct AliyunKmsBackend {
@@ -59,13 +60,54 @@ impl StorageBackend for AliyunKmsBackend {
 
 impl AliyunKmsBackend {
     pub fn new(repo_desc: &AliyunKmsBackendConfig) -> Result<Self> {
-        let client = AliyunKmsClient::new(
-            &repo_desc.client_key,
-            &repo_desc.kms_instance_id,
-            &repo_desc.password,
-            &repo_desc.cert_pem,
-        )
-        .context("create aliyun KMS backend")?;
+        let has_client_key = repo_desc
+            .client_key
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let has_instance_id = repo_desc
+            .kms_instance_id
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let has_password = repo_desc
+            .password
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let has_cert = repo_desc
+            .cert_pem
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+
+        let client = if has_client_key && has_instance_id && has_password && has_cert {
+            AliyunKmsClient::new(
+                repo_desc.client_key.as_ref().expect("checked"),
+                repo_desc.kms_instance_id.as_ref().expect("checked"),
+                repo_desc.password.as_ref().expect("checked"),
+                repo_desc.cert_pem.as_ref().expect("checked"),
+            )
+            .context("create aliyun KMS backend with AAP client key")?
+        } else {
+            let access_key_id = env::var("ALIYUN_KMS_ACCESS_KEY_ID").map_err(|_| {
+                anyhow!(
+                    "missing ALIYUN_KMS_ACCESS_KEY_ID env var and AAP client key config is incomplete"
+                )
+            })?;
+            let access_key_secret = env::var("ALIYUN_KMS_ACCESS_KEY_SECRET").map_err(|_| {
+                anyhow!(
+                    "missing ALIYUN_KMS_ACCESS_KEY_SECRET env var and AAP client key config is incomplete"
+                )
+            })?;
+            let region_id = env::var("ALIYUN_KMS_REGION_ID").map_err(|_| {
+                anyhow!(
+                    "missing ALIYUN_KMS_REGION_ID env var and AAP client key config is incomplete"
+                )
+            })?;
+            AliyunKmsClient::new_access_key_client(&access_key_id, &access_key_secret, &region_id)
+                .context("create aliyun KMS backend with AccessKey")?
+        };
         Ok(Self { client })
     }
 }

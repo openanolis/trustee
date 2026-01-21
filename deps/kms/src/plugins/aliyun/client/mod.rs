@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use const_format::concatcp;
 use oidc_with_ram::OidcRamClient;
-use serde_json::json;
+use serde_json::{json, Value};
 use sts_token_client::StsTokenClient;
 
 mod client_key_client;
@@ -28,6 +28,9 @@ pub enum AliyunKmsClient {
     },
     EcsRamRole {
         ecs_ram_role_client: EcsRamRoleClient,
+    },
+    AccessKey {
+        client: StsTokenClient,
     },
     StsToken {
         client: StsTokenClient,
@@ -67,6 +70,21 @@ impl AliyunKmsClient {
         Self::EcsRamRole {
             ecs_ram_role_client,
         }
+    }
+
+    pub fn new_access_key_client(
+        access_key_id: &str,
+        access_key_secret: &str,
+        region_id: &str,
+    ) -> Result<Self> {
+        let endpoint = format!("kms.{region_id}.aliyuncs.com");
+        let client = StsTokenClient::from_access_key(
+            access_key_id.to_string(),
+            access_key_secret.to_string(),
+            endpoint,
+            region_id.to_string(),
+        )?;
+        Ok(Self::AccessKey { client })
     }
 
     /// This new function is used by a in-pod client. The side-effect is to read the
@@ -152,6 +170,11 @@ impl AliyunKmsClient {
 
                 Ok(provider_settings)
             }
+            AliyunKmsClient::AccessKey { client: _ } => {
+                let mut provider_settings = serde_json::Map::<String, Value>::new();
+                provider_settings.insert(String::from("client_type"), json!("access_key"));
+                Ok(provider_settings)
+            }
             AliyunKmsClient::StsToken { client } => {
                 let mut provider_settings = client.export_provider_settings();
 
@@ -182,6 +205,9 @@ impl Encrypter for AliyunKmsClient {
             AliyunKmsClient::EcsRamRole { .. } => Err(Error::AliyunKmsError(
                 "Encrypter does not support accessing through Aliyun EcsRamRole".to_string(),
             )),
+            AliyunKmsClient::AccessKey { .. } => Err(Error::AliyunKmsError(
+                "Encrypter does not support accessing through Aliyun AccessKey".to_string(),
+            )),
             AliyunKmsClient::StsToken { .. } => Err(Error::AliyunKmsError(
                 "Encrypter does not support accessing through Aliyun StsToken".to_string(),
             )),
@@ -207,6 +233,9 @@ impl Decrypter for AliyunKmsClient {
             AliyunKmsClient::EcsRamRole { .. } => Err(Error::AliyunKmsError(
                 "Decrypter does not support accessing through Aliyun EcsRamRole".to_string(),
             )),
+            AliyunKmsClient::AccessKey { .. } => Err(Error::AliyunKmsError(
+                "Decrypter does not support accessing through Aliyun AccessKey".to_string(),
+            )),
             AliyunKmsClient::StsToken { .. } => Err(Error::AliyunKmsError(
                 "Decrypter does not support accessing through Aliyun StsToken".to_string(),
             )),
@@ -225,6 +254,7 @@ impl Getter for AliyunKmsClient {
             AliyunKmsClient::EcsRamRole {
                 ref ecs_ram_role_client,
             } => ecs_ram_role_client.get_secret(name, annotations).await,
+            AliyunKmsClient::AccessKey { ref client } => client.get_secret(name, annotations).await,
             AliyunKmsClient::StsToken { ref client } => client.get_secret(name, annotations).await,
             AliyunKmsClient::OidcRam { ref client } => client
                 .get_secret(name, annotations)

@@ -58,6 +58,26 @@ impl StsTokenClient {
         })
     }
 
+    pub fn from_access_key(
+        access_key_id: String,
+        access_key_secret: String,
+        endpoint: String,
+        region_id: String,
+    ) -> Result<Self> {
+        let http_client = ClientBuilder::new()
+            .use_rustls_tls()
+            .build()
+            .map_err(|e| Error::AliyunKmsError(format!("build http client failed: {e:?}")))?;
+        Ok(Self {
+            ak: access_key_id,
+            sk: access_key_secret,
+            sts: String::new(),
+            endpoint,
+            region_id,
+            http_client,
+        })
+    }
+
     /// Export the [`ProviderSettings`] of the current client. This function is to be used
     /// in the encryptor side. The [`ProviderSettings`] will be used to initial a client
     /// in the decryptor side.
@@ -205,7 +225,9 @@ impl StsTokenClient {
         params.insert("SignatureNonce".to_string(), hex_nonce.to_string());
 
         params.insert("AccessKeyId".to_string(), self.ak.clone());
-        params.insert("SecurityToken".to_string(), self.sts.clone());
+        if !self.sts.is_empty() {
+            params.insert("SecurityToken".to_string(), self.sts.clone());
+        }
 
         let canonicalized_params = params
             .iter()
