@@ -216,11 +216,11 @@ validate_aael_model_measurements(uefi_event_logs) if {
 		contains(e.details.data.operation, "load-model")
 	]
 	every e in aael {
-		model_hashes := json.unmarshal(e.details.data.content)
-		every model_id, hash in model_hashes {
-			key := sprintf("measurement.model.%s", [model_id])
-			hash in data.reference[key]
-		}
+		model_measurement := json.unmarshal(e.details.data.content)
+		model_id := model_measurement["model-id"]
+		hash := model_measurement["hash"]
+		key := sprintf("measurement.model.%s", [model_id])
+		hash in data.reference[key]
 	}
 }
 
