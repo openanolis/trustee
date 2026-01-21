@@ -183,17 +183,21 @@ validate_aael_system_measurements(uefi_event_logs) if {
 	}
 }
 
-# Function to check the AI model measurements from Measurement_tool integrity
+# Function to check the AI model measurements in UEFI eventlog
 validate_aael_model_measurements(uefi_event_logs) if {
 	aael := [e |
 		e := uefi_event_logs[_]
 		e.type_name == "EV_EVENT_TAG"
 		e.details.unicode_name == "AAEL"
-		e.details.data.domain == "ai_model"
+		e.details.data.domain == "trustiflux.alibaba.com"
+		contains(e.details.data.operation, "load-model")
 	]
 	every e in aael {
-		key := sprintf("measurement.%s.%s", [e.details.data.domain, e.details.data.operation])
-		e.details.data.content in data.reference[key]
+		model_measurement := json.unmarshal(e.details.data.content)
+		model_id := model_measurement["model-id"]
+		hash := model_measurement["hash"]
+		key := sprintf("measurement.model.%s", [model_id])
+		hash in data.reference[key]
 	}
 }
 

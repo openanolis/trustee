@@ -4,7 +4,7 @@
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.7.7
+Version:        1.7.8
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -148,6 +148,11 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Wed Jan 21 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.7.8-1
+- Gateway: add credential config and /api/credential endpoint
+- KBS: Aliyun KMS backend supports AK env fallback
+- Attestation: update EAR policy and AAEL parsing for new measurements
+
 * Wed Jan 7 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.7.7-1
 - Release v1.7.6 images and helm-chart by @jialez0 
 - Fix repeat kbs-session-id header nits of gateway by @jialez0 
