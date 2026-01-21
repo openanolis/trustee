@@ -222,10 +222,19 @@ This is also called "Repository" in old versions. The properties to be configure
 
 | Property          | Type   | Description                       | Required | Example                                             |
 |-------------------|--------|-----------------------------------|----------|-----------------------------------------------------|
-| `client_key`      | String | The KMS instance's AAP client key | Yes      | `{"KeyId": "KA..", "PrivateKeyData": "MIIJqwI..."}` |
-| `kms_instance_id` | String | The KMS instance id               | Yes      | `kst-shh668f7...`                                   |
-| `password`        | String | AAP client key password           | Yes      | `8f9989c18d27...`                                   |
-| `cert_pem`        | String | CA cert for the KMS instance      | Yes      | `-----BEGIN CERTIFICATE----- ...`                   |
+| `client_key`      | String | The KMS instance's AAP client key | No       | `{"KeyId": "KA..", "PrivateKeyData": "MIIJqwI..."}` |
+| `kms_instance_id` | String | The KMS instance id               | No       | `kst-shh668f7...`                                   |
+| `password`        | String | AAP client key password           | No       | `8f9989c18d27...`                                   |
+| `cert_pem`        | String | CA cert for the KMS instance      | No       | `-----BEGIN CERTIFICATE----- ...`                   |
+
+If the AAP client key fields above are not fully provided, KBS will fall back to
+AccessKey authentication by reading the following environment variables:
+
+| Environment Variable            | Description                          |
+|---------------------------------|--------------------------------------|
+| `ALIYUN_KMS_ACCESS_KEY_ID`      | AccessKey ID                         |
+| `ALIYUN_KMS_ACCESS_KEY_SECRET`  | AccessKey Secret                     |
+| `ALIYUN_KMS_REGION_ID`          | Region ID (e.g. `cn-hangzhou`)       |
 
 #### TPM Private CA Configuration
 

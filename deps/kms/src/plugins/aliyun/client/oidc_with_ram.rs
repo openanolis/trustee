@@ -137,7 +137,7 @@ impl OidcRamClient {
 
         let url = format!("https://{host}/");
         let header_map = HeaderMap::try_from(&headers)?;
-        let response: AssumeRoleWithOidcResponse = self
+        let response_text = self
             .client
             .post(url)
             .headers(header_map)
@@ -145,9 +145,11 @@ impl OidcRamClient {
             .send()
             .await
             .context("failed to assume Role with OIDC")?
-            .json()
+            .text()
             .await
-            .context("failed to call AssumeRoleWithOIDC")?;
+            .context("failed to read AssumeRoleWithOIDC response")?;
+        let response: AssumeRoleWithOidcResponse =
+            serde_json::from_str(&response_text).context("failed to parse AssumeRoleWithOIDC")?;
 
         Ok(response.credentials)
     }
