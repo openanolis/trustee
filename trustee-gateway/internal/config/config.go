@@ -15,6 +15,7 @@ type Config struct {
 	Logging                      LoggingConfig                      `mapstructure:"logging"`
 	Audit                        AuditConfig                        `mapstructure:"audit"`
 	AttestationAgentInstanceInfo AttestationAgentInstanceInfoConfig `mapstructure:"attestation_agent_instance_info"`
+	Credential                   CredentialConfig                   `mapstructure:"credential"`
 }
 
 // ServerConfig holds the gateway server configuration
@@ -79,6 +80,11 @@ type AuditConfig struct {
 	CleanupIntervalHours int `mapstructure:"cleanup_interval_hours"`
 }
 
+// CredentialConfig holds configuration for credential file
+type CredentialConfig struct {
+	Path string `mapstructure:"path"`
+}
+
 // LoadConfig loads the application configuration from file
 func LoadConfig(configPath string) (*Config, error) {
 	viper.SetConfigFile(configPath)
@@ -105,6 +111,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	viper.SetDefault("audit.retention_days", 3)
 	viper.SetDefault("audit.cleanup_interval_hours", 24)
 	viper.SetDefault("attestation_agent_instance_info.heartbeat_timeout_minutes", 10)
+	viper.SetDefault("credential.path", "")
 
 	if err := viper.ReadInConfig(); err != nil {
 		logrus.Warnf("Failed to read config file: %v. Using default values.", err)

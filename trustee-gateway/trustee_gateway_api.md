@@ -43,6 +43,9 @@
 - [7.1 AA实例心跳](#71-aa实例心跳)
 - [7.2 实例列表](#72-实例列表)
 
+### [8. Credential API (`/api/credential`)](#8-credential-api-apicredential)
+- [8.1 获取credential文件](#81-获取credential文件)
+
 ### [附录](#附录)
 - [KBS认证头生成方法](#kbs认证头生成方法)
 
@@ -1716,6 +1719,60 @@ curl -k http://<gateway-host>:<port>/api/aa-instance/list
   "count": 1,
   "timestamp": "2025-06-10T11:58:44+08:00"
 }
+```
+
+### 8. Credential API (`**/api/credential**`)
+
+#### 8.1 获取credential文件
+
+*   **端点:** `GET /api/credential`
+    
+*   **说明:** 读取配置中的 `credential.path` 指向的文件内容并返回。
+    
+*   **调用方法:**
+    
+
+```shell
+curl -k http://<gateway-host>:<port>/api/credential
+```
+
+*   **请求头:** 无。
+    
+*   **请求参数:** 无。
+    
+*   **请求体:** 无。
+    
+*   **响应:** 返回文件内容（原样输出）。
+    
+*   **返回码:**
+    
+    *   `200 OK`: 返回文件内容。
+        
+    *   `404 Not Found`: 未配置 `credential` 或已配置但文件不存在。
+        
+    *   `500 Internal Server Error`: 读取文件失败。
+        
+*   **返回示例 (成功):**
+    
+
+```plaintext
+-----BEGIN PUBLIC KEY-----
+...
+-----END PUBLIC KEY-----
+```
+
+*   **返回示例 (未配置):**
+    
+
+```json
+{"error":"Credential not configured"}
+```
+
+*   **返回示例 (文件不存在):**
+    
+
+```json
+{"error":"Credential configured but file not found"}
 ```
 
 # 附录

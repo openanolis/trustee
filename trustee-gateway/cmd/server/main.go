@@ -72,6 +72,7 @@ func main() {
 	auditHandler := handlers.NewAuditHandler(auditRepo)
 	healthCheckHandler := handlers.NewHealthCheckHandler(p, rvpsClient)
 	aaInstanceHandler := handlers.NewAAInstanceHandler(aaInstanceRepo, &cfg.AttestationAgentInstanceInfo)
+	credentialHandler := handlers.NewCredentialHandler(&cfg.Credential)
 
 	// Setup context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -87,7 +88,7 @@ func main() {
 	router.Use(middleware.Logger())
 
 	// API routes
-	setupRoutes(router, kbsHandler, rvpsHandler, attestationServiceHandler, auditHandler, healthCheckHandler, p, aaInstanceHandler)
+	setupRoutes(router, kbsHandler, rvpsHandler, attestationServiceHandler, auditHandler, healthCheckHandler, p, aaInstanceHandler, credentialHandler)
 
 	// Setup HTTP server
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
@@ -144,7 +145,7 @@ func main() {
 	logrus.Info("Server shutdown complete")
 }
 
-func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandler *handlers.RVPSHandler, attestationServiceHandler *handlers.AttestationServiceHandler, auditHandler *handlers.AuditHandler, healthCheckHandler *handlers.HealthCheckHandler, p *proxy.Proxy, aaInstanceHandler *handlers.AAInstanceHandler) {
+func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandler *handlers.RVPSHandler, attestationServiceHandler *handlers.AttestationServiceHandler, auditHandler *handlers.AuditHandler, healthCheckHandler *handlers.HealthCheckHandler, p *proxy.Proxy, aaInstanceHandler *handlers.AAInstanceHandler, credentialHandler *handlers.CredentialHandler) {
 	// KBS API routes
 	kbs := router.Group("/api/kbs/v0")
 	{
@@ -213,6 +214,9 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 	// Health check routes
 	router.GET("/api/health", healthCheckHandler.HandleHealthCheck)
 	router.GET("/api/services-health", healthCheckHandler.HandleServicesHealthCheck)
+
+	// Credential routes
+	router.GET("/api/credential", credentialHandler.HandleGetCredential)
 
 	// Attestation Agent routes
 	aa := router.Group("/api/aa-instance")

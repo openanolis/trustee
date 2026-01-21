@@ -29,6 +29,9 @@ database:
 logging:
   level: "debug"
 
+credential:
+  path: ""
+
 # Audit log cleanup configuration
 audit:
   # Maximum number of records to keep for each type (attestation_records and resource_requests)
