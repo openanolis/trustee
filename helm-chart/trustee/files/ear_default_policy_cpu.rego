@@ -46,7 +46,7 @@ validate_boot_measurements(measurements_data) if {
 validate_kernel_cmdline(measurements_data, cmdline_data) if {
 	some algorithm in {"SHA-1", "SHA-256", "SHA-384"}
 	measurement_key := sprintf("measurement.kernel_cmdline.%s", [algorithm])
-	cmdline_data in data.reference[measurement_key]
+	measurements_data[measurement_key] in data.reference[measurement_key]
 }
 
 ### The following functions are for parsing UEFI event logs
@@ -160,17 +160,67 @@ validate_aael_file_measurements(uefi_event_logs) if {
 	}
 }
 
-# Function to check the AI model measurements from Measurement_tool integrity
+# Function to check the /bin file measurements from Measurement_tool integrity
+validate_aael_bin_measurements(uefi_event_logs) if {
+	aael := [e |
+		e := uefi_event_logs[_]
+		e.type_name == "EV_EVENT_TAG"
+		e.details.unicode_name == "AAEL"
+		e.details.data.domain == "file"
+		contains(e.details.data.operation, "/bin")
+	]
+	every e in aael {
+		key := sprintf("measurement.%s.%s", [e.details.data.domain, e.details.data.operation])
+		e.details.data.content in data.reference[key]
+	}
+}
+
+# Function to check the /etc file measurements from Measurement_tool integrity
+validate_aael_etc_measurements(uefi_event_logs) if {
+	aael := [e |
+		e := uefi_event_logs[_]
+		e.type_name == "EV_EVENT_TAG"
+		e.details.unicode_name == "AAEL"
+		e.details.data.domain == "file"
+		contains(e.details.data.operation, "/etc")
+	]
+	every e in aael {
+		key := sprintf("measurement.%s.%s", [e.details.data.domain, e.details.data.operation])
+		e.details.data.content in data.reference[key]
+	}
+}
+
+# Function to check the system/lib/include file measurements from Measurement_tool integrity
+validate_aael_system_measurements(uefi_event_logs) if {
+	aael := [e |
+		e := uefi_event_logs[_]
+		e.type_name == "EV_EVENT_TAG"
+		e.details.unicode_name == "AAEL"
+		e.details.data.domain == "file"
+		some fragment in {"/system", "/lib", "/include"}
+		contains(e.details.data.operation, fragment)
+	]
+	every e in aael {
+		key := sprintf("measurement.%s.%s", [e.details.data.domain, e.details.data.operation])
+		e.details.data.content in data.reference[key]
+	}
+}
+
+# Function to check the AI model measurements in UEFI eventlog
 validate_aael_model_measurements(uefi_event_logs) if {
 	aael := [e |
 		e := uefi_event_logs[_]
 		e.type_name == "EV_EVENT_TAG"
 		e.details.unicode_name == "AAEL"
-		e.details.data.domain == "ai_model"
+		e.details.data.domain == "trustiflux.alibaba.com"
+		contains(e.details.data.operation, "load-model")
 	]
 	every e in aael {
-		key := sprintf("measurement.%s.%s", [e.details.data.domain, e.details.data.operation])
-		e.details.data.content in data.reference[key]
+		model_measurement := json.unmarshal(e.details.data.content)
+		model_id := model_measurement["model-id"]
+		hash := model_measurement["hash"]
+		key := sprintf("measurement.model.%s", [model_id])
+		hash in data.reference[key]
 	}
 }
 
@@ -182,6 +232,9 @@ executables := 3 if {
 
 	# Check AI model measurement
 	# validate_aael_model_measurements(input.tdx.uefi_event_logs)
+
+	# Check /bin measurements
+	# validate_aael_bin_measurements(input.tdx.uefi_event_logs)
 }
 
 hardware := 2 if {
@@ -201,6 +254,9 @@ configuration := 2 if {
 
 	# Check kernel command line parameters have the expected value for any supported algorithm
 	validate_kernel_cmdline_uefi(input.tdx.uefi_event_logs)
+
+	# Check /etc measurements
+	# validate_aael_etc_measurements(input.tdx.uefi_event_logs)
 	# Check cryptpilot config
 	# validate_cryptpilot_config(input.tdx.uefi_event_logs)
 }
@@ -208,8 +264,9 @@ configuration := 2 if {
 file_system := 2 if {
 	input.tdx
 
-	# Placeholder to avoid empty body being treated as true. Remove when enabling checks below.
-	false
+	# Check /system, /lib, /include measurements
+	# validate_aael_system_measurements(input.tdx.uefi_event_logs)
+
 	# Check rootfs integrity
 	# validate_cryptpilot_fde(input.tdx.uefi_event_logs)
 
@@ -225,6 +282,9 @@ executables := 3 if {
 
 	# Check AI model measurement
 	# validate_aael_model_measurements(input.tdx.uefi_event_logs)
+
+	# Check /bin measurements
+	# validate_aael_bin_measurements(input.tpm.uefi_event_logs)
 }
 
 hardware := 2 if {
@@ -240,6 +300,9 @@ hardware := 2 if {
 configuration := 2 if {
 	# Check kernel command line parameters have the expected value for any supported algorithm
 	validate_kernel_cmdline(input.tpm, input.tpm.kernel_cmdline)
+
+	# Check /etc measurements
+	# validate_aael_etc_measurements(input.tpm.uefi_event_logs)
 	# Check cryptpilot config
 	# validate_cryptpilot_config(input.tpm.uefi_event_logs)
 }
@@ -247,8 +310,9 @@ configuration := 2 if {
 file_system := 2 if {
 	input.tpm
 
-	# Placeholder to avoid empty body being treated as true. Remove when enabling checks below.
-	false
+	# Check /system, /lib, /include measurements
+	# validate_aael_system_measurements(input.tpm.uefi_event_logs)
+
 	# Check rootfs integrity
 	# validate_cryptpilot_fde(input.tpm.uefi_event_logs)
 
@@ -264,6 +328,9 @@ executables := 3 if {
 
 	# Check AI model measurement
 	# validate_aael_model_measurements(input.tdx.uefi_event_logs)
+
+	# Check /bin measurements
+	# validate_aael_bin_measurements(input.csv.uefi_event_logs)
 }
 
 # Check cryptpilot config. Uncomment this due to your need
@@ -293,6 +360,9 @@ configuration := 2 if {
 
 	# Check kernel command line parameters have the expected value for any supported algorithm
 	validate_kernel_cmdline_uefi(input.csv.uefi_event_logs)
+
+	# Check /etc measurements
+	# validate_aael_etc_measurements(input.csv.uefi_event_logs)
 	# Check cryptpilot config. Uncomment this due to your need
 	# validate_cryptpilot_config(input.csv.uefi_event_logs)
 }
@@ -300,8 +370,9 @@ configuration := 2 if {
 file_system := 2 if {
 	input.csv
 
-	# Placeholder to avoid empty body being treated as true. Remove when enabling checks below.
-	false
+	# Check /system, /lib, /include measurements
+	# validate_aael_system_measurements(input.csv.uefi_event_logs)
+
 	# Check rootfs integrity
 	# validate_cryptpilot_fde(input.tpm.uefi_event_logs)
 	# Check measured files - iterate through all file measurements
@@ -311,7 +382,8 @@ file_system := 2 if {
 ##### SYSTEM
 
 executables := 3 if {
-	input.system
+	# Check AI model measurement
+	validate_aael_model_measurements(input.system.cc_eventlog)
 }
 
 hardware := 2 if {
@@ -325,4 +397,3 @@ configuration := 2 if {
 file_system := 2 if {
 	input.system
 }
-
