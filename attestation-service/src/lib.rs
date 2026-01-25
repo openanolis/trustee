@@ -444,12 +444,8 @@ impl AttestationService {
 
     pub async fn get_token_broker_public_key(&self) -> Result<Option<String>> {
         match &self._config.attestation_token_broker {
-            token::AttestationTokenConfig::Simple(_) => {
-                Ok(None)
-            }
-            token::AttestationTokenConfig::Ear(_) => {
-                Ok(None)
-            }
+            token::AttestationTokenConfig::Simple(_) => Ok(None),
+            token::AttestationTokenConfig::Ear(_) => Ok(None),
             token::AttestationTokenConfig::OIDC(cfg) => {
                 if let Some(signer) = &cfg.signer {
                     let pem_data = std::fs::read(&signer.key_path)
@@ -478,12 +474,8 @@ impl AttestationService {
 
     pub async fn get_token_broker_oid_config(&self) -> Result<Option<String>> {
         match &self._config.attestation_token_broker {
-            token::AttestationTokenConfig::Simple(_) => {
-                Ok(None)
-            }
-            token::AttestationTokenConfig::Ear(_) => {
-                Ok(None)
-            }
+            token::AttestationTokenConfig::Simple(_) => Ok(None),
+            token::AttestationTokenConfig::Ear(_) => Ok(None),
             token::AttestationTokenConfig::OIDC(cfg) => {
                 if let Some(oid_config) = &cfg.oid_config {
                     let oid_info = json!({

@@ -325,10 +325,9 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
         };
 
         let sub: String = if let Some(oidc) = &self.config.oid_config {
-            let parts: Vec<String> = oidc.sub_claims
-                .as_ref()
-                .map_or_else(Vec::new, |k| {
-                    k.iter().map(|s| {
+            let parts: Vec<String> = oidc.sub_claims.as_ref().map_or_else(Vec::new, |k| {
+                k.iter()
+                    .map(|s| {
                         // Extract value from collected_claims which has top-level keys like "tdx", "sev", "sgx"
                         // and the corresponding values are objects containing nested fields
                         let current_value = &collected_claims;
@@ -366,13 +365,17 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
                         }
                     })
                     .collect::<Vec<String>>()
-                });
+            });
             parts.join(".")
         } else {
             "".to_string()
         };
 
-        let sub = if sub.is_empty() { "none".to_string() } else { sub }; // Some OIDC clients require non-empty sub
+        let sub = if sub.is_empty() {
+            "none".to_string()
+        } else {
+            sub
+        }; // Some OIDC clients require non-empty sub
 
         let mut jwt_claims = json!({
             "iss": self.config.issuer_name.clone(),
@@ -395,7 +398,9 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
         );
 
         let additional_claims: HashSet<String> = if let Some(oidc) = &self.config.oid_config {
-            oidc.additional_claims.as_ref().map_or_else(HashSet::new, |v| v.iter().cloned().collect())
+            oidc.additional_claims
+                .as_ref()
+                .map_or_else(HashSet::new, |v| v.iter().cloned().collect())
         } else {
             HashSet::new()
         };

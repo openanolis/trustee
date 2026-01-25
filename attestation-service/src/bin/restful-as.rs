@@ -14,8 +14,8 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 
 use crate::restful::{
-    attestation, delete_policy, get_certificate, get_jwks, get_openid_configuration,
-    get_challenge, get_policies, set_policy,
+    attestation, delete_policy, get_certificate, get_challenge, get_jwks, get_openid_configuration,
+    get_policies, set_policy,
 };
 
 mod restful;
@@ -124,11 +124,10 @@ async fn main() -> Result<(), RestfulError> {
             .service(
                 web::resource(WebApi::Certificate.as_ref()).route(web::get().to(get_certificate)),
             )
+            .service(web::resource(WebApi::Jwks.as_ref()).route(web::get().to(get_jwks)))
             .service(
-                web::resource(WebApi::Jwks.as_ref()).route(web::get().to(get_jwks)),
-            )
-            .service(
-                web::resource(WebApi::OpenIdConfiguration.as_ref()).route(web::get().to(get_openid_configuration)),
+                web::resource(WebApi::OpenIdConfiguration.as_ref())
+                    .route(web::get().to(get_openid_configuration)),
             )
             .app_data(web::Data::clone(&attestation_service))
     });
