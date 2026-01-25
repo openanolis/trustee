@@ -13,8 +13,8 @@ use strum::Display;
 use crate::config::DEFAULT_WORK_DIR;
 
 pub mod ear_broker;
-pub mod simple;
 pub mod oidc;
+pub mod simple;
 
 pub const DEFAULT_TOKEN_DURATION: i64 = 5;
 pub const COCO_AS_ISSUER_NAME: &str = "CoCo-Attestation-Service";
@@ -74,10 +74,10 @@ impl AttestationTokenConfig {
                 ear_broker::EarAttestationTokenBroker::new(cfg.clone())?,
             )
                 as Box<dyn AttestationTokenBroker + Send + Sync>),
-            AttestationTokenConfig::OIDC(cfg) => Ok(Box::new(
-                oidc::OIDCAttestationTokenBroker::new(cfg.clone())?,
-            )
-                as Box<dyn AttestationTokenBroker + Send + Sync>),
+            AttestationTokenConfig::OIDC(cfg) => Ok(
+                Box::new(oidc::OIDCAttestationTokenBroker::new(cfg.clone())?)
+                    as Box<dyn AttestationTokenBroker + Send + Sync>,
+            ),
         }
     }
 }
