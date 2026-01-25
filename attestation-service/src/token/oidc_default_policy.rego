@@ -236,6 +236,24 @@ file_system := 2 if {
 	# validate_aael_file_measurements(input.tpm.uefi_event_logs)
 }
 
+##### Sample TEE (for testing)
+
+executables := 2 if {
+	input.sample
+}
+
+hardware := 2 if {
+	input.sample
+}
+
+configuration := 2 if {
+	input.sample
+}
+
+file_system := 2 if {
+	input.sample
+}
+
 ##### Hygon CSV
 
 executables := 3 if {
