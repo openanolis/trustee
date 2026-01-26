@@ -383,7 +383,7 @@ file_system := 2 if {
 
 executables := 3 if {
 	# Check AI model measurement
-	validate_aael_model_measurements(input.system.cc_eventlog)
+	validate_aael_model_measurements(input.system.uefi_event_logs)
 }
 
 hardware := 2 if {

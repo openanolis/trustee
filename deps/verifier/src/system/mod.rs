@@ -6,7 +6,6 @@ use super::*;
 use async_trait::async_trait;
 use base64::Engine;
 use kbs_types::HashAlgorithm;
-use serde_json::json;
 use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -104,7 +103,7 @@ async fn verify_evidence(
 // Dump the TCB status from the quote.
 #[allow(unused_assignments)]
 fn parse_evidence(quote: &SystemEvidence) -> Result<TeeEvidenceParsedClaim> {
-    let mut claims_map = json!({});
+    let mut claims_map = serde_json::Map::new();
 
     let system_report: serde_json::Value = serde_json::from_str(&quote.system_report)?;
     let parsed_eventlog: Option<serde_json::Value> = if let Some(el) = &quote.cc_eventlog {
@@ -113,20 +112,29 @@ fn parse_evidence(quote: &SystemEvidence) -> Result<TeeEvidenceParsedClaim> {
             .context("Decode system CC Eventlog when parsing claims")?;
         let ccel = CcEventLog::try_from(ccel_data)
             .map_err(|e| anyhow!("Parse CC Eventlog failed when parsing claims: {:?}", e))?;
-        serde_json::to_value(ccel)
+        serde_json::to_value(ccel.log)
             .map(Some)
             .context("Serialize parsed CC Eventlog for claims")?
     } else {
         None
     };
 
-    claims_map = json!({
-        "system_report": system_report,
-        "rtmr_register": quote.rtmr_register,
-        "cc_eventlog": parsed_eventlog.unwrap_or(serde_json::Value::Null),
-        "environment": quote.environment,
-        "report_data": quote.report_data,
-    });
+    claims_map.insert("system_report".to_string(), system_report);
+    claims_map.insert(
+        "rtmr_register".to_string(),
+        serde_json::to_value(&quote.rtmr_register)?,
+    );
+    if let Some(eventlog) = parsed_eventlog {
+        claims_map.insert("uefi_event_logs".to_string(), eventlog);
+    }
+    claims_map.insert(
+        "environment".to_string(),
+        serde_json::to_value(&quote.environment)?,
+    );
+    claims_map.insert(
+        "report_data".to_string(),
+        serde_json::to_value(&quote.report_data)?,
+    );
 
-    Ok(claims_map as TeeEvidenceParsedClaim)
+    Ok(serde_json::Value::Object(claims_map) as TeeEvidenceParsedClaim)
 }
