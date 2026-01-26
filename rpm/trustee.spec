@@ -4,7 +4,7 @@
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.7.8
+Version:        1.8.0
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -148,6 +148,10 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Mon Jan 26 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.0-1
+- Add OIDC token support for attestation-service by @jinzihao
+- trustee-gateway: add eas_pod_name to audit structure by @jialez0
+
 * Wed Jan 21 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.7.8-1
 - Gateway: add credential config and /api/credential endpoint
 - KBS: Aliyun KMS backend supports AK env fallback
