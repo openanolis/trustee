@@ -113,6 +113,14 @@ impl Attest for BuiltInCoCoAs {
     async fn query_reference_values(&self) -> anyhow::Result<HashMap<String, serde_json::Value>> {
         self.inner.read().await.query_reference_values().await
     }
+
+    async fn delete_reference_value(&self, name: &str) -> anyhow::Result<bool> {
+        self.inner
+            .write()
+            .await
+            .delete_reference_value(name.to_string())
+            .await
+    }
 }
 
 impl BuiltInCoCoAs {

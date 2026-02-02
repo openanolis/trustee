@@ -157,6 +157,13 @@ pub trait Attest: Send + Sync {
             "Attestation Service does not support reference value configuration."
         ))
     }
+
+    /// Delete a reference value from the RVPS, if the AS supports it
+    async fn delete_reference_value(&self, _name: &str) -> anyhow::Result<bool> {
+        Err(anyhow!(
+            "Attestation Service does not support reference value configuration."
+        ))
+    }
 }
 
 /// Attestation Service
@@ -249,6 +256,28 @@ impl AttestationService {
             .delete_policy(policy_id)
             .await
             .map_err(|e| Error::DeletePolicy { source: e })
+    }
+
+    pub async fn register_reference_value(&self, message: &str) -> Result<()> {
+        self.inner
+            .register_reference_value(message)
+            .await
+            .map_err(|e| Error::RegisterReferenceValue { source: e })
+    }
+
+    pub async fn query_reference_values(&self) -> Result<HashMap<String, serde_json::Value>> {
+        self.inner
+            .query_reference_values()
+            .await
+            .map_err(|e| Error::QueryReferenceValues { source: e })
+    }
+
+    pub async fn delete_reference_value(&self, name: &str) -> Result<()> {
+        self.inner
+            .delete_reference_value(name)
+            .await
+            .map_err(|e| Error::DeleteReferenceValue { source: e })?;
+        Ok(())
     }
 
     pub async fn auth(&self, request: &[u8]) -> Result<HttpResponse> {

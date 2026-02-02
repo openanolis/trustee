@@ -135,7 +135,10 @@ impl ResponseError for Error {
                     AttestationError::SetPolicy { .. }
                     | AttestationError::GetPolicy { .. }
                     | AttestationError::ListPolicies { .. }
-                    | AttestationError::DeletePolicy { .. } => HttpResponse::BadRequest(),
+                    | AttestationError::DeletePolicy { .. }
+                    | AttestationError::RegisterReferenceValue { .. }
+                    | AttestationError::QueryReferenceValues { .. }
+                    | AttestationError::DeleteReferenceValue { .. } => HttpResponse::BadRequest(),
                 }
             }
         };
