@@ -12,6 +12,7 @@ use actix_web::{
 use actix_web_httpauth::headers::authorization::{Authorization, Bearer};
 use anyhow::{anyhow, Context};
 use log::info;
+use serde::Deserialize;
 
 use crate::{
     admin::Admin, config::KbsConfig, jwe::jwe, plugins::PluginManager, policy_engine::PolicyEngine,
@@ -38,6 +39,11 @@ pub struct ApiServer {
     admin_auth: Admin,
     config: KbsConfig,
     token_verifier: TokenVerifier,
+}
+
+#[derive(Deserialize)]
+struct RvpsRegisterRequest {
+    message: String,
 }
 
 impl ApiServer {
@@ -222,6 +228,43 @@ pub(crate) async fn api(
             Ok(HttpResponse::Ok()
                 .content_type("application/json")
                 .body(policies_json))
+        }
+        #[cfg(feature = "as")]
+        "rvps" if request.method() == Method::GET && additional_path == "/query" => {
+            core.admin_auth.validate_auth(&request)?;
+            let reference_values = core.attestation_service.query_reference_values().await?;
+            let reference_values_json = serde_json::to_string(&reference_values)?;
+
+            Ok(HttpResponse::Ok()
+                .content_type("application/json")
+                .body(reference_values_json))
+        }
+        #[cfg(feature = "as")]
+        "rvps" if request.method() == Method::POST && additional_path == "/register" => {
+            core.admin_auth.validate_auth(&request)?;
+            let request: RvpsRegisterRequest = serde_json::from_slice(&body)?;
+
+            core.attestation_service
+                .register_reference_value(&request.message)
+                .await?;
+
+            Ok(HttpResponse::Ok().finish())
+        }
+        #[cfg(feature = "as")]
+        "rvps" if request.method() == Method::DELETE && additional_path.starts_with("/delete/") => {
+            core.admin_auth.validate_auth(&request)?;
+            let name = additional_path.strip_prefix("/delete/").unwrap_or("");
+            if name.is_empty() {
+                return Err(Error::InvalidRequestPath {
+                    path: request.path().to_string(),
+                });
+            }
+
+            core.attestation_service
+                .delete_reference_value(name)
+                .await?;
+
+            Ok(HttpResponse::Ok().finish())
         }
         // TODO: consider to rename the api name for it is not only for
         // resource retrievement but for all plugins.

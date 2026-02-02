@@ -6,7 +6,8 @@ use anyhow::*;
 use async_trait::async_trait;
 use attestation::{
     reference_value_provider_service_client::ReferenceValueProviderServiceClient,
-    ReferenceValueQueryRequest, ReferenceValueQueryResponse, ReferenceValueRegisterRequest,
+    ReferenceValueDeleteRequest, ReferenceValueQueryRequest, ReferenceValueQueryResponse,
+    ReferenceValueRegisterRequest,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use kbs_types::{Challenge, Tee};
@@ -258,6 +259,22 @@ impl Attest for GrpcClientPool {
             .into_inner();
 
         Ok(serde_json::from_str(&reference_value_results)?)
+    }
+
+    async fn delete_reference_value(&self, name: &str) -> anyhow::Result<bool> {
+        let req = tonic::Request::new(ReferenceValueDeleteRequest {
+            name: name.to_string(),
+        });
+
+        let mut client = { self.pool.lock().await.get().await? };
+
+        client
+            .rvps_rpc
+            .delete_reference_value(req)
+            .await
+            .map_err(|e| anyhow!("Failed to delete reference value: {:?}", e))?;
+
+        Ok(true)
     }
 }
 

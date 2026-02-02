@@ -57,4 +57,22 @@ pub enum Error {
         #[source]
         source: anyhow::Error,
     },
+
+    #[error("Register reference value failed")]
+    RegisterReferenceValue {
+        #[source]
+        source: anyhow::Error,
+    },
+
+    #[error("Query reference values failed")]
+    QueryReferenceValues {
+        #[source]
+        source: anyhow::Error,
+    },
+
+    #[error("Delete reference value failed")]
+    DeleteReferenceValue {
+        #[source]
+        source: anyhow::Error,
+    },
 }
