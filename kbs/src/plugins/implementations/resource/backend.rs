@@ -84,6 +84,9 @@ pub enum RepositoryConfig {
     #[cfg(feature = "aliyun")]
     #[serde(alias = "aliyun")]
     Aliyun(super::aliyun_kms::AliyunKmsBackendConfig),
+
+    #[serde(alias = "external_kms", alias = "external-kms", alias = "ExternalKms")]
+    ExternalKms(super::external_kms::ExternalKmsBackendConfig),
 }
 
 impl Default for RepositoryConfig {
@@ -122,6 +125,12 @@ impl TryFrom<RepositoryConfig> for ResourceStorage {
                 let client = super::aliyun_kms::AliyunKmsBackend::new(&config)?;
                 Ok(Self {
                     backend: Arc::new(client),
+                })
+            }
+            RepositoryConfig::ExternalKms(config) => {
+                let backend = super::external_kms::ExternalKmsBackend::new(&config)?;
+                Ok(Self {
+                    backend: Arc::new(backend),
                 })
             }
         }

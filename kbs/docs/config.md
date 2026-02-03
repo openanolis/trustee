@@ -208,9 +208,9 @@ The `name` field is `resource` to enable this plugin.
 Resource plugin allows user with proper attestation token to access storage that KBS keeps.
 This is also called "Repository" in old versions. The properties to be configured are listed.
 
-| Property | Type   | Description                                                     | Required | Default   |
-|----------|--------|-----------------------------------------------------------------|----------|-----------|
-| `type`   | String | The resource repository type. Valid values: `LocalFs`, `Aliyun` | Yes      | `LocalFs` |
+| Property | Type   | Description                                                                   | Required | Default   |
+|----------|--------|-------------------------------------------------------------------------------|----------|-----------|
+| `type`   | String | The resource repository type. Valid values: `LocalFs`, `Aliyun`, `ExternalKms` | Yes      | `LocalFs` |
 
 **`LocalFs` Properties**
 
@@ -235,6 +235,15 @@ AccessKey authentication by reading the following environment variables:
 | `ALIYUN_KMS_ACCESS_KEY_ID`      | AccessKey ID                         |
 | `ALIYUN_KMS_ACCESS_KEY_SECRET`  | AccessKey Secret                     |
 | `ALIYUN_KMS_REGION_ID`          | Region ID (e.g. `cn-hangzhou`)       |
+
+**`ExternalKms` Properties**
+
+| Property              | Type    | Description                                                   | Required | Default                                      |
+|-----------------------|---------|---------------------------------------------------------------|----------|----------------------------------------------|
+| `library_path`        | String  | Path to the provider shared library (.so).                     | No       | `/opt/trustee/kbs/libkms_provider.so`        |
+| `initial_buffer_size` | Integer | Initial buffer size (bytes) for secret data.                   | No       | `4096`                                       |
+| `max_buffer_size`     | Integer | Max buffer size (bytes) for secret data.                       | No       | `1048576`                                    |
+| `error_buffer_size`   | Integer | Buffer size (bytes) for error messages from the provider.      | No       | `1024`                                       |
 
 #### TPM Private CA Configuration
 
