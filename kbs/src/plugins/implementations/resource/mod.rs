@@ -10,6 +10,8 @@ pub mod encrypted_local_fs;
 #[cfg(feature = "aliyun")]
 pub mod aliyun_kms;
 
+pub mod external_kms;
+
 use actix_web::http::Method;
 use anyhow::{bail, Context, Result};
 
