@@ -41,7 +41,7 @@ build:
 	cd ../trustee-gateway && \
 	CGO_ENABLED=1 GOOS=linux go build -mod vendor -a -installsuffix cgo -ldflags="-s -w" -o gateway cmd/server/main.go && \
 	cd ..
-	cargo build -p kbs --locked --release --no-default-features --features coco-as-grpc,aliyun,tpm-pca
+	cargo build -p kbs --locked --release --no-default-features --features coco-as-grpc,aliyun,tpm-pca,encrypted-local-fs
 	cargo build --bin restful-as --release --features restful-bin --locked
 	cargo build --bin grpc-as --release --features grpc-bin --locked
 	cargo build --bin rvps --release

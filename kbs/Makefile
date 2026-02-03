@@ -2,7 +2,7 @@ AS_TYPE ?= coco-as
 ALIYUN ?= false
 NEBULA_CA_PLUGIN ?= false
 TPM_PCA_PLUGIN ?= false
-ENCRYPTED_LOCAL_FS ?= false
+ENCRYPTED_LOCAL_FS ?= true
 
 BUILD_ARCH := $(shell uname -m)
 ARCH ?= $(shell uname -m)
