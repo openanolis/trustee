@@ -346,12 +346,10 @@ impl ReferenceValueProviderService for Arc<RwLock<AttestationServer>> {
         info!("RegisterReferenceValue API called.");
         debug!("registry reference value: {}", request.message);
 
-        let message = serde_json::from_str(&request.message)
-            .map_err(|e| Status::aborted(format!("Parse message: {e}")))?;
         self.write()
             .await
             .attestation_service
-            .register_reference_value(message)
+            .register_reference_value(&request.message)
             .await
             .map_err(|e| Status::aborted(format!("Register reference value: {e}")))?;
 
