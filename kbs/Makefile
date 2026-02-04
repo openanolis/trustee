@@ -42,9 +42,9 @@ COCO_AS_INTEGRATION_TYPE ?= builtin
 INSTALL_DESTDIR ?= /usr/local/bin
 
 ifeq ($(AS_TYPE), coco-as)
-  AS_FEATURE += $(AS_TYPE)-$(COCO_AS_INTEGRATION_TYPE),
+  AS_FEATURE += $(AS_TYPE)-$(COCO_AS_INTEGRATION_TYPE)
 else ifneq ($(AS_TYPE), )
-  AS_FEATURE += $(AS_TYPE),
+  AS_FEATURE += $(AS_TYPE)
 endif
 
 ifeq ($(ALIYUN), true)
@@ -60,7 +60,12 @@ ifeq ($(NEBULA_CA_PLUGIN), true)
 endif
 
 ifeq ($(TPM_PCA_PLUGIN), true)
-  FEATURES := $(FEATURES),tpm-pca
+  FEATURES += tpm-pca
+endif
+
+FEATURES_ARG :=
+ifneq ($(strip $(FEATURES) $(AS_FEATURE)),)
+  FEATURES_ARG := --features "$(strip $(FEATURES) $(AS_FEATURE))"
 endif
 
 ifneq ($(TEST_FEATURES),)
@@ -71,16 +76,16 @@ build: background-check-kbs
 
 .PHONY: background-check-kbs
 background-check-kbs:
-	$(CARGO_ENV) cargo build -p kbs --locked --release --no-default-features --features $(FEATURES),$(AS_FEATURE) $(TARGET_FLAG)
+	$(CARGO_ENV) cargo build -p kbs --locked --release --no-default-features $(FEATURES_ARG) $(TARGET_FLAG)
 
 .PHONY: passport-issuer-kbs
 passport-issuer-kbs:
-	$(CARGO_ENV) cargo build -p kbs --locked --release --no-default-features --features $(AS_FEATURE),$(FEATURES) $(TARGET_FLAG)
+	$(CARGO_ENV) cargo build -p kbs --locked --release --no-default-features $(FEATURES_ARG) $(TARGET_FLAG)
 	mv ../target/release/kbs ../target/release/issuer-kbs
 
 .PHONY: passport-resource-kbs
 passport-resource-kbs:
-	$(CARGO_ENV) cargo build -p kbs --locked --release --no-default-features --features $(FEATURES), $(TARGET_FLAG)
+	$(CARGO_ENV) cargo build -p kbs --locked --release --no-default-features $(FEATURES_ARG) $(TARGET_FLAG)
 	mv ../target/release/kbs ../target/release/resource-kbs
 
 install-kbs:
