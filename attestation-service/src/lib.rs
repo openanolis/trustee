@@ -281,13 +281,12 @@ impl AttestationService {
                 verification_request.tee
             );
 
-            let additional_data: Value = match verification_request.additional_data {
-                Some(ad) => match serde_json::from_str::<Value>(&ad) {
+            let additional_data: Option<Value> = verification_request.additional_data.map(|ad| {
+                match serde_json::from_str::<Value>(&ad) {
                     Ok(v) => v,
                     Err(_) => Value::String(ad),
-                },
-                None => Value::Null,
-            };
+                }
+            });
 
             tee_claims.push(TeeClaims {
                 tee: verification_request.tee,
@@ -295,7 +294,7 @@ impl AttestationService {
                 claims: claims_from_tee_evidence,
                 init_data_claims,
                 runtime_data_claims,
-                additional_data: Some(additional_data),
+                additional_data,
             });
         }
 
