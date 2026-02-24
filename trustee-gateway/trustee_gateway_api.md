@@ -29,7 +29,8 @@
 ### [4. RVPS API (`/api/rvps`)](#rvps-api-apirvps)
 - [4.1 查询参考值 (Query Reference Value)](#41-查询参考值-query-reference-value)
 - [4.2 注册参考值 (Register Reference Value)](#42-注册参考值-register-reference-value)
-- [4.3 删除参考值 (Delete Reference Value)](#43-删除参考值-delete-reference-value)
+- [4.3 批量设置参考值 (Set Reference Value List)](#43-批量设置参考值-set-reference-value-list)
+- [4.4 删除参考值 (Delete Reference Value)](#44-删除参考值-delete-reference-value)
 
 ### [5. 审计 API (`/api/audit`)](#审计-api-apiaudit)
 - [5.1 列出认证记录 (List Attestation Records)](#51-列出认证记录-list-attestation-records)
@@ -1265,7 +1266,98 @@ EOF
 
 ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/22b4361d-9b13-487a-bcb7-b0acee409517.png)
 
-#### 4.3 删除参考值 (Delete Reference Value)
+#### 4.3 批量设置参考值 (Set Reference Value List)
+
+*   **端点:** `POST /api/rvps/set_reference_value_list`
+    
+*   **说明:** 通过 gRPC 向后端 RVPS 服务批量设置参考值。RVPS 会遍历 `rv_list` 中的每一项：
+    1. 计算 `SHA256($artifact-id || $artifact-version)` 作为索引。
+    2. 使用 `provenance_info.rekor_url` 查询 Rekor，读取条目并校验签名。
+    3. 解析 SLSA in-toto statement，提取制品哈希摘要值。
+    4. 设置参考值名称为 `measurement.$type.$artifact-id`。
+    5. 若该名称已存在且新旧参考值不同，根据 `operation_type` 进行追加或覆盖。
+    
+*   **调用方法:**
+    
+```shell
+cat << EOF > rvps-set-list.json
+{
+  "rv_list": [
+    {
+      "id": "artifact-id",
+      "version": "artifact-version",
+      "type": "model",
+      "provenance_info": {
+        "type": "slsa-intoto-statements",
+        "rekor_url": "https://rekor.sigstore.dev"
+      },
+      "operation_type": "add"
+    }
+  ]
+}
+EOF
+
+curl -k -X POST http://<gateway-host>:<port>/api/rvps/set_reference_value_list \
+     -H 'Content-Type: application/json' \
+     -d @rvps-set-list.json
+```
+
+*   **请求头:**
+    
+    *   `Content-Type: application/json`
+        
+*   **请求参数:** 无。
+    
+*   **请求体 (JSON):**
+    
+```json
+{
+  "rv_list": [
+    {
+      "id": "artifact-id",
+      "version": "artifact-version",
+      "type": "model",
+      "provenance_info": {
+        "type": "slsa-intoto-statements",
+        "rekor_url": "https://rekor.sigstore.dev"
+      },
+      "operation_type": "add"
+    }
+  ]
+}
+```
+
+*   **字段说明:**
+    
+    *   `rv_list`: 参考值列表数组。
+    *   `id`: 制品标识。
+    *   `version`: 制品版本。
+    *   `type`: 制品类型，将用于生成参考值名称 `measurement.$type.$artifact-id`。
+    *   `provenance_info.type`: 目前仅支持 `slsa-intoto-statements`。
+    *   `provenance_info.rekor_url`: Rekor 透明日志地址。
+    *   `operation_type`: `add` 或 `refresh`。当名称已存在且新旧参考值不同：
+        *   `add`: 将新参考值追加到该名称的参考值数组中。
+        *   `refresh`: 清空旧参考值，仅保留最新参考值。
+    
+*   **响应:**
+    
+    *   成功时，返回空响应体。
+        
+    *   失败时，返回错误信息。
+        
+*   **返回码:**
+    
+    *   `200 OK`: 设置成功 (gRPC 调用成功)。
+        
+    *   `400 Bad Request`: 请求体无法解析或字段格式错误。
+        
+    *   `500 Internal Server Error`: 调用 RVPS gRPC 失败或 Rekor/验证流程出错。
+        
+    *   `404 Not Found`: 如果 Gateway 未配置 RVPS gRPC 客户端。
+        
+*   **返回示例 (成功):**_状态码: 200 OK响应体: (空)_
+
+#### 4.4 删除参考值 (Delete Reference Value)
 
 *   **端点:** `DELETE /api/rvps/delete/{name}`
     

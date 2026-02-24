@@ -64,6 +64,12 @@ pub enum Error {
         source: anyhow::Error,
     },
 
+    #[error("Set reference value list failed")]
+    SetReferenceValueList {
+        #[source]
+        source: anyhow::Error,
+    },
+
     #[error("Query reference values failed")]
     QueryReferenceValues {
         #[source]

@@ -5,7 +5,8 @@ use tokio::sync::Mutex;
 
 use self::rvps_api::{
     reference_value_provider_service_client::ReferenceValueProviderServiceClient,
-    ReferenceValueDeleteRequest, ReferenceValueQueryRequest, ReferenceValueRegisterRequest,
+    ReferenceValueDeleteRequest, ReferenceValueListRequest, ReferenceValueQueryRequest,
+    ReferenceValueRegisterRequest,
 };
 
 use super::{Result, RvpsApi};
@@ -59,6 +60,19 @@ impl RvpsApi for Agent {
             .lock()
             .await
             .register_reference_value(req)
+            .await?;
+        Ok(())
+    }
+
+    async fn set_reference_value_list(&mut self, payload: &str) -> Result<()> {
+        let req = tonic::Request::new(ReferenceValueListRequest {
+            payload: payload.to_string(),
+        });
+        let _ = self
+            .client
+            .lock()
+            .await
+            .set_reference_value_list(req)
             .await?;
         Ok(())
     }

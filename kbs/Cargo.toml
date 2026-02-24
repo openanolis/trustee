@@ -68,7 +68,7 @@ prost = { workspace = true, optional = true }
 rand = "0.8.5"
 regex = "1.11.1"
 regorus.workspace = true
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 rsa = { version = "0.9.2", features = ["sha2"] }
 scc = "2"
 serde_qs.workspace = true

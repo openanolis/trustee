@@ -251,6 +251,21 @@ pub(crate) async fn api(
             Ok(HttpResponse::Ok().finish())
         }
         #[cfg(feature = "as")]
+        "rvps"
+            if request.method() == Method::POST
+                && additional_path == "/set_reference_value_list" =>
+        {
+            core.admin_auth.validate_auth(&request)?;
+            let payload: serde_json::Value = serde_json::from_slice(&body)?;
+            let payload_str = serde_json::to_string(&payload)?;
+
+            core.attestation_service
+                .set_reference_value_list(&payload_str)
+                .await?;
+
+            Ok(HttpResponse::Ok().finish())
+        }
+        #[cfg(feature = "as")]
         "rvps" if request.method() == Method::DELETE && additional_path.starts_with("/delete/") => {
             core.admin_auth.validate_auth(&request)?;
             let name = additional_path.strip_prefix("/delete/").unwrap_or("");

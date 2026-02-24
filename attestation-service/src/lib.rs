@@ -321,6 +321,14 @@ impl AttestationService {
             .context("register reference value")
     }
 
+    /// Set reference value list via RVPS
+    pub async fn set_reference_value_list(&mut self, payload: &str) -> Result<()> {
+        self.rvps
+            .set_reference_value_list(payload)
+            .await
+            .context("set reference value list")
+    }
+
     /// Delete a reference value by name
     pub async fn delete_reference_value(&mut self, name: String) -> Result<bool> {
         self.rvps

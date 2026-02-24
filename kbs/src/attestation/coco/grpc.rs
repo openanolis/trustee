@@ -6,8 +6,8 @@ use anyhow::*;
 use async_trait::async_trait;
 use attestation::{
     reference_value_provider_service_client::ReferenceValueProviderServiceClient,
-    ReferenceValueDeleteRequest, ReferenceValueQueryRequest, ReferenceValueQueryResponse,
-    ReferenceValueRegisterRequest,
+    ReferenceValueDeleteRequest, ReferenceValueListRequest, ReferenceValueQueryRequest,
+    ReferenceValueQueryResponse, ReferenceValueRegisterRequest,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use kbs_types::{Challenge, Tee};
@@ -240,6 +240,22 @@ impl Attest for GrpcClientPool {
             .register_reference_value(req)
             .await
             .map_err(|e| anyhow!("Failed to set reference values: {:?}", e))?;
+
+        Ok(())
+    }
+
+    async fn set_reference_value_list(&self, payload: &str) -> anyhow::Result<()> {
+        let req = tonic::Request::new(ReferenceValueListRequest {
+            payload: payload.to_string(),
+        });
+
+        let mut client = { self.pool.lock().await.get().await? };
+
+        client
+            .rvps_rpc
+            .set_reference_value_list(req)
+            .await
+            .map_err(|e| anyhow!("Failed to set reference value list: {:?}", e))?;
 
         Ok(())
     }
