@@ -4,15 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = [ "bin" ]
+default = [ "bin", "reqwest", "sha2" ]
 # Used to build rvps binary
-bin = [ "clap", "config", "env_logger", "prost", "shadow-rs", "tokio", "tonic" ]
+bin = [ "clap", "config", "env_logger", "prost", "reqwest", "sha2", "shadow-rs", "tokio", "tonic" ]
 
 # Support in-toto provenance (not ready)
-in-toto =[ "path-clean", "sha2" ]
+in-toto =[ "path-clean" ]
 
 # Enable reproducible build feature
-reproducible-build = [ "sha2", "rpm", "serde_yaml", "reqwest", "hex", "git2" ]
+reproducible-build = [ "rpm", "serde_yaml", "hex", "git2" ]
 
 rebuild-grpc-protos = []
 
@@ -38,7 +38,7 @@ hex = { version = "0.4", optional = true }
 log.workspace = true
 path-clean = { version = "1.0.1", optional = true }
 prost = { workspace = true, optional = true }
-reqwest = { version = "0.11", features = ["blocking"], optional = true  }
+reqwest = { version = "0.11", features = ["blocking", "json"], optional = true  }
 rpm = { version = "0.16", optional = true }
 serde.workspace = true
 serde_json.workspace = true

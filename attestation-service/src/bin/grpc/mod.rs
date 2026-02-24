@@ -29,8 +29,9 @@ use crate::rvps_api::reference_value_provider_service_server::{
 };
 
 use crate::rvps_api::{
-    ReferenceValueDeleteRequest, ReferenceValueDeleteResponse, ReferenceValueQueryRequest,
-    ReferenceValueQueryResponse, ReferenceValueRegisterRequest, ReferenceValueRegisterResponse,
+    ReferenceValueDeleteRequest, ReferenceValueDeleteResponse, ReferenceValueListRequest,
+    ReferenceValueListResponse, ReferenceValueQueryRequest, ReferenceValueQueryResponse,
+    ReferenceValueRegisterRequest, ReferenceValueRegisterResponse,
 };
 
 fn to_kbs_tee(tee: &str) -> anyhow::Result<Tee> {
@@ -354,6 +355,29 @@ impl ReferenceValueProviderService for Arc<RwLock<AttestationServer>> {
             .map_err(|e| Status::aborted(format!("Register reference value: {e}")))?;
 
         let res = ReferenceValueRegisterResponse {};
+        Ok(Response::new(res))
+    }
+
+    async fn set_reference_value_list(
+        &self,
+        request: Request<ReferenceValueListRequest>,
+    ) -> Result<Response<ReferenceValueListResponse>, Status> {
+        let request = request.into_inner();
+
+        info!("SetReferenceValueList API called.");
+        debug!(
+            "set reference value list payload size: {}",
+            request.payload.len()
+        );
+
+        self.write()
+            .await
+            .attestation_service
+            .set_reference_value_list(&request.payload)
+            .await
+            .map_err(|e| Status::aborted(format!("Set reference value list: {e}")))?;
+
+        let res = ReferenceValueListResponse {};
         Ok(Response::new(res))
     }
 

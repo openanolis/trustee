@@ -43,6 +43,9 @@ pub trait RvpsApi {
     /// Verify the given message and register the reference value included.
     async fn verify_and_extract(&mut self, message: &str) -> Result<()>;
 
+    /// Set reference values list via RVPS.
+    async fn set_reference_value_list(&mut self, payload: &str) -> Result<()>;
+
     /// Get the reference values / golden values / expected digests in hex.
     async fn get_digests(&self) -> Result<HashMap<String, Vec<String>>>;
 

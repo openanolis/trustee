@@ -22,8 +22,15 @@ message ReferenceValueDeleteRequest {
 
 message ReferenceValueDeleteResponse {}
 
+message ReferenceValueListRequest {
+    string payload = 1;
+}
+
+message ReferenceValueListResponse {}
+
 service ReferenceValueProviderService {
     rpc QueryReferenceValue(ReferenceValueQueryRequest) returns (ReferenceValueQueryResponse) {};
     rpc RegisterReferenceValue(ReferenceValueRegisterRequest) returns (ReferenceValueRegisterResponse) {};
     rpc DeleteReferenceValue(ReferenceValueDeleteRequest) returns (ReferenceValueDeleteResponse) {};
+    rpc SetReferenceValueList(ReferenceValueListRequest) returns (ReferenceValueListResponse) {};
 }

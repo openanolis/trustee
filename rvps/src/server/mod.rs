@@ -12,8 +12,9 @@ use crate::rvps_api::reference::reference_value_provider_service_server::{
     ReferenceValueProviderService, ReferenceValueProviderServiceServer,
 };
 use crate::rvps_api::reference::{
-    ReferenceValueDeleteRequest, ReferenceValueDeleteResponse, ReferenceValueQueryRequest,
-    ReferenceValueQueryResponse, ReferenceValueRegisterRequest, ReferenceValueRegisterResponse,
+    ReferenceValueDeleteRequest, ReferenceValueDeleteResponse, ReferenceValueListRequest,
+    ReferenceValueListResponse, ReferenceValueQueryRequest, ReferenceValueQueryResponse,
+    ReferenceValueRegisterRequest, ReferenceValueRegisterResponse,
 };
 
 pub struct RvpsServer {
@@ -92,6 +93,28 @@ impl ReferenceValueProviderService for RvpsServer {
         }
 
         let res = ReferenceValueDeleteResponse {};
+        Ok(Response::new(res))
+    }
+
+    async fn set_reference_value_list(
+        &self,
+        request: Request<ReferenceValueListRequest>,
+    ) -> Result<Response<ReferenceValueListResponse>, Status> {
+        let request = request.into_inner();
+
+        debug!(
+            "Set reference value list payload size: {}",
+            request.payload.len()
+        );
+
+        self.rvps
+            .write()
+            .await
+            .set_reference_value_list(&request.payload)
+            .await
+            .map_err(|e| Status::aborted(format!("Set reference value list: {e}")))?;
+
+        let res = ReferenceValueListResponse {};
         Ok(Response::new(res))
     }
 }

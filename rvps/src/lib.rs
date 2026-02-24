@@ -8,6 +8,8 @@ pub mod config;
 pub mod extractors;
 pub mod pre_processor;
 pub mod reference_value;
+mod rekor;
+mod rv_list;
 pub mod rvps_api;
 pub mod server;
 pub mod storage;
@@ -20,9 +22,12 @@ use extractors::Extractors;
 use pre_processor::{PreProcessor, PreProcessorAPI};
 
 use anyhow::{bail, Context, Result};
+use chrono::{Months, Timelike, Utc};
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+
+use rv_list::{extract_slsa_digests, parse_reference_value_list, ReferenceValueOperation};
 
 /// Default version of Message
 static MESSAGE_VERSION: &str = "0.1.0";
@@ -140,6 +145,88 @@ impl Rvps {
             } else {
                 let _ = self.storage.set(name, v.clone()).await?;
                 info!("Reference value of {} is added.", v.name());
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn set_reference_value_list(&mut self, payload: &str) -> Result<()> {
+        let request = parse_reference_value_list(payload)?;
+
+        for item in request.rv_list {
+            let operation = ReferenceValueOperation::parse(&item.operation_type)?;
+
+            if item.provenance_info.provenance_type != "slsa-intoto-statements" {
+                bail!(
+                    "unsupported provenance_info.type `{}`",
+                    item.provenance_info.provenance_type
+                );
+            }
+
+            if item.id.is_empty() || item.version.is_empty() || item.rv_type.is_empty() {
+                bail!("rv_list item has empty id/version/type");
+            }
+
+            let lookup = format!("{}{}", item.id, item.version);
+            let rekor_client = rekor::RekorClient::new(&item.provenance_info.rekor_url)?;
+            let slsa_docs = rekor_client
+                .fetch_slsa_provenance_for_lookup(&lookup)
+                .await
+                .with_context(|| format!("fetch SLSA provenance for {}", item.id))?;
+
+            let mut digest_set = HashSet::new();
+            for doc in &slsa_docs {
+                let doc_digests = extract_slsa_digests(doc)?;
+                for digest in doc_digests {
+                    digest_set.insert(digest);
+                }
+            }
+
+            if digest_set.is_empty() {
+                bail!("no digest entries found for {}", item.id);
+            }
+
+            let expiration = Utc::now()
+                .with_nanosecond(0)
+                .and_then(|t| t.checked_add_months(Months::new(12)))
+                .ok_or_else(|| anyhow::anyhow!("failed to compute expiration time"))?;
+
+            let name = format!("measurement.{}.{}", item.rv_type, item.id);
+            let mut rv = ReferenceValue::new()?
+                .set_version(reference_value::REFERENCE_VALUE_VERSION)
+                .set_name(&name)
+                .set_expiration(expiration);
+
+            for (alg, value) in digest_set.iter() {
+                rv = rv.add_hash_value_with_meta(
+                    alg.clone(),
+                    value.clone(),
+                    Some(item.version.clone()),
+                    None,
+                );
+            }
+
+            if let Some(old) = self.storage.get(&name).await? {
+                if hash_set(&old) == hash_set(&rv) {
+                    info!("Reference value of {} unchanged; skip update.", name);
+                    continue;
+                }
+
+                match operation {
+                    ReferenceValueOperation::Add => {
+                        let merged = merge_reference_values(old.clone(), rv.clone());
+                        let _ = self.storage.set(name.clone(), merged).await?;
+                        info!("Reference value of {} extended (add).", name);
+                    }
+                    ReferenceValueOperation::Refresh => {
+                        let _ = self.storage.set(name.clone(), rv.clone()).await?;
+                        info!("Reference value of {} refreshed.", name);
+                    }
+                }
+            } else {
+                let _ = self.storage.set(name.clone(), rv.clone()).await?;
+                info!("Reference value of {} is added.", name);
             }
         }
 

@@ -3062,7 +3062,8 @@ dependencies = [
 [[package]]
 name = "intel-tee-quote-verification-rs"
 version = "0.3.0"
-source = "git+https://github.com/intel/SGXDataCenterAttestationPrimitives?tag=DCAP_1.21#e945c58bff60bb96e4daca57b73c93f96b14418a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea8b29c761628cbd67198dca9687231ba2ff1076040499cfb5c771a7c0e0b12d"
 dependencies = [
  "intel-tee-quote-verification-sys",
 ]

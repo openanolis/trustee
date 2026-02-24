@@ -22,6 +22,11 @@ impl RvpsApi for BuiltinRvps {
         Ok(())
     }
 
+    async fn set_reference_value_list(&mut self, payload: &str) -> Result<()> {
+        self.rvps.set_reference_value_list(payload).await?;
+        Ok(())
+    }
+
     async fn get_digests(&self) -> Result<HashMap<String, Vec<String>>> {
         let hashes = self.rvps.get_digests().await?;
 

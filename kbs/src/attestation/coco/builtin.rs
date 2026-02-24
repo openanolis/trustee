@@ -110,6 +110,14 @@ impl Attest for BuiltInCoCoAs {
             .await
     }
 
+    async fn set_reference_value_list(&self, payload: &str) -> anyhow::Result<()> {
+        self.inner
+            .write()
+            .await
+            .set_reference_value_list(payload)
+            .await
+    }
+
     async fn query_reference_values(&self) -> anyhow::Result<HashMap<String, serde_json::Value>> {
         self.inner.read().await.query_reference_values().await
     }

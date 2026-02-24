@@ -137,6 +137,7 @@ impl ResponseError for Error {
                     | AttestationError::ListPolicies { .. }
                     | AttestationError::DeletePolicy { .. }
                     | AttestationError::RegisterReferenceValue { .. }
+                    | AttestationError::SetReferenceValueList { .. }
                     | AttestationError::QueryReferenceValues { .. }
                     | AttestationError::DeleteReferenceValue { .. } => HttpResponse::BadRequest(),
                 }
