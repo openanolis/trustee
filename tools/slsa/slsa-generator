@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+用法:
+  slsa-generator --artifact-type <type> --artifact <path> --artifact-id <id> \
+    --artifact-version <version> --sign-key <key>
+
+参数:
+  --artifact-type     制品类型: binary | model-dir
+  --artifact          制品路径(文件或目录)
+  --artifact-id       制品自定义ID
+  --artifact-version  制品版本
+  --sign-key          用于签名SLSA provenance的私钥路径(cosign生成)
+EOF
+}
+
+require_cmd() {
+  local cmd="$1"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "缺少依赖命令: $cmd" >&2
+    exit 1
+  fi
+}
+
+json_escape() {
+  local s="$1"
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  printf '%s' "$s"
+}
+
+hash_file_sha256() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+hash_dir_sha256() {
+  local dir="$1"
+  cryptpilot-verity dump "$dir" --print-root-hash | awk 'NF{print $1; exit}'
+}
+
+artifact_type=""
+artifact_path=""
+artifact_id=""
+artifact_version=""
+sign_key=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --artifact-type)
+      artifact_type="${2:-}"
+      shift 2
+      ;;
+    --artifact)
+      artifact_path="${2:-}"
+      shift 2
+      ;;
+    --artifact-id)
+      artifact_id="${2:-}"
+      shift 2
+      ;;
+    --artifact-version)
+      artifact_version="${2:-}"
+      shift 2
+      ;;
+    --sign-key)
+      sign_key="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "未知参数: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ -z "$artifact_type" ] || [ -z "$artifact_path" ] || [ -z "$artifact_id" ] || [ -z "$artifact_version" ] || [ -z "$sign_key" ]; then
+  usage >&2
+  exit 1
+fi
+
+require_cmd sha256sum
+require_cmd cryptpilot-verity
+require_cmd cosign
+require_cmd rekor-cli
+
+if [ -z "$artifact_id" ] || [ -z "$artifact_version" ]; then
+  echo "artifact-id和artifact-version不能为空" >&2
+  exit 1
+fi
+
+case "$artifact_type" in
+  binary)
+    if [ ! -f "$artifact_path" ]; then
+      echo "binary类型需要存在的文件: $artifact_path" >&2
+      exit 1
+    fi
+    artifact_hash=$(hash_file_sha256 "$artifact_path")
+    ;;
+  model-dir)
+    if [ ! -d "$artifact_path" ]; then
+      echo "model-dir类型需要存在的目录: $artifact_path" >&2
+      exit 1
+    fi
+    artifact_hash=$(hash_dir_sha256 "$artifact_path")
+    ;;
+  *)
+    echo "不支持的artifact-type: $artifact_type" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+
+index_hash=$(printf '%s%s' "$artifact_id" "$artifact_version" | sha256sum | awk '{print $1}')
+
+escaped_artifact_id=$(json_escape "$artifact_id")
+escaped_artifact_version=$(json_escape "$artifact_version")
+escaped_artifact_type=$(json_escape "$artifact_type")
+
+timestamp=$(date +%Y%m%d%H%M%S)
+safe_id=${artifact_id//[^a-zA-Z0-9._-]/_}
+out_dir="./slsa-output-${safe_id}-${timestamp}"
+mkdir -p "$out_dir"
+
+statement_file="$out_dir/statement.json"
+signature_file="$out_dir/statement.sig"
+
+cat >"$statement_file" <<EOF
+{
+  "_type": "https://in-toto.io/Statement/v0.1",
+  "subject": [
+    {
+      "name": "${escaped_artifact_id}",
+      "digest": {
+        "sha256": "${artifact_hash}"
+      }
+    },
+    {
+      "name": "artifact-index-hash",
+      "digest": {
+        "sha256": "${index_hash}"
+      }
+    }
+  ],
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "predicate": {
+    "buildType": "https://slsa.dev/provenance/v1",
+    "invocation": {
+      "environment": {
+        "artifactVersion": "${escaped_artifact_version}",
+        "artifactType": "${escaped_artifact_type}"
+      }
+    },
+    "buildConfig": {},
+    "metadata": {},
+    "materials": []
+  }
+}
+EOF
+
+cosign sign-blob --key "$sign_key" --output-signature "$signature_file" "$statement_file"
+
+pub_key=""
+if [ -f "${sign_key}.pub" ]; then
+  pub_key="${sign_key}.pub"
+elif [ -f "${sign_key%.*}.pub" ]; then
+  pub_key="${sign_key%.*}.pub"
+else
+  echo "未找到公钥文件，期望: ${sign_key}.pub 或 ${sign_key%.*}.pub" >&2
+  exit 1
+fi
+
+rekor-cli upload \
+  --rekor_server https://rekor.sigstore.dev \
+  --artifact "$statement_file" \
+  --signature "$signature_file" \
+  --public-key "$pub_key" \
+  --type intoto
+
+echo "完成: SLSA provenance生成并上传Rekor"
+echo "输出目录: $out_dir"
