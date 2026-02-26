@@ -4,7 +4,7 @@
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.8.1
+Version:        1.8.2
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -148,6 +148,10 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Thu Feb 26 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.2-1
+- Impl slsa-generator script for eas artifacts
+- feat(rvps/gateway): add set_reference_value_list API
+
 * Tue Feb 3 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.1-1
 - KBS: add external KMS resource backend with dynamic .so provider loading
 - KBS: enable encrypted local fs backend by default in build options

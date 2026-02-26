@@ -1,6 +1,6 @@
 {
     "storage": {
-	"type":"LocalFs",
+	"type":"LocalJson",
 	"file_path": "/opt/trustee/attestation-service/reference_values"
     }
 }
