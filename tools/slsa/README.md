@@ -10,6 +10,11 @@
 - sigstore: `cosign`
 - sigstore: `rekor-cli`
 
+版本说明（已验证环境）:
+
+- `cosign`: `v3.0.5`
+- `rekor-cli`: `v1.5.1`
+
 ## 使用方法
 
 进入 `tools/slsa` 目录后运行:
