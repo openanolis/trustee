@@ -32,8 +32,15 @@
 ```
 ./slsa-output-<artifact-id>-<timestamp>/
   ├── statement.json
-  └── statement.sig
+  ├── statement.attestation.json
+  └── statement.dsse.json
 ```
+
+各文件说明:
+
+- `statement.json`: 原始 in-toto Statement（SLSA provenance）
+- `statement.attestation.json`: cosign 输出的 attestation 产物
+- `statement.dsse.json`: DSSE envelope（包含 `payload`、`payloadType`、`signatures`），用于以 `intoto` 类型上传 Rekor
 
 ## 生成签名密钥
 
@@ -72,3 +79,4 @@ cosign generate-key-pair --output-key-prefix /path/to/mykey
 
 - Rekor 公共实例 URL: `https://rekor.sigstore.dev`
 - `model-dir` 的摘要通过 `cryptpilot-verity dump <model-dir-path> --print-root-hash` 获取。
+- 脚本使用 `rekor-cli upload --type intoto`，上传对象为 `statement.dsse.json`（DSSE envelope），而不是原始 `statement.json`。
