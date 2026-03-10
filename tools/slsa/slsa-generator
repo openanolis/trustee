@@ -130,7 +130,8 @@ out_dir="./slsa-output-${safe_id}-${timestamp}"
 mkdir -p "$out_dir"
 
 statement_file="$out_dir/statement.json"
-signature_file="$out_dir/statement.sig"
+envelope_file="$out_dir/statement.dsse.json"
+attestation_file="$out_dir/statement.attestation.json"
 
 cat >"$statement_file" <<EOF
 {
@@ -165,7 +166,15 @@ cat >"$statement_file" <<EOF
 }
 EOF
 
-cosign sign-blob --key "$sign_key" --output-signature "$signature_file" "$statement_file"
+cosign attest-blob \
+  --key "$sign_key" \
+  --yes \
+  --tlog-upload=false \
+  --statement "$statement_file" \
+  --rekor-entry-type=intoto \
+  --output-attestation "$attestation_file" \
+  --output-signature "$envelope_file" \
+  "$artifact_path"
 
 pub_key=""
 if [ -f "${sign_key}.pub" ]; then
@@ -179,8 +188,7 @@ fi
 
 rekor-cli upload \
   --rekor_server https://rekor.sigstore.dev \
-  --artifact "$statement_file" \
-  --signature "$signature_file" \
+  --artifact "$envelope_file" \
   --public-key "$pub_key" \
   --type intoto
 
