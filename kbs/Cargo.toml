@@ -84,6 +84,9 @@ tonic = { workspace = true, optional = true }
 uuid = { version = "1.2.2", features = ["serde", "v4"] }
 openssl.workspace = true
 derivative = "2.2.0"
+rustls-pki-types = "1.14.0"
+rustls-webpki = { version = "0.103.9", features = ["ring"] }
+x509-cert = "0.2.5"
 
 [target.'cfg(not(any(target_arch = "s390x", target_arch = "aarch64")))'.dependencies]
 attestation-service = { path = "../attestation-service", default-features = false, features = [
