@@ -177,7 +177,7 @@ impl Rvps {
 
             let mut digest_set = HashSet::new();
             for doc in &slsa_docs {
-                let doc_digests = extract_slsa_digests(doc)?;
+                let doc_digests = extract_slsa_digests(doc, &item.id)?;
                 for digest in doc_digests {
                     digest_set.insert(digest);
                 }
