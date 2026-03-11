@@ -6,25 +6,22 @@ use crate::token::AttestationTokenVerifierConfig;
 use anyhow::{anyhow, bail, Context};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use jsonwebtoken::jwk::{AlgorithmParameters, EllipticCurve, Jwk};
+use jsonwebtoken::jwk::{AlgorithmParameters, Jwk};
 use jsonwebtoken::{decode, decode_header, jwk, Algorithm, DecodingKey, Header, Validation};
-use openssl::bn::{BigNum, BigNumContext};
-use openssl::ec::{EcGroup, EcKey, EcPoint};
-use openssl::nid::Nid;
-use openssl::pkey::PKey;
-use openssl::stack::Stack;
-use openssl::x509::store::X509StoreBuilder;
-use openssl::x509::X509StoreContext;
-use openssl::{rsa::Rsa, x509::X509};
-use reqwest::{get, Url};
+use reqwest::Url;
+use rustls_pki_types::pem::PemObject;
+use rustls_pki_types::{CertificateDer, UnixTime};
 use serde::Deserialize;
 use serde_json::Value;
-use std::fs::File;
-use std::io::BufReader;
-use std::result::Result::Ok;
 use std::str::FromStr;
 use thiserror::Error;
-use tokio::fs;
+use webpki::ring::{
+    ECDSA_P256_SHA256, ECDSA_P256_SHA384, ECDSA_P384_SHA256, ECDSA_P384_SHA384,
+    RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512,
+};
+use webpki::EndEntityCert;
+use x509_cert::der::Decode;
+use x509_cert::Certificate;
 
 const OPENID_CONFIG_URL_SUFFIX: &str = ".well-known/openid-configuration";
 
@@ -46,24 +43,31 @@ struct OpenIDConfig {
 #[derive(Clone)]
 pub struct JwkAttestationTokenVerifier {
     trusted_jwk_sets: jwk::JwkSet,
-    trusted_certs: Vec<X509>,
+    trusted_certs: Vec<CertificateDer<'static>>,
     insecure_key: bool,
 }
 
-async fn get_jwks_from_file_or_url(p: &str) -> Result<jwk::JwkSet, JwksGetError> {
+async fn get_jwks_from_file_or_url(
+    client: &reqwest::Client,
+    p: &str,
+) -> Result<jwk::JwkSet, JwksGetError> {
     let mut url = Url::parse(p).map_err(|e| JwksGetError::InvalidSourcePath(e.to_string()))?;
     match url.scheme() {
         "https" => {
             url.set_path(OPENID_CONFIG_URL_SUFFIX);
 
-            let oidc = get(url.as_str())
+            let oidc = client
+                .get(url.as_str())
+                .send()
                 .await
                 .map_err(|e| JwksGetError::AccessFailed(e.to_string()))?
                 .json::<OpenIDConfig>()
                 .await
                 .map_err(|e| JwksGetError::DeserializeSource(e.to_string()))?;
 
-            let jwkset = get(oidc.jwks_uri)
+            let jwkset = client
+                .get(oidc.jwks_uri)
+                .send()
                 .await
                 .map_err(|e| JwksGetError::AccessFailed(e.to_string()))?
                 .json::<jwk::JwkSet>()
@@ -73,10 +77,11 @@ async fn get_jwks_from_file_or_url(p: &str) -> Result<jwk::JwkSet, JwksGetError>
             Ok(jwkset)
         }
         "file" => {
-            let file = File::open(url.path())
+            let file_content = tokio::fs::read(url.path())
+                .await
                 .map_err(|e| JwksGetError::AccessFailed(format!("open {}: {}", url.path(), e)))?;
 
-            serde_json::from_reader(BufReader::new(file))
+            serde_json::from_slice(&file_content)
                 .map_err(|e| JwksGetError::DeserializeSource(e.to_string()))
         }
         _ => Err(JwksGetError::InvalidSourcePath(format!(
@@ -86,24 +91,38 @@ async fn get_jwks_from_file_or_url(p: &str) -> Result<jwk::JwkSet, JwksGetError>
     }
 }
 
+fn new_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent(format!("kbs/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .expect("build reqwest client")
+}
+
 impl JwkAttestationTokenVerifier {
     pub async fn new(config: &AttestationTokenVerifierConfig) -> anyhow::Result<Self> {
+        let client = new_http_client();
         let mut trusted_jwk_sets = jwk::JwkSet { keys: Vec::new() };
 
-        for path in config.trusted_jwk_sets.iter() {
-            match get_jwks_from_file_or_url(path).await {
+        for path in &config.trusted_jwk_sets {
+            match get_jwks_from_file_or_url(&client, path).await {
                 Ok(mut jwkset) => trusted_jwk_sets.keys.append(&mut jwkset.keys),
                 Err(e) => bail!("error getting JWKS: {:?}", e),
             }
         }
 
         let mut trusted_certs = Vec::new();
+
         for path in &config.trusted_certs_paths {
-            let cert_content = fs::read(path).await.map_err(|_| {
-                JwksGetError::AccessFailed(format!("failed to read certificate {path}"))
+            let cert_content = tokio::fs::read(path).await.map_err(|e| {
+                JwksGetError::AccessFailed(format!("failed to read certificate {path}: {e:?}"))
             })?;
-            let cert = X509::from_pem(&cert_content)?;
-            trusted_certs.push(cert);
+            let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(&cert_content)
+                .collect::<Result<Vec<_>, _>>()
+                .with_context(|| format!("Failed to parse PEM certificate {}", path))?;
+            if certs.is_empty() {
+                bail!("no certificate found in PEM file {}", path);
+            }
+            trusted_certs.extend(certs);
         }
 
         Ok(Self {
@@ -114,76 +133,103 @@ impl JwkAttestationTokenVerifier {
     }
 
     fn verify_jwk_endorsement(&self, key: &Jwk) -> anyhow::Result<()> {
-        let public_key = match &key.algorithm {
-            AlgorithmParameters::RSA(rsa) => {
-                let n = URL_SAFE_NO_PAD
-                    .decode(&rsa.n)
-                    .context("decode RSA public key parameter n")?;
-                let n = BigNum::from_slice(&n)?;
-                let e = URL_SAFE_NO_PAD
-                    .decode(&rsa.e)
-                    .context("decode RSA public key parameter e")?;
-                let e = BigNum::from_slice(&e)?;
-
-                let rsa_key = Rsa::from_public_components(n, e)?;
-                PKey::from_rsa(rsa_key)?
-            }
-            AlgorithmParameters::EllipticCurve(ec) => {
-                let x = BigNum::from_slice(&URL_SAFE_NO_PAD.decode(&ec.x)?)?;
-                let y = BigNum::from_slice(&URL_SAFE_NO_PAD.decode(&ec.y)?)?;
-
-                let group = match ec.curve {
-                    EllipticCurve::P256 => EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?,
-                    _ => bail!("Unsupported elliptic curve"),
-                };
-
-                let mut ctx = BigNumContext::new()?;
-                let mut point = EcPoint::new(&group)?;
-                point.set_affine_coordinates_gfp(&group, &x, &y, &mut ctx)?;
-
-                let ec_key = EcKey::from_public_key(&group, &point)?;
-                PKey::from_ec_key(ec_key)?
-            }
-            _ => bail!("Only RSA or EC JWKs are supported."),
-        };
-
         let Some(x5c) = &key.common.x509_chain else {
             bail!("No x5c extension inside JWK. Invalid public key.")
         };
-
         if x5c.is_empty() {
             bail!("Empty x5c extension inside JWK. Invalid public key.")
         }
 
         let pem = x5c[0].split('\n').collect::<String>();
-        let der = URL_SAFE_NO_PAD.decode(pem).context("Illegal x5c cert")?;
+        let leaf_der = URL_SAFE_NO_PAD.decode(pem).context("Illegal x5c cert")?;
 
-        let leaf_cert = X509::from_der(&der).context("Invalid x509 in x5c")?;
-        // verify the public key matches the leaf cert
-        if !public_key.public_eq(leaf_cert.public_key()?.as_ref()) {
-            bail!("jwk does not match x5c");
-        };
+        {
+            let leaf_cert = Certificate::from_der(&leaf_der).context("Invalid x509 in x5c")?;
+            self.verify_jwk_matches_cert(key, &leaf_cert)?;
+        }
 
-        let mut cert_chain = Stack::new()?;
-        for cert in &x5c[1..] {
-            let pem = cert.split('\n').collect::<String>();
+        let leaf_cert = CertificateDer::from(leaf_der);
+        let end_entity = EndEntityCert::try_from(&leaf_cert)
+            .map_err(|e| anyhow!("Failed to parse end entity certificate: {}", e))?;
+
+        let trust_anchors: Vec<_> = self
+            .trusted_certs
+            .iter()
+            .map(|cert_der| {
+                webpki::anchor_from_trusted_cert(cert_der)
+                    .map_err(|e| anyhow!("Failed to create trust anchor from certificate: {e:?}"))
+            })
+            .collect::<Result<_, _>>()?;
+
+        let mut intermediates = Vec::new();
+        for cert_pem in &x5c[1..] {
+            let pem = cert_pem.split('\n').collect::<String>();
             let der = URL_SAFE_NO_PAD.decode(&pem).context("Illegal x5c cert")?;
-
-            let cert = X509::from_der(&der).context("Invalid x509 in x5c")?;
-            cert_chain.push(cert)?;
+            intermediates.push(CertificateDer::from(der));
         }
 
-        let mut trust_store_builder = X509StoreBuilder::new()?;
-        for cert in &self.trusted_certs {
-            trust_store_builder.add_cert(cert.clone())?;
-        }
-        let trust_store = trust_store_builder.build();
+        let supported_algs = &[
+            ECDSA_P256_SHA256,
+            ECDSA_P256_SHA384,
+            ECDSA_P384_SHA256,
+            ECDSA_P384_SHA384,
+            RSA_PKCS1_2048_8192_SHA256,
+            RSA_PKCS1_2048_8192_SHA384,
+            RSA_PKCS1_2048_8192_SHA512,
+        ];
 
-        // verify the cert chain
-        let mut ctx = X509StoreContext::new()?;
-        if !ctx.init(&trust_store, &leaf_cert, &cert_chain, |c| c.verify_cert())? {
-            bail!("JWK cannot be validated by trust anchor");
+        let time = UnixTime::now();
+        end_entity
+            .verify_for_usage(
+                supported_algs,
+                &trust_anchors,
+                &intermediates,
+                time,
+                webpki::KeyUsage::client_auth(),
+                None,
+                None,
+            )
+            .map_err(|e| anyhow!("JWK cannot be validated by trust anchor: {}", e))?;
+
+        Ok(())
+    }
+
+    fn verify_jwk_matches_cert(&self, key: &Jwk, cert: &Certificate) -> anyhow::Result<()> {
+        let cert_spki = &cert.tbs_certificate.subject_public_key_info;
+        let cert_public_key_bytes = cert_spki.subject_public_key.raw_bytes();
+
+        match &key.algorithm {
+            AlgorithmParameters::RSA(rsa) => {
+                let n_bytes = URL_SAFE_NO_PAD
+                    .decode(&rsa.n)
+                    .context("decode RSA public key parameter n")?;
+
+                if !cert_public_key_bytes
+                    .windows(n_bytes.len())
+                    .any(|w| w == n_bytes.as_slice())
+                {
+                    bail!("RSA modulus from JWK does not match certificate");
+                }
+            }
+            AlgorithmParameters::EllipticCurve(ec) => {
+                let x = URL_SAFE_NO_PAD
+                    .decode(&ec.x)
+                    .context("decode EC public key parameter x")?;
+                let y = URL_SAFE_NO_PAD
+                    .decode(&ec.y)
+                    .context("decode EC public key parameter y")?;
+
+                let mut point_bytes = vec![0x04];
+                point_bytes.extend_from_slice(&x);
+                point_bytes.extend_from_slice(&y);
+
+                if cert_public_key_bytes != point_bytes.as_slice() {
+                    bail!("EC point from JWK does not match certificate");
+                }
+            }
+            _ => bail!("Only RSA or EC JWKs are supported."),
         }
+
         Ok(())
     }
 
@@ -194,14 +240,14 @@ impl JwkAttestationTokenVerifier {
             }
             if self.trusted_certs.is_empty() {
                 bail!("Cannot verify token since trusted cert is empty");
-            };
+            }
             self.verify_jwk_endorsement(key)?;
             return Ok(key);
         }
 
         if self.trusted_jwk_sets.keys.is_empty() {
             bail!("Cannot verify token since trusted JWK Set is empty");
-        };
+        }
 
         let kid = header
             .kid
@@ -217,7 +263,8 @@ impl JwkAttestationTokenVerifier {
     }
 
     pub async fn verify(&self, token: String) -> anyhow::Result<Value> {
-        let header = decode_header(&token).context("Failed to decode attestation token header")?;
+        let header = decode_header(&token)
+            .map_err(|e| anyhow!("Failed to decode attestation token header: {}", e))?;
 
         let key = self.get_verification_jwk(&header)?;
         let key_alg = key
@@ -227,10 +274,16 @@ impl JwkAttestationTokenVerifier {
             .to_string();
 
         let alg = Algorithm::from_str(key_alg.as_str())?;
-
         let dkey = DecodingKey::from_jwk(key)?;
-        let token_data = decode::<Value>(&token, &dkey, &Validation::new(alg))
-            .context("Failed to decode attestation token")?;
+        let mut validation = Validation::new(alg);
+        #[cfg(test)]
+        {
+            validation.validate_exp = false;
+        }
+        validation.validate_nbf = true;
+
+        let token_data = decode::<Value>(&token, &dkey, &validation)
+            .map_err(|e| anyhow!("Failed to decode attestation token: {}", e))?;
 
         Ok(token_data.claims)
     }
@@ -238,7 +291,7 @@ impl JwkAttestationTokenVerifier {
 
 #[cfg(test)]
 mod tests {
-    use crate::token::jwk::get_jwks_from_file_or_url;
+    use super::get_jwks_from_file_or_url;
     use rstest::rstest;
 
     #[rstest]
@@ -248,9 +301,12 @@ mod tests {
     #[case("/does/not/exist/keys.jwks", true)]
     #[tokio::test]
     async fn test_source_path_validation(#[case] source_path: &str, #[case] expect_error: bool) {
+        let client = reqwest::Client::new();
         assert_eq!(
             expect_error,
-            get_jwks_from_file_or_url(source_path).await.is_err()
+            get_jwks_from_file_or_url(&client, source_path)
+                .await
+                .is_err()
         )
     }
 
@@ -265,13 +321,16 @@ mod tests {
     )]
     #[tokio::test]
     async fn test_source_reads(#[case] json: &str, #[case] expect_error: bool) {
+        let client = reqwest::Client::new();
         let tmp_dir = tempfile::tempdir().expect("to get tmpdir");
         let jwks_file = tmp_dir.path().join("test.jwks");
 
         let _ = std::fs::write(&jwks_file, json).expect("to get testdata written to tmpdir");
-
         let p = "file://".to_owned() + jwks_file.to_str().expect("to get path as str");
 
-        assert_eq!(expect_error, get_jwks_from_file_or_url(&p).await.is_err())
+        assert_eq!(
+            expect_error,
+            get_jwks_from_file_or_url(&client, &p).await.is_err()
+        )
     }
 }
