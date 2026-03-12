@@ -87,6 +87,41 @@ pub enum Commands {
     },
 
     #[command(
+        about = "Inject resource into guest CDH with challenge-attestation verification",
+        group(
+            ArgGroup::new("init_input")
+                .args(["init_data_digest", "init_data_toml"])
+                .multiple(false)
+        )
+    )]
+    InjectResource {
+        /// Base URL of the guest trustiflux-api-server, for example https://host:8006
+        #[arg(long = "api-url")]
+        api_url: String,
+        /// Resource path in {repository}/{type}/{tag} format
+        #[arg(long)]
+        resource_path: String,
+        /// Plaintext resource file to inject
+        #[arg(long)]
+        resource_file: PathBuf,
+        /// TEE type (e.g. tdx, sgx, snp, csv, azsnpvtpm, sample, system)
+        #[arg(long)]
+        tee: String,
+        /// Optional nonce. If not provided, client generates a random nonce
+        #[arg(long)]
+        nonce: Option<String>,
+        /// Hex-encoded init data digest
+        #[arg(long)]
+        init_data_digest: Option<String>,
+        /// Path to init data TOML file
+        #[arg(long)]
+        init_data_toml: Option<PathBuf>,
+        /// Policy IDs to use (default: default)
+        #[arg(long = "policy")]
+        policies: Vec<String>,
+    },
+
+    #[command(
         about = "Set reference values into RVPS using provenance documents",
         group(
             ArgGroup::new("slsa_args")

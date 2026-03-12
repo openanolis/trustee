@@ -8,6 +8,8 @@
 ## 前置条件
 1. 目标TEE里已运行 `attestation-agent` 和 `trustiflux-api-server`，并暴露远端访问接口：
    - 默认监听 `0.0.0.0:8006`
+   - 若需从远端调用 `GET /aa/evidence`，需在 `trustiflux-api-server.toml` 中设置 `allow_remote_get_evidence = true`
+   - 若需从远端调用 `POST /cdh/resource-injection/...`，需设置 `allow_remote_resource_injection = true`
 2. 了解目标 TEE 类型（如 `tdx`、`sgx`、`snp` 等），验证阶段需要显式指定。
 3. (可选) runtime data（通常是挑战值/nonce 或自定义 report data）由调用者自行提供，并在获取证据与验证时保持一致。
 
@@ -18,6 +20,7 @@ attestation-challenge-client get-evidence \
   --runtime-data "<runtime-string>" \
   --output /tmp/evidence.json
 ```
+- 当 `--aa-url` 指向远端 TEE 时，需要目标侧 `api-server-rest` 已开启 `allow_remote_get_evidence = true`
 - `--runtime-data`：直接传字符串（UTF-8）
 - `--runtime-data-file`：从文件读取字符串（UTF-8），与 `--runtime-data` 互斥
 - 若未指定 runtime data，将使用空字符串
@@ -105,4 +108,35 @@ attestation-challenge-client verify \
 - 证据文件应为 JSON 文本；如果内容格式异常，验证会直接返回错误。
 - 生成的策略目录与 RVPS 文件如不存在会自动创建，但策略仍依赖默认 `default` rego（已内置）。
 - 若需要自定义策略或参考值，可在 `/var/lib/attestation` 下按需要提前准备。
+
+## 基于挑战证明的机密资源注入
+
+`attestation-challenge-client` 新增了 `inject-resource` 子命令，用于从验证端将机密资源注入到 TEE 内 CDH。
+
+远程调用该流程时，需要目标侧 `api-server-rest` 开启 `allow_remote_resource_injection = true`。该开关只影响 `POST /cdh/resource-injection/...`，`GET /cdh/resource/...` 仍然只允许本地回环地址访问。
+
+### 一体化命令
+
+```bash
+attestation-challenge-client inject-resource \
+  --api-url http://<host>:8006 \
+  --resource-path default/key/1 \
+  --resource-file /path/to/plaintext.bin \
+  --tee tdx \
+  --policy default
+```
+
+可选参数：
+- `--nonce`：显式指定挑战 nonce；不指定则自动随机生成
+- `--init-data-digest` / `--init-data-toml`：用于验证时绑定 init data
+- `--policy`：可重复，默认 `default`
+
+### 内部流程（命令自动执行）
+
+1. 调用 `POST /cdh/resource-injection/prepare/{repository}/{type}/{tag}`，传入 nonce
+2. 获取 `session_id`、`tee_pubkey`、`evidence`
+3. 在验证端本地执行 evidence 验证（runtime_data 固定为 `nonce + tee_pubkey`，并固定使用 `sha384` 哈希）
+4. 用 `tee_pubkey` 加密资源（KBS 兼容加密结构）
+5. 调用 `POST /cdh/resource-injection/commit/{repository}/{type}/{tag}` 提交密文
+6. CDH 在 TEE 内解密并写入 `/run/confidential-containers/cdh/<repository>/<type>/<tag>`
 
