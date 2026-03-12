@@ -49,6 +49,28 @@ async fn main() -> Result<()> {
             )
             .await?
         }
+        Commands::InjectResource {
+            api_url,
+            resource_path,
+            resource_file,
+            tee,
+            nonce,
+            init_data_digest,
+            init_data_toml,
+            policies,
+        } => {
+            commands::inject_resource::run(
+                api_url,
+                resource_path,
+                resource_file,
+                tee,
+                nonce,
+                init_data_digest,
+                init_data_toml,
+                policies,
+            )
+            .await?
+        }
         Commands::SetReferenceValue(args) => {
             commands::set_reference_value::run(args).await?;
         }
