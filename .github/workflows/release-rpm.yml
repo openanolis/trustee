@@ -421,17 +421,25 @@ jobs:
           echo "Downloaded files:"
           ls -la
 
-      - name: Install rekor-cli for intoto uploads
+      - name: Install rekor-cli for v1 uploads (optional)
+        env:
+          REKOR_API_VERSION: ${{ vars.REKOR_API_VERSION || '2' }}
         run: |
           set -euo pipefail
-          REKOR_VERSION="v1.3.6"
+          if [ "${REKOR_API_VERSION}" != "1" ]; then
+            echo "Skip rekor-cli install because REKOR_API_VERSION=${REKOR_API_VERSION}"
+            exit 0
+          fi
+          REKOR_VERSION="v1.5.1"
           curl -L "https://github.com/sigstore/rekor/releases/download/${REKOR_VERSION}/rekor-cli-linux-amd64" -o rekor-cli
           chmod +x rekor-cli
           sudo mv rekor-cli /usr/local/bin/rekor-cli
 
-      - name: Upload provenance to Rekor using intoto entries
+      - name: Upload provenance to Rekor (v1/v2) and prepare release provenance metadata
         env:
-          REKOR_URL: ${{ vars.REKOR_URL || 'https://rekor.sigstore.dev' }}
+          REKOR_URL: ${{ vars.REKOR_URL || 'https://log2025-1.rekor.sigstore.dev' }}
+          REKOR_API_VERSION: ${{ vars.REKOR_API_VERSION || '2' }}
+          REKOR_V2_KEY_DETAILS: ${{ vars.REKOR_V2_KEY_DETAILS || 'PKIX_ECDSA_P256_SHA_256' }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -447,21 +455,93 @@ jobs:
               break
             fi
 
-            # Extract DSSE envelope from the Sigstore bundle (support both v0.3+ layouts)
+            # Extract DSSE envelope from Sigstore bundle (support both v0.3+ layouts)
             jq '.dsseEnvelope // .content.dsseEnvelope' "${bundle}" > dsse-envelope.json
 
-            # Extract signing certificate (leaf cert) and convert to PEM.
-            # Prefer top-level certificate.rawBytes; fall back to x509CertificateChain[0].rawBytes if present.
-            jq -r '.verificationMaterial.certificate.rawBytes // .verificationMaterial.x509CertificateChain.certificates[0].rawBytes' "${bundle}" | base64 -d > cert.der
-            openssl x509 -inform DER -in cert.der -out cert.pem
+            if [ "${REKOR_API_VERSION}" = "1" ]; then
+              # v1 intoto upload
+              jq -r '.verificationMaterial.certificate.rawBytes // .verificationMaterial.x509CertificateChain.certificates[0].rawBytes' "${bundle}" | base64 -d > cert.der
+              openssl x509 -inform DER -in cert.der -out cert.pem
+              rekor-cli upload \
+                --rekor_server "${REKOR_URL}" \
+                --type intoto \
+                --public-key cert.pem \
+                --artifact dsse-envelope.json
+            else
+              # v2 dsseRequestV002 upload
+              payload=$(jq -r '.payload // empty' dsse-envelope.json)
+              payload_type=$(jq -r '.payloadType // empty' dsse-envelope.json)
+              sig=$(jq -r '.signatures[0].sig // empty' dsse-envelope.json)
+              cert_b64=$(jq -r '.verificationMaterial.certificate.rawBytes // .verificationMaterial.x509CertificateChain.certificates[0].rawBytes // empty' "${bundle}")
+              if [ -z "$payload" ] || [ -z "$payload_type" ] || [ -z "$sig" ] || [ -z "$cert_b64" ]; then
+                echo "invalid bundle for Rekor v2 upload: ${bundle}" >&2
+                exit 1
+              fi
 
-            # Upload an intoto entry which, when attestation storage is enabled on Rekor,
-            # stores the decoded DSSE payload bytes.
-            rekor-cli upload \
-              --rekor_server "${REKOR_URL}" \
-              --type intoto \
-              --public-key cert.pem \
-              --artifact dsse-envelope.json
+              jq -n \
+                --arg payload "$payload" \
+                --arg payloadType "$payload_type" \
+                --arg sig "$sig" \
+                --arg certRaw "$cert_b64" \
+                --arg keyDetails "${REKOR_V2_KEY_DETAILS}" \
+                '{
+                  dsseRequestV002: {
+                    envelope: {
+                      payload: $payload,
+                      payloadType: $payloadType,
+                      signatures: [{ sig: $sig, keyid: "" }]
+                    },
+                    verifiers: [
+                      {
+                        x509Certificate: { rawBytes: $certRaw },
+                        keyDetails: $keyDetails
+                      }
+                    ]
+                  }
+                }' > rekor-v2-request.json
 
-            rm -f dsse-envelope.json cert.der cert.pem
+              base="${REKOR_URL%/}"
+              code=$(curl -sS -o rekor-v2-entry.json -w '%{http_code}' \
+                -X POST "${base}/api/v2/log/entries" \
+                -H 'Content-Type: application/json' \
+                --data-binary @rekor-v2-request.json)
+              if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+                echo "upload to rekor v2 failed, HTTP $code: $(cat rekor-v2-entry.json)" >&2
+                exit 1
+              fi
+            fi
+
+            metadata_file="${bundle%.intoto.jsonl}.provenance-metadata.json"
+            if [ "${REKOR_API_VERSION}" = "2" ] && [ -f rekor-v2-entry.json ]; then
+              jq -n \
+                --argfile sourceBundle "${bundle}" \
+                --argfile dsse dsse-envelope.json \
+                --argfile rekor rekor-v2-entry.json \
+                '{sourceBundle: $sourceBundle, dsseEnvelope: $dsse, rekorEntryV2: $rekor}' > "${metadata_file}"
+            else
+              jq -n \
+                --argfile sourceBundle "${bundle}" \
+                --argfile dsse dsse-envelope.json \
+                '{sourceBundle: $sourceBundle, dsseEnvelope: $dsse}' > "${metadata_file}"
+            fi
+            echo "Prepared provenance metadata artifact: ${metadata_file}"
+
+            rm -f dsse-envelope.json cert.der cert.pem rekor-v2-request.json rekor-v2-entry.json
           done
+
+          metadata_files=( *.provenance-metadata.json )
+          if [ "${#metadata_files[@]}" -eq 0 ]; then
+            echo "No provenance metadata artifacts generated" >&2
+            exit 1
+          fi
+          echo "Generated provenance metadata artifacts:"
+          ls -la *.provenance-metadata.json
+
+      - name: Upload provenance metadata artifacts to release
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          overwrite_files: false
+          tag_name: ${{ env.TAG_NAME }}
+          files: |
+            provenance-files/*.provenance-metadata.json

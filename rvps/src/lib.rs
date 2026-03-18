@@ -7,6 +7,7 @@ pub mod client;
 pub mod config;
 pub mod extractors;
 pub mod pre_processor;
+mod provenance_source;
 pub mod reference_value;
 mod rekor;
 mod rv_list;
@@ -22,11 +23,15 @@ use extractors::Extractors;
 use pre_processor::{PreProcessor, PreProcessorAPI};
 
 use anyhow::{bail, Context, Result};
+use base64::Engine;
 use chrono::{Months, Timelike, Utc};
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::Digest;
 use std::collections::{HashMap, HashSet};
 
+use provenance_source::{OciProvenanceFetcher, ProvenanceFetcher, ProvenanceSource};
 use rv_list::{extract_slsa_digests, parse_reference_value_list, ReferenceValueOperation};
 
 /// Default version of Message
@@ -168,12 +173,37 @@ impl Rvps {
                 bail!("rv_list item has empty id/version/type");
             }
 
-            let lookup = format!("{}{}", item.id, item.version);
-            let rekor_client = rekor::RekorClient::new(&item.provenance_info.rekor_url)?;
-            let slsa_docs = rekor_client
-                .fetch_slsa_provenance_for_lookup(&lookup)
-                .await
-                .with_context(|| format!("fetch SLSA provenance for {}", item.id))?;
+            let slsa_docs = if let Some(source) = &item.provenance_source {
+                let protocol = source.protocol.to_ascii_lowercase();
+                let material = match protocol.as_str() {
+                    "oci" => {
+                        let fetcher = OciProvenanceFetcher::new();
+                        let src = ProvenanceSource {
+                            protocol: source.protocol.clone(),
+                            uri: source.uri.clone(),
+                            artifact: source.artifact.clone(),
+                        };
+                        fetcher
+                            .fetch(&src)
+                            .await
+                            .with_context(|| format!("fetch provenance from OCI `{}`", src.uri))?
+                    }
+                    other => bail!("unsupported provenance_source.protocol `{other}`"),
+                };
+                parse_slsa_documents_from_material(&material.raw_bytes).with_context(|| {
+                    format!(
+                        "parse fetched provenance material for `{}` (media type: {:?})",
+                        item.id, material.media_type
+                    )
+                })?
+            } else {
+                let lookup = format!("{}{}", item.id, item.version);
+                let rekor_client = rekor::RekorClient::new(&item.provenance_info.rekor_url)?;
+                rekor_client
+                    .fetch_slsa_provenance_for_lookup(&lookup)
+                    .await
+                    .with_context(|| format!("fetch SLSA provenance for {}", item.id))?
+            };
 
             let mut digest_set = HashSet::new();
             for doc in &slsa_docs {
@@ -268,5 +298,222 @@ impl Rvps {
                 Ok(false)
             }
         }
+    }
+}
+
+fn parse_slsa_documents_from_material(raw_bytes: &[u8]) -> Result<Vec<String>> {
+    let text = std::str::from_utf8(raw_bytes).context("provenance material is not UTF-8 text")?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        bail!("provenance material is empty");
+    }
+
+    if let Ok(json) = serde_json::from_str::<Value>(trimmed) {
+        return parse_slsa_documents_from_json(&json);
+    }
+
+    // in-toto bundle is JSONL; parse line by line as DSSE envelopes.
+    let mut docs = Vec::new();
+    for line in trimmed.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(line).context("parse JSONL line as JSON")?;
+        if let Some(statement) = dsse_payload_statement(&value)? {
+            docs.push(statement);
+        }
+    }
+
+    if docs.is_empty() {
+        bail!("no SLSA statement found in provenance material");
+    }
+
+    Ok(unique_docs(docs))
+}
+
+fn parse_slsa_documents_from_json(value: &Value) -> Result<Vec<String>> {
+    verify_rekor_v2_consistency(value)?;
+
+    // Direct in-toto statement JSON.
+    if is_statement_json(value) {
+        return Ok(vec![value.to_string()]);
+    }
+
+    // DSSE envelope object.
+    if let Some(statement) = dsse_payload_statement(value)? {
+        return Ok(vec![statement]);
+    }
+
+    // Sigstore bundle: prefer dsseEnvelope payload when available.
+    let mut docs = Vec::new();
+    if let Some(dsse) = value.get("dsseEnvelope") {
+        if let Some(statement) = dsse_payload_statement(dsse)? {
+            docs.push(statement);
+        }
+    }
+    if let Some(dsse) = value.pointer("/content/dsseEnvelope") {
+        if let Some(statement) = dsse_payload_statement(dsse)? {
+            docs.push(statement);
+        }
+    }
+    if let Some(dsse) = value.pointer("/sourceBundle/dsseEnvelope") {
+        if let Some(statement) = dsse_payload_statement(dsse)? {
+            docs.push(statement);
+        }
+    }
+    if let Some(dsse) = value.pointer("/sourceBundle/content/dsseEnvelope") {
+        if let Some(statement) = dsse_payload_statement(dsse)? {
+            docs.push(statement);
+        }
+    }
+
+    // Array of envelopes/statements.
+    if let Some(arr) = value.as_array() {
+        for item in arr {
+            if is_statement_json(item) {
+                docs.push(item.to_string());
+                continue;
+            }
+            if let Some(statement) = dsse_payload_statement(item)? {
+                docs.push(statement);
+            }
+        }
+    }
+
+    if docs.is_empty() {
+        bail!("unsupported provenance material JSON format");
+    }
+    Ok(unique_docs(docs))
+}
+
+fn dsse_payload_statement(value: &Value) -> Result<Option<String>> {
+    let payload = value.get("payload").and_then(|v| v.as_str());
+    let payload_type = value.get("payloadType").and_then(|v| v.as_str());
+    let signatures = value.get("signatures").and_then(|v| v.as_array());
+    if payload.is_none() || payload_type.is_none() || signatures.is_none() {
+        return Ok(None);
+    }
+
+    let payload_type = payload_type.unwrap_or_default().to_ascii_lowercase();
+    if !payload_type.starts_with("application/vnd.in-toto") {
+        return Ok(None);
+    }
+
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(payload.unwrap_or_default())
+        .context("decode DSSE payload")?;
+    let statement = String::from_utf8(decoded).context("DSSE payload is not UTF-8")?;
+    let statement_json: Value =
+        serde_json::from_str(&statement).context("parse DSSE payload as JSON")?;
+    if !is_statement_json(&statement_json) {
+        bail!("DSSE payload is not an in-toto statement");
+    }
+
+    Ok(Some(statement))
+}
+
+fn verify_rekor_v2_consistency(value: &Value) -> Result<()> {
+    let dsse = value
+        .get("dsseEnvelope")
+        .or_else(|| value.pointer("/content/dsseEnvelope"))
+        .or_else(|| value.pointer("/sourceBundle/dsseEnvelope"))
+        .or_else(|| value.pointer("/sourceBundle/content/dsseEnvelope"));
+    let tlog_entry = value
+        .get("rekorEntryV2")
+        .or_else(|| value.pointer("/verificationMaterial/tlogEntries/0"))
+        .or_else(|| value.pointer("/sourceBundle/verificationMaterial/tlogEntries/0"));
+
+    let (Some(dsse), Some(tlog_entry)) = (dsse, tlog_entry) else {
+        return Ok(());
+    };
+
+    let payload_b64 = dsse
+        .get("payload")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("dsseEnvelope.payload missing for Rekor v2 verification"))?;
+    let payload_bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload_b64)
+        .context("decode dsseEnvelope.payload for Rekor v2 verification")?;
+    let payload_sha256 = sha2::Sha256::digest(&payload_bytes);
+    let payload_sha256_b64 = base64::engine::general_purpose::STANDARD.encode(payload_sha256);
+
+    let canonicalized_body_b64 = tlog_entry
+        .get("canonicalizedBody")
+        .or_else(|| tlog_entry.get("canonicalized_body"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Rekor v2 tlog entry missing canonicalizedBody"))?;
+    let canonicalized_body = base64::engine::general_purpose::STANDARD
+        .decode(canonicalized_body_b64)
+        .context("decode Rekor v2 canonicalizedBody")?;
+    let canonicalized_json: Value = serde_json::from_slice(&canonicalized_body)
+        .context("parse Rekor v2 canonicalizedBody JSON")?;
+
+    let kind = canonicalized_json
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if kind != "dsse" {
+        bail!("Rekor v2 canonicalizedBody kind `{kind}` is not dsse");
+    }
+
+    let rekor_payload_digest = canonicalized_json
+        .pointer("/spec/dsseV002/data/digest")
+        .or_else(|| canonicalized_json.pointer("/spec/dsseV002/payloadHash/digest"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Rekor v2 canonicalizedBody missing dsse payload digest"))?;
+
+    if rekor_payload_digest != payload_sha256_b64 {
+        bail!(
+            "Rekor v2 digest mismatch: rekor=`{}`, payload_sha256_b64=`{}`",
+            rekor_payload_digest,
+            payload_sha256_b64
+        );
+    }
+
+    Ok(())
+}
+
+fn is_statement_json(value: &Value) -> bool {
+    value
+        .get("predicateType")
+        .and_then(|v| v.as_str())
+        .is_some()
+        && value.get("_type").and_then(|v| v.as_str()).is_some()
+}
+
+fn unique_docs(docs: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for doc in docs {
+        if seen.insert(doc.clone()) {
+            out.push(doc);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_direct_statement() {
+        let statement = r#"{"_type":"https://in-toto.io/Statement/v1","predicateType":"https://slsa.dev/provenance/v1","subject":[],"predicate":{}}"#;
+        let docs = parse_slsa_documents_from_material(statement.as_bytes()).unwrap();
+        assert_eq!(docs.len(), 1);
+    }
+
+    #[test]
+    fn parse_dsse_envelope() {
+        let statement = r#"{"_type":"https://in-toto.io/Statement/v1","predicateType":"https://slsa.dev/provenance/v1","subject":[],"predicate":{}}"#;
+        let payload = base64::engine::general_purpose::STANDARD.encode(statement.as_bytes());
+        let dsse = format!(
+            r#"{{"payloadType":"application/vnd.in-toto+json","payload":"{payload}","signatures":[{{"sig":"abc"}}]}}"#
+        );
+        let docs = parse_slsa_documents_from_material(dsse.as_bytes()).unwrap();
+        assert_eq!(docs.len(), 1);
+        assert!(docs[0].contains("predicateType"));
     }
 }
