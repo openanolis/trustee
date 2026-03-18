@@ -1271,8 +1271,8 @@ EOF
 *   **端点:** `POST /api/rvps/set_reference_value_list`
     
 *   **说明:** 通过 gRPC 向后端 RVPS 服务批量设置参考值。RVPS 会遍历 `rv_list` 中的每一项：
-    1. 计算 `SHA256($artifact-id || $artifact-version)` 作为 Rekor 索引。
-    2. 使用 `provenance_info.rekor_url` 查询 Rekor，读取条目并校验签名。
+    1. 若未提供 `provenance_source`，计算 `SHA256($artifact-id || $artifact-version)` 作为索引并走 Rekor v1 兼容查询路径。
+    2. 若提供 `provenance_source`，按 `provenance_source.protocol` 拉取 provenance/bundle 元数据（当前支持 OCI）。
     3. 解析 SLSA in-toto statement，提取制品哈希摘要值。
     4. 确定参考值名称：若该项提供可选字段 `rv_name`，则使用该字符串（去首尾空白后非空）；否则默认 `measurement.$type.$artifact-id`。
     5. 若该名称已存在且新旧参考值不同，根据 `operation_type` 进行追加或覆盖。
@@ -1289,9 +1289,15 @@ cat << EOF > rvps-set-list.json
       "type": "model",
       "provenance_info": {
         "type": "slsa-intoto-statements",
-        "rekor_url": "https://rekor.sigstore.dev"
+        "rekor_url": "https://log2025-1.rekor.sigstore.dev",
+        "rekor_api_version": 2
       },
-      "operation_type": "add"
+      "provenance_source": {
+        "protocol": "oci",
+        "uri": "oci://127.0.0.1:5000/trustee/provenance:v1",
+        "artifact": "bundle"
+      },
+      "operation_type": "refresh"
     }
   ]
 }
@@ -1319,10 +1325,16 @@ curl -k -X POST http://<gateway-host>:<port>/api/rvps/set_reference_value_list \
       "type": "model",
       "provenance_info": {
         "type": "slsa-intoto-statements",
-        "rekor_url": "https://rekor.sigstore.dev"
+        "rekor_url": "https://log2025-1.rekor.sigstore.dev",
+        "rekor_api_version": 2
       },
-      "operation_type": "add",
-      "rv_name": "optional.custom.reference.name"
+      "rv_name": "optional.custom.reference.name",
+      "provenance_source": {
+        "protocol": "oci",
+        "uri": "oci://127.0.0.1:5000/trustee/provenance:v1",
+        "artifact": "bundle"
+      },
+      "operation_type": "add"
     }
   ]
 }
@@ -1337,6 +1349,10 @@ curl -k -X POST http://<gateway-host>:<port>/api/rvps/set_reference_value_list \
     *   `rv_name`（可选）: 显式指定写入 RVPS 的参考值名称；不得为空或仅空白。省略时行为与原先一致，使用 `measurement.$type.$artifact-id`。
     *   `provenance_info.type`: 目前仅支持 `slsa-intoto-statements`。
     *   `provenance_info.rekor_url`: Rekor 透明日志地址。
+    *   `provenance_info.rekor_api_version`: Rekor API 大版本（`1`/`2`，可选）。
+    *   `provenance_source.protocol`: provenance/bundle 获取协议，当前支持 `oci`。
+    *   `provenance_source.uri`: provenance/bundle 地址，如 `oci://<registry>/<repo>:<tag>`。
+    *   `provenance_source.artifact`: 拉取对象类型，建议 `bundle`（可选 `provenance`）。
     *   `operation_type`: `add` 或 `refresh`。当名称已存在且新旧参考值不同：
         *   `add`: 将新参考值追加到该名称的参考值数组中。
         *   `refresh`: 清空旧参考值，仅保留最新参考值。

@@ -46,6 +46,9 @@ attestation-challenge-client set-reference-value-list --rv-list <rv-list.json>
 ### SLSA 模式 (rekor透明日志)
 
 #### 方式一（经典模式）
+
+这种方式只支持rekor v1
+
 ```bash
 attestation-challenge-client set-reference-value \
   --provenance-type slsa \
@@ -57,6 +60,8 @@ attestation-challenge-client set-reference-value \
 - `--rekor-url` 可选，默认 `https://rekor.sigstore.dev`。
 
 #### 方式二（批量模式）
+
+这种方式能够支持rekor v2
 
 ```bash
 attestation-challenge-client set-reference-value-list --rv-list /path/to/rv-list.json
