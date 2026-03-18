@@ -50,6 +50,23 @@ attestation-challenge-client set-reference-value \
 - 逻辑：对 `artifact-name` 做 sha256 作为索引，访问rekor透明日志查询相应条目，过滤并提取 SLSA provenance (包含度量参考值)，组装为 RVPS 能识别的 message 后注册。
 - `--rekor-url` 可选，默认 `https://rekor.sigstore.dev`。
 
+#### SLSA + OCI provenance source（推荐用于 Rekor v2）
+
+```bash
+attestation-challenge-client set-reference-value \
+  --provenance-type slsa \
+  --artifact-type <artifact_type> \
+  --artifact-name <artifact_name> \
+  --rekor-url <rekor_url> \
+  --rekor-api-version 2 \
+  --provenance-source-protocol oci \
+  --provenance-source-uri oci://<registry>/<repo>:<tag> \
+  [--provenance-source-artifact bundle]
+```
+
+- 当提供 `--provenance-source-protocol/--provenance-source-uri` 时，客户端会调用 RVPS `set_reference_value_list` 新路径。
+- `--rekor-api-version` 支持 `auto|1|2`，默认 `auto`。
+
 ### Sample 模式
 ```bash
 attestation-challenge-client set-reference-value \
