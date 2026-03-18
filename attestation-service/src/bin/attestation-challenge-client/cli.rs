@@ -161,6 +161,22 @@ pub struct SetReferenceValueArgs {
     #[arg(long = "rekor-url", default_value = DEFAULT_REKOR_URL)]
     pub rekor_url: String,
 
+    /// Rekor API major version (auto/1/2)
+    #[arg(long = "rekor-api-version", default_value = "auto", value_enum)]
+    pub rekor_api_version: RekorApiVersion,
+
+    /// Provenance source protocol (e.g. oci). If provided, provenance is pulled from source URI.
+    #[arg(long = "provenance-source-protocol")]
+    pub provenance_source_protocol: Option<String>,
+
+    /// Provenance source URI (e.g. oci://registry/repo:tag)
+    #[arg(long = "provenance-source-uri")]
+    pub provenance_source_uri: Option<String>,
+
+    /// Provenance source artifact type (bundle/provenance)
+    #[arg(long = "provenance-source-artifact", default_value = "bundle")]
+    pub provenance_source_artifact: String,
+
     /// Path to the provenance payload JSON (required for sample)
     #[arg(long = "payload")]
     pub payload: Option<PathBuf>,
@@ -172,4 +188,14 @@ pub enum ProvenanceType {
     Slsa,
     #[value(name = "sample")]
     Sample,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RekorApiVersion {
+    #[value(name = "auto")]
+    Auto,
+    #[value(name = "1")]
+    V1,
+    #[value(name = "2")]
+    V2,
 }

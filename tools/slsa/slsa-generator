@@ -7,7 +7,10 @@ usage() {
   cat <<'EOF'
 用法:
   slsa-generator --artifact-type <type> --artifact <path> --artifact-id <id> \
-    --artifact-version <version> --sign-key <key>
+    --artifact-version <version> --sign-key <key> [--rekor-url <url>] \
+    [--rekor-api-version <1|2>] \
+    [--provenance-store-protocol <oci>] [--provenance-store-uri <uri>] \
+    [--provenance-store-artifact <bundle|provenance>]
 
 参数:
   --artifact-type     制品类型: binary | model-dir | uki
@@ -18,6 +21,12 @@ usage() {
   --artifact-id       制品自定义ID
   --artifact-version  制品版本
   --sign-key          用于签名SLSA provenance的私钥路径(cosign生成)
+  --rekor-url         Rekor 服务地址（默认: https://rekor.sigstore.dev）
+  --rekor-api-version Rekor API 主版本: 1 或 2（默认: 1）
+  --rekor-v2-key-details Rekor v2 verifier keyDetails（默认: PKIX_ECDSA_P256_SHA_256）
+  --provenance-store-protocol provenance存储协议（当前支持: oci）
+  --provenance-store-uri provenance存储地址（如 oci://127.0.0.1:5000/ns/repo:tag）
+  --provenance-store-artifact 存储对象类型: bundle | provenance（默认: bundle）
 EOF
 }
 
@@ -46,11 +55,209 @@ hash_dir_sha256() {
   cryptpilot-verity dump "$dir" --print-root-hash | awk 'NF{print $1; exit}'
 }
 
+sha256_file() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+infer_registry_scheme() {
+  local registry="$1"
+  if [[ "$registry" == localhost* ]] || [[ "$registry" == 127.0.0.1* ]] || [[ "${TRUSTEE_OCI_INSECURE:-}" == "1" ]] || [[ "${TRUSTEE_OCI_INSECURE:-}" == "true" ]]; then
+    printf 'http'
+  else
+    printf 'https'
+  fi
+}
+
+parse_oci_push_ref() {
+  local uri="$1"
+  local no_scheme="${uri#oci://}"
+  if [[ "$no_scheme" == "$uri" ]]; then
+    echo "不支持的OCI URI: $uri（必须以 oci:// 开头）" >&2
+    return 1
+  fi
+  if [[ "$no_scheme" == *"@"* ]]; then
+    echo "OCI push 不支持 digest 引用，请使用 tag: $uri" >&2
+    return 1
+  fi
+
+  local registry="${no_scheme%%/*}"
+  local repo_ref="${no_scheme#*/}"
+  if [[ -z "$registry" || -z "$repo_ref" || "$repo_ref" == "$no_scheme" ]]; then
+    echo "无效的 OCI URI: $uri" >&2
+    return 1
+  fi
+
+  local last_segment="${repo_ref##*/}"
+  local repository="$repo_ref"
+  local tag="latest"
+  if [[ "$last_segment" == *:* ]]; then
+    tag="${last_segment##*:}"
+    repository="${repo_ref%:*}"
+  fi
+  if [[ -z "$repository" || -z "$tag" ]]; then
+    echo "无效的 OCI push 引用: $uri" >&2
+    return 1
+  fi
+
+  printf '%s\n%s\n%s\n' "$registry" "$repository" "$tag"
+}
+
+upload_blob_oci() {
+  local scheme="$1"
+  local registry="$2"
+  local repository="$3"
+  local file="$4"
+  local digest="$5"
+
+  local headers location upload_url
+  headers=$(curl -sS -D - -o /dev/null -X POST "${scheme}://${registry}/v2/${repository}/blobs/uploads/")
+  location=$(printf '%s' "$headers" | awk '/^[Ll]ocation:/ {print $2}' | tr -d '\r' | tail -n1)
+  if [[ -z "$location" ]]; then
+    echo "上传 OCI blob 失败: 未返回 Location 头" >&2
+    return 1
+  fi
+
+  if [[ "$location" == http* ]]; then
+    upload_url="$location"
+  else
+    upload_url="${scheme}://${registry}${location}"
+  fi
+
+  local sep='?'
+  if [[ "$upload_url" == *\?* ]]; then
+    sep='&'
+  fi
+  curl -sS -X PUT "${upload_url}${sep}digest=sha256:${digest}" \
+    -H 'Content-Type: application/octet-stream' \
+    --data-binary @"$file" >/dev/null
+}
+
+upload_to_oci_storage() {
+  local uri="$1"
+  local artifact_file="$2"
+  local artifact_media_type="$3"
+  local artifact_type="$4"
+
+  mapfile -t ref_parts < <(parse_oci_push_ref "$uri")
+  local registry="${ref_parts[0]}"
+  local repository="${ref_parts[1]}"
+  local tag="${ref_parts[2]}"
+  local scheme
+  scheme=$(infer_registry_scheme "$registry")
+
+  local cfg_file="$out_dir/oci-empty-config.json"
+  printf '{}' > "$cfg_file"
+  local cfg_digest cfg_size art_digest art_size
+  cfg_digest=$(sha256_file "$cfg_file")
+  cfg_size=$(wc -c < "$cfg_file")
+  art_digest=$(sha256_file "$artifact_file")
+  art_size=$(wc -c < "$artifact_file")
+
+  upload_blob_oci "$scheme" "$registry" "$repository" "$cfg_file" "$cfg_digest"
+  upload_blob_oci "$scheme" "$registry" "$repository" "$artifact_file" "$art_digest"
+
+  local manifest_file="$out_dir/provenance-storage-manifest.json"
+  cat > "$manifest_file" <<EOF
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "artifactType": "${artifact_type}",
+  "config": {
+    "mediaType": "application/vnd.oci.empty.v1+json",
+    "digest": "sha256:${cfg_digest}",
+    "size": ${cfg_size}
+  },
+  "layers": [
+    {
+      "mediaType": "${artifact_media_type}",
+      "digest": "sha256:${art_digest}",
+      "size": ${art_size}
+    }
+  ]
+}
+EOF
+
+  curl -sS -X PUT "${scheme}://${registry}/v2/${repository}/manifests/${tag}" \
+    -H 'Content-Type: application/vnd.oci.image.manifest.v1+json' \
+    --data-binary @"$manifest_file" >/dev/null
+}
+
+upload_rekor_v1() {
+  local rekor_url="$1"
+  local envelope="$2"
+  local pubkey="$3"
+  local output_file="$4"
+  rekor-cli upload \
+    --rekor_server "$rekor_url" \
+    --artifact "$envelope" \
+    --public-key "$pubkey" \
+    --type intoto | tee "$output_file"
+}
+
+upload_rekor_v2() {
+  local rekor_url="$1"
+  local envelope="$2"
+  local pubkey="$3"
+  local key_details="$4"
+  local output_file="$5"
+  local req_file="$6"
+
+  local payload payload_type sig pub_der_b64
+  payload=$(jq -r '.payload // empty' "$envelope")
+  payload_type=$(jq -r '.payloadType // empty' "$envelope")
+  sig=$(jq -r '.signatures[0].sig // empty' "$envelope")
+  if [[ -z "$payload" || -z "$payload_type" || -z "$sig" ]]; then
+    echo "DSSE envelope 缺少 payload/payloadType/signatures[0].sig" >&2
+    return 1
+  fi
+
+  pub_der_b64=$(openssl pkey -pubin -in "$pubkey" -outform DER | base64 -w0)
+  jq -n \
+    --arg payload "$payload" \
+    --arg payloadType "$payload_type" \
+    --arg sig "$sig" \
+    --arg keyDetails "$key_details" \
+    --arg rawBytes "$pub_der_b64" \
+    '{
+      dsseRequestV002: {
+        envelope: {
+          payload: $payload,
+          payloadType: $payloadType,
+          signatures: [{ sig: $sig, keyid: "" }]
+        },
+        verifiers: [
+          {
+            publicKey: { rawBytes: $rawBytes },
+            keyDetails: $keyDetails
+          }
+        ]
+      }
+    }' > "$req_file"
+
+  local base="${rekor_url%/}"
+  local code
+  code=$(curl -sS -o "$output_file" -w '%{http_code}' \
+    -X POST "${base}/api/v2/log/entries" \
+    -H 'Content-Type: application/json' \
+    --data-binary @"$req_file")
+  if [[ "$code" -lt 200 || "$code" -ge 300 ]]; then
+    echo "上传 Rekor v2 失败，HTTP $code，响应：" >&2
+    cat "$output_file" >&2 || true
+    return 1
+  fi
+}
+
 artifact_type=""
 artifact_path=""
 artifact_id=""
 artifact_version=""
 sign_key=""
+rekor_url="https://rekor.sigstore.dev"
+rekor_api_version="1"
+rekor_v2_key_details="PKIX_ECDSA_P256_SHA_256"
+provenance_store_protocol=""
+provenance_store_uri=""
+provenance_store_artifact="bundle"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -74,6 +281,30 @@ while [ $# -gt 0 ]; do
       sign_key="${2:-}"
       shift 2
       ;;
+    --rekor-url)
+      rekor_url="${2:-}"
+      shift 2
+      ;;
+    --rekor-api-version)
+      rekor_api_version="${2:-}"
+      shift 2
+      ;;
+    --rekor-v2-key-details)
+      rekor_v2_key_details="${2:-}"
+      shift 2
+      ;;
+    --provenance-store-protocol)
+      provenance_store_protocol="${2:-}"
+      shift 2
+      ;;
+    --provenance-store-uri)
+      provenance_store_uri="${2:-}"
+      shift 2
+      ;;
+    --provenance-store-artifact)
+      provenance_store_artifact="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -88,6 +319,29 @@ done
 
 if [ -z "$artifact_type" ] || [ -z "$artifact_path" ] || [ -z "$artifact_id" ] || [ -z "$artifact_version" ] || [ -z "$sign_key" ]; then
   usage >&2
+  exit 1
+fi
+
+require_cmd sha256sum
+require_cmd cosign
+require_cmd jq
+require_cmd curl
+require_cmd openssl
+
+if [ "$artifact_type" = "model-dir" ]; then
+  require_cmd cryptpilot-verity
+fi
+
+case "$rekor_api_version" in
+  1|2) ;;
+  *)
+    echo "不支持的 --rekor-api-version: $rekor_api_version（仅支持 1 或 2）" >&2
+    exit 1
+    ;;
+esac
+
+if [ -n "$provenance_store_protocol" ] && [ -z "$provenance_store_uri" ]; then
+  echo "指定 --provenance-store-protocol 时必须提供 --provenance-store-uri" >&2
   exit 1
 fi
 
@@ -153,10 +407,17 @@ mkdir -p "$out_dir"
 statement_file="$out_dir/statement.json"
 envelope_file="$out_dir/statement.dsse.json"
 attestation_file="$out_dir/statement.attestation.json"
+
 if [ "$artifact_type" = "uki" ]; then
   attest_blob_path="$out_dir/uki-artifact.json"
   cp -- "$artifact_path" "$attest_blob_path"
 fi
+
+bundle_jsonl_file="$out_dir/statement.intoto.jsonl"
+rekor_v1_output_file="$out_dir/rekor-v1-upload.txt"
+rekor_v2_output_file="$out_dir/rekor-v2-entry.json"
+rekor_v2_req_file="$out_dir/rekor-v2-request.json"
+trustee_bundle_file="$out_dir/provenance.trustee-bundle.json"
 
 cat >"$statement_file" <<EOF
 {
@@ -192,6 +453,7 @@ cat >"$statement_file" <<EOF
 EOF
 
 cosign attest-blob \
+  --new-bundle-format=false \
   --key "$sign_key" \
   --yes \
   --use-signing-config=false \
@@ -199,6 +461,8 @@ cosign attest-blob \
   --output-attestation "$attestation_file" \
   --output-signature "$envelope_file" \
   "$attest_blob_path"
+
+jq -c . "$envelope_file" > "$bundle_jsonl_file"
 
 pub_key=""
 if [ -f "${sign_key}.pub" ]; then
@@ -210,11 +474,50 @@ else
   exit 1
 fi
 
-rekor-cli upload \
-  --rekor_server https://rekor.sigstore.dev \
-  --artifact "$envelope_file" \
-  --public-key "$pub_key" \
-  --type intoto
+if [ "$rekor_api_version" = "1" ]; then
+  require_cmd rekor-cli
+  upload_rekor_v1 "$rekor_url" "$envelope_file" "$pub_key" "$rekor_v1_output_file"
+else
+  upload_rekor_v2 "$rekor_url" "$envelope_file" "$pub_key" "$rekor_v2_key_details" "$rekor_v2_output_file" "$rekor_v2_req_file"
+fi
+
+if [ "$provenance_store_artifact" = "bundle" ]; then
+  if [ -f "$rekor_v2_output_file" ]; then
+    jq -n \
+      --argfile sourceBundle "$bundle_jsonl_file" \
+      --argfile dsse "$envelope_file" \
+      --argfile rekor "$rekor_v2_output_file" \
+      '{sourceBundle: $sourceBundle, dsseEnvelope: $dsse, rekorEntryV2: $rekor}' > "$trustee_bundle_file"
+  else
+    jq -n \
+      --argfile sourceBundle "$bundle_jsonl_file" \
+      --argfile dsse "$envelope_file" \
+      '{sourceBundle: $sourceBundle, dsseEnvelope: $dsse}' > "$trustee_bundle_file"
+  fi
+fi
+
+if [ -n "$provenance_store_protocol" ]; then
+  case "$provenance_store_protocol" in
+    oci)
+      case "$provenance_store_artifact" in
+        bundle)
+          upload_to_oci_storage "$provenance_store_uri" "$trustee_bundle_file" "application/vnd.in-toto.bundle+json" "application/vnd.in-toto.bundle"
+          ;;
+        provenance)
+          upload_to_oci_storage "$provenance_store_uri" "$statement_file" "application/vnd.in-toto.provenance+json" "application/vnd.in-toto.provenance"
+          ;;
+        *)
+          echo "不支持的 --provenance-store-artifact: $provenance_store_artifact（仅支持 bundle|provenance）" >&2
+          exit 1
+          ;;
+      esac
+      ;;
+    *)
+      echo "不支持的 --provenance-store-protocol: $provenance_store_protocol（当前仅支持 oci）" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 echo "完成: SLSA provenance生成并上传Rekor"
 echo "输出目录: $out_dir"

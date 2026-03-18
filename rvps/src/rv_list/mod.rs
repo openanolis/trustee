@@ -13,6 +13,8 @@ pub struct ReferenceValueListItem {
     #[serde(rename = "type")]
     pub rv_type: String,
     pub provenance_info: ReferenceValueProvenanceInfo,
+    #[serde(default)]
+    pub provenance_source: Option<ReferenceValueProvenanceSource>,
     pub operation_type: String,
     /// When set, use this as the RVPS reference value name instead of
     /// `measurement.{type}.{id}`.
@@ -25,6 +27,16 @@ pub struct ReferenceValueProvenanceInfo {
     #[serde(rename = "type")]
     pub provenance_type: String,
     pub rekor_url: String,
+    #[serde(default)]
+    pub rekor_api_version: Option<u8>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ReferenceValueProvenanceSource {
+    pub protocol: String,
+    pub uri: String,
+    #[serde(default)]
+    pub artifact: Option<String>,
 }
 
 pub enum ReferenceValueOperation {
