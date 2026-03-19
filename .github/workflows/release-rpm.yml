@@ -16,6 +16,9 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       TAG_NAME: ${{ github.event.release.tag_name || inputs.tag_name }}
+    outputs:
+      rpm_name_al8: ${{ steps.extract-version.outputs.rpm_name_al8 }}
+      rpm_name_an23: ${{ steps.extract-version.outputs.rpm_name_an23 }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -41,62 +44,23 @@ jobs:
         run: |
           cd dist
           make create-build-artifacts
-          
-      - name: Create buildspec from template for AnolisOS23
+
+      - name: Extract version info and export rpm_name
+        id: extract-version
         run: |
-          GITHUB_RELEASE="${{ env.TAG_NAME }}"
           VERSION=$(grep -m1 '^Version:' rpm/trustee.spec | awk '{print $2}')
           RELEASE=$(grep -m1 '^%define alinux_release' rpm/trustee.spec | awk '{print $3}')
-          
-          echo "Using GITHUB_RELEASE: $GITHUB_RELEASE"
-          echo "Using VERSION: $VERSION"
-          echo "Using RELEASE: $RELEASE"
+          echo "VERSION=$VERSION"
+          echo "RELEASE=$RELEASE"
+          echo "rpm_name_al8=trustee-${VERSION}-${RELEASE}.al8" >> $GITHUB_OUTPUT
+          echo "rpm_name_an23=trustee-${VERSION}-${RELEASE}.an23" >> $GITHUB_OUTPUT
 
-          export GITHUB_RELEASE VERSION RELEASE
-          envsubst '$GITHUB_RELEASE $VERSION $RELEASE' \
-            < rpm/AnolisOS23/trustee.an23.buildspec.yaml.template \
-            > rpm/AnolisOS23/trustee.an23.buildspec.yaml
-
-      - name: Create buildspec from template for Alinux3
-        run: |
-          GITHUB_RELEASE="${{ env.TAG_NAME }}"
-          VERSION=$(grep -m1 '^Version:' rpm/trustee.spec | awk '{print $2}')
-          RELEASE=$(grep -m1 '^%define alinux_release' rpm/trustee.spec | awk '{print $3}')
-          
-          echo "Using GITHUB_RELEASE: $GITHUB_RELEASE"
-          echo "Using VERSION: $VERSION"
-          echo "Using RELEASE: $RELEASE"
-
-          export GITHUB_RELEASE VERSION RELEASE
-          envsubst '$GITHUB_RELEASE $VERSION $RELEASE' \
-            < rpm/Alinux3/trustee.al8.buildspec.yaml.template \
-            > rpm/Alinux3/trustee.al8.buildspec.yaml
-
-      - name: Generate artifacts hashes
-        run: |
-          echo "Generating hashes for build artifacts..."
-          sha256sum build-artifacts-*.tar.gz > artifacts-hash.txt
-          sha256sum rpm/AnolisOS23/trustee.an23.buildspec.yaml | awk '{sub(/^.*\//,"",$2); print}' >> artifacts-hash.txt
-          sha256sum rpm/Alinux3/trustee.al8.buildspec.yaml | awk '{sub(/^.*\//,"",$2); print}' >> artifacts-hash.txt
-          # Encode the artifacts hash file to base64 and save to file
-          base64 -w0 artifacts-hash.txt > artifact_subjects_base64.txt
-
-      - name: Upload artifact subjects as artifact
+      - name: Upload build artifacts tarball
         uses: actions/upload-artifact@v4
         with:
-          name: artifact-subjects-data
-          path: artifact_subjects_base64.txt
-
-      - name: Upload total build artifacts to release
-        uses: softprops/action-gh-release@v2
-        with:
-          fail_on_unmatched_files: true
-          overwrite_files: false
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            build-artifacts-*.tar.gz
-            rpm/AnolisOS23/trustee.an23.buildspec.yaml
-            rpm/Alinux3/trustee.al8.buildspec.yaml
+          name: build-artifacts-tarball
+          if-no-files-found: error
+          path: build-artifacts-*.tar.gz
 
   build-rpm:
     name: Build RPM Package (${{ matrix.os_flavor.name }})
@@ -109,263 +73,75 @@ jobs:
         os_flavor:
           - id: alinux3
             name: "Alinux3"
-            buildspec_asset: "trustee.al8.buildspec.yaml"
-            artifact_name: "rpm-packages-alinux3"
+            buildspec_suffix: "al8"
           - id: anolisos23
             name: "AnolisOS23"
-            buildspec_asset: "trustee.an23.buildspec.yaml"
-            artifact_name: "rpm-packages-anolisos23"
+            buildspec_suffix: "an23"
     steps:
-      - name: Download buildspec
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts-tarball
+          path: ./
+
+      - name: Create buildspec from template
         run: |
-          echo "Downloading buildspec for ${{ matrix.os_flavor.name }}"
-          curl -L \
-            "https://github.com/openanolis/trustee/releases/download/${{ env.TAG_NAME }}/${{ matrix.os_flavor.buildspec_asset }}" \
-            -o "${{ matrix.os_flavor.buildspec_asset }}"
+          GITHUB_RELEASE="${{ env.TAG_NAME }}"
+          VERSION=$(grep -m1 '^Version:' rpm/trustee.spec | awk '{print $2}')
+          RELEASE=$(grep -m1 '^%define alinux_release' rpm/trustee.spec | awk '{print $3}')
+          
+          echo "Using GITHUB_RELEASE: $GITHUB_RELEASE"
+          echo "Using VERSION: $VERSION"
+          echo "Using RELEASE: $RELEASE"
+
+          # Create buildspec for release
+          export GITHUB_RELEASE VERSION RELEASE
+          envsubst '$GITHUB_RELEASE $VERSION $RELEASE' \
+            < rpm/${{ matrix.os_flavor.name }}/trustee.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml.template \
+            > ./trustee-${VERSION}-${RELEASE}.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml
+
+          # Copy buildspec for local build
+          # Install yq
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+          cp ./trustee-${VERSION}-${RELEASE}.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml rpm/trustee.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml
+          # Replace URL with local path for local build
+          yq -i ".inputs.source.url = \"file://${GITHUB_WORKSPACE}/build-artifacts-v${VERSION}.tar.gz\"" rpm/trustee.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml
+
+      - name: Upload build input artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-input-${{ matrix.os_flavor.id }}
+          if-no-files-found: error
+          path: |
+            build-artifacts-*.tar.gz
+            ./trustee-*.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml
 
       - name: Build RPM package
         uses: 1570005763/GuanFu@v1
         with:
-          spec_path: ${{ matrix.os_flavor.buildspec_asset }}
+          spec_path: rpm/trustee.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml
 
-      - name: Upload RPM packages
+      - name: Upload RPM packages as build output artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os_flavor.artifact_name }}
+          name: build-output-${{ matrix.os_flavor.id }}
           path: |
             /home/rpmbuild/SRPMS/*.src.rpm
             /home/rpmbuild/RPMS/*/*.rpm
           if-no-files-found: error
 
-  generate-binary-subjects:
-    name: Generate Binary Subjects (${{ matrix.os_flavor.name }})
-    runs-on: ubuntu-22.04
-    needs: [build-rpm]
-    strategy:
-      matrix:
-        os_flavor:
-          - id: alinux3
-            name: "Alinux3"
-            artifact_name: "rpm-packages-alinux3"
-          - id: anolisos23
-            name: "AnolisOS23"
-            artifact_name: "rpm-packages-anolisos23"
-    steps:
-      - name: Download RPM packages
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.os_flavor.artifact_name }}
-          path: rpm-packages
-
-      - name: Install RPM extraction tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm cpio
-
-      - name: Generate binary hashes for RPM packages
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-
-          # Create temporary directory for extraction
-          temp_dir=$(mktemp -d)
-          subjects_txt="$temp_dir/all-subjects.txt"
-          : > "$subjects_txt"
-
-          # Search for RPMs under rpm-packages, matching typical rpmbuild layout */RPMS/*/*.rpm.
-          mapfile -t rpms < <(find "rpm-packages" -type f -path "*/RPMS/*/*.rpm" -print | sort)
-          if [ "${#rpms[@]}" -eq 0 ]; then
-            echo "No RPMs found under rpm-packages (pattern */RPMS/*/*.rpm)" >&2
-            echo "Available files:"
-            find rpm-packages -type f | head -20
-            exit 1
-          fi
-
-          for rpm in "${rpms[@]}"; do
-            echo "Processing RPM: $rpm"
-            
-            workdir="$(mktemp -d)"
-            # Extract RPM contents into temporary directory.
-            rpm2cpio "$rpm" | (cd "$workdir" && cpio -idmv >/dev/null 2>&1)
-
-            pushd "$workdir" >/dev/null
-            # Generate sha256 for each file inside the RPM.
-            # Subject name format: "<absolute-path-inside-rpm>"
-            while IFS= read -r -d '' f; do
-              rel="${f#./}"
-              sha="$(sha256sum "$f" | awk '{print $1}')"
-              echo "$sha  /$rel" >> "$subjects_txt"
-            done < <(find . -type f -print0 | sort -z)
-            popd >/dev/null
-
-            # Additionally, generate a "name index hash" for the RPM package itself.
-            # Key name: "package-name:<package-basename>", e.g. "package-name:attestation-agent-1.4.5-1.an23.x86_64.rpm".
-            # Key value: Hash("<package-basename>"), e.g. `Hash("attestation-agent-1.4.5-1.an23.x86_64.rpm")`.
-            # We reuse sha256 here and compute it over the exact package basename string.
-            pkg_name="${rpm##*/}"
-            pkg_hash="$(printf "%s" "$pkg_name" | sha256sum | awk '{print $1}')"
-            echo "$pkg_hash  package-name:${rpm##*/}" >> "$subjects_txt"
-
-            rm -rf "$workdir"
-          done
-
-          if [ ! -s "$subjects_txt" ]; then
-            echo "ERROR: No subjects generated" >&2
-            exit 1
-          fi
-
-          echo "Generated subjects for ${{ matrix.os_flavor.name }}:"
-          cat "$subjects_txt"
-          # Encode the subjects to base64 and save to file with matrix-specific name
-          base64 -w0 "$subjects_txt" > "binary_subjects_${{ matrix.os_flavor.id }}_base64.txt"
-          rm -rf "$temp_dir"
-
-      - name: Upload binary subjects as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: binary-subjects-${{ matrix.os_flavor.id }}-data
-          path: binary_subjects_${{ matrix.os_flavor.id }}_base64.txt
-
-  publish-rpm:
-    name: Publish RPMs (${{ matrix.os_flavor.name }})
-    runs-on: ubuntu-22.04
-    needs: [build-rpm]
-    env:
-      TAG_NAME: ${{ github.event.release.tag_name || inputs.tag_name }}
-    strategy:
-      matrix:
-        os_flavor:
-          - id: alinux3
-            name: "Alinux3"
-            artifact_name: "rpm-packages-alinux3"
-          - id: anolisos23
-            name: "AnolisOS23"
-            artifact_name: "rpm-packages-anolisos23"
-    steps:
-      - name: Download RPM packages
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.os_flavor.artifact_name }}
-          path: rpm-packages
-
-      - name: Generate hashes for RPM packages
-        run: |
-          true > hashes.txt
-          while IFS= read -r -d '' file; do
-            basename=$(basename "$file")
-            sha256sum "$file" | sed "s|${file//\//\\/}$|$basename|" >> hashes.txt
-          done < <(find rpm-packages -name "*.rpm" -type f -print0)
-
-          echo "Generated hashes.txt content:"
-          cat hashes.txt || echo "hashes.txt not found or empty"
-          # encode as base64 and save to file with matrix-specific name
-          base64 -w0 hashes.txt > "package_subjects_${{ matrix.os_flavor.id }}_base64.txt"
-
-      - name: Upload package subjects as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-subjects-${{ matrix.os_flavor.id }}-data
-          path: package_subjects_${{ matrix.os_flavor.id }}_base64.txt
-
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          fail_on_unmatched_files: true
-          overwrite_files: false
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            rpm-packages/SRPMS/*.src.rpm
-            rpm-packages/RPMS/*/*.rpm
-
-  combine-subjects:
-    name: Combine Provenance Subjects
-    runs-on: ubuntu-22.04
+  release:
+    name: Release (${{ matrix.os_flavor.name }})
     needs:
       - create-build-artifacts
-      - generate-binary-subjects
-      - publish-rpm
-    outputs:
-      alinux3_combined_subjects:  ${{ steps.combine.outputs.alinux3_subjects }}
-      anolisos23_combined_subjects: ${{ steps.combine.outputs.anolisos23_subjects }}
-    steps:
-      - name: Download artifact subjects (common)
-        uses: actions/download-artifact@v4
-        with:
-          name: artifact-subjects-data
-          path: ./artifacts
-
-      - name: Download binary subjects (alinux3)
-        uses: actions/download-artifact@v4
-        with:
-          name: binary-subjects-alinux3-data
-          path: ./binary-alinux3
-
-      - name: Download package subjects (alinux3)
-        uses: actions/download-artifact@v4
-        with:
-          name: package-subjects-alinux3-data
-          path: ./packages-alinux3
-
-      - name: Download binary subjects (anolisos23)
-        uses: actions/download-artifact@v4
-        with:
-          name: binary-subjects-anolisos23-data
-          path: ./binary-anolisos23
-
-      - name: Download package subjects (anolisos23)
-        uses: actions/download-artifact@v4
-        with:
-          name: package-subjects-anolisos23-data
-          path: ./packages-anolisos23
-
-      - name: Combine subjects for all flavors
-        id: combine
-        run: |
-          artifact_subjects=$(base64 -d < ./artifacts/artifact_subjects_base64.txt)
-
-          combine_one() {
-            local flavor="$1"
-            local binary_dir="$2"
-            local package_dir="$3"
-
-            local binary_b64_file="$binary_dir/binary_subjects_${flavor}_base64.txt"
-            local package_b64_file="$package_dir/package_subjects_${flavor}_base64.txt"
-
-            if [ ! -f "$binary_b64_file" ]; then
-              echo "ERROR: binary subjects file not found: $binary_b64_file" >&2
-              exit 1
-            fi
-            if [ ! -f "$package_b64_file" ]; then
-              echo "ERROR: package subjects file not found: $package_b64_file" >&2
-              exit 1
-            fi
-
-            local binary_subjects=$(base64 -d < "$binary_b64_file")
-            local package_subjects=$(base64 -d < "$package_b64_file")
-
-            local all_subjects=$(printf '%s\n%s\n%s\n' \
-              "$artifact_subjects" \
-              "$binary_subjects" \
-              "$package_subjects" | sed '/^$/d')
-
-            if [ -z "$all_subjects" ]; then
-              echo "ERROR: No subjects found to combine for $flavor" >&2
-              exit 1
-            fi
-
-            printf '%s' "$all_subjects" | base64 -w0
-          }
-
-          alinux3_b64=$(combine_one "alinux3" "./binary-alinux3" "./packages-alinux3")
-          anolisos23_b64=$(combine_one "anolisos23" "./binary-anolisos23" "./packages-anolisos23")
-
-          echo "alinux3_subjects=$alinux3_b64"        >> "$GITHUB_OUTPUT"
-          echo "anolisos23_subjects=$anolisos23_b64"  >> "$GITHUB_OUTPUT"
-
-  provenance:
-    name: Generate SLSA Provenance (${{ matrix.os_flavor.name }})
-    needs: [combine-subjects]
+      - build-rpm
     strategy:
+      max-parallel: 1
       matrix:
         os_flavor:
           - id: alinux3
@@ -374,94 +150,16 @@ jobs:
             name: "AnolisOS23"
     permissions:
       actions: read
-      id-token: write
       contents: write
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+      id-token: write
+    uses: 1570005763/GuanFu/.github/workflows/release.yml@v1
     with:
-      compile-generator: false
-      base64-subjects: ${{ matrix.os_flavor.id == 'alinux3'
-                          && needs.combine-subjects.outputs.alinux3_combined_subjects
-                          || needs.combine-subjects.outputs.anolisos23_combined_subjects }}
-      upload-assets: true
-      provenance-name: "trustee-${{ matrix.os_flavor.id }}-slsaprovenance.intoto.jsonl"
+      input_artifact: build-input-${{ matrix.os_flavor.id }}
+      output_artifact: build-output-${{ matrix.os_flavor.id }}
+      release_slsa_provenance: true
+      provenance_name: "${{ matrix.os_flavor.id == 'alinux3' && needs.create-build-artifacts.outputs.rpm_name_al8 || needs.create-build-artifacts.outputs.rpm_name_an23 }}.intoto.jsonl"
+      rpm_detail_provenance: true
+      upload_provenance_to_rekor: true
+      release_tag_name: ${{ github.event.release.tag_name || inputs.tag_name }}
+      prerelease: false
 
-
-  upload-rekor-provenance:
-    name: Upload Provenance to Rekor
-    runs-on: ubuntu-22.04
-    # 依赖整个 provenance job（包含其 matrix 中所有变体）
-    needs: [provenance]
-    env:
-      TAG_NAME: ${{ github.event.release.tag_name || inputs.tag_name }}
-    steps:
-      - name: Download provenance files from release
-        run: |
-          set -euo pipefail
-          
-          # Create directory for provenance files
-          mkdir -p provenance-files
-          cd provenance-files
-          
-          # Get release assets using GitHub API
-          assets_url=$(curl -s \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ env.TAG_NAME }}" \
-            | jq -r '.assets[] | select(.name | endswith(".intoto.jsonl")) | .browser_download_url')
-          
-          # Download each .intoto.jsonl file
-          echo "Downloading provenance files..."
-          while IFS= read -r url; do
-            if [ -n "$url" ]; then
-              filename=$(basename "$url")
-              echo "Downloading $filename"
-              curl -L "$url" -o "$filename"
-            fi
-          done <<< "$assets_url"
-          
-          # List downloaded files
-          echo "Downloaded files:"
-          ls -la
-
-      - name: Install rekor-cli for intoto uploads
-        run: |
-          set -euo pipefail
-          REKOR_VERSION="v1.3.6"
-          curl -L "https://github.com/sigstore/rekor/releases/download/${REKOR_VERSION}/rekor-cli-linux-amd64" -o rekor-cli
-          chmod +x rekor-cli
-          sudo mv rekor-cli /usr/local/bin/rekor-cli
-
-      - name: Upload provenance to Rekor using intoto entries
-        env:
-          REKOR_URL: ${{ vars.REKOR_URL || 'https://rekor.sigstore.dev' }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-
-          cd provenance-files
-
-          for bundle in *.intoto.jsonl; do
-            echo "Processing provenance bundle: ${bundle}"
-            
-            # Skip if no files match the pattern
-            if [ ! -f "$bundle" ]; then
-              echo "No .intoto.jsonl files found"
-              break
-            fi
-
-            # Extract DSSE envelope from the Sigstore bundle (support both v0.3+ layouts)
-            jq '.dsseEnvelope // .content.dsseEnvelope' "${bundle}" > dsse-envelope.json
-
-            # Extract signing certificate (leaf cert) and convert to PEM.
-            # Prefer top-level certificate.rawBytes; fall back to x509CertificateChain[0].rawBytes if present.
-            jq -r '.verificationMaterial.certificate.rawBytes // .verificationMaterial.x509CertificateChain.certificates[0].rawBytes' "${bundle}" | base64 -d > cert.der
-            openssl x509 -inform DER -in cert.der -out cert.pem
-
-            # Upload an intoto entry which, when attestation storage is enabled on Rekor,
-            # stores the decoded DSSE payload bytes.
-            rekor-cli upload \
-              --rekor_server "${REKOR_URL}" \
-              --type intoto \
-              --public-key cert.pem \
-              --artifact dsse-envelope.json
-
-            rm -f dsse-envelope.json cert.der cert.pem
-          done
