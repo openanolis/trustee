@@ -552,6 +552,8 @@ name = "attestation-service"
 version = "0.1.0"
 dependencies = [
  "actix-web",
+ "aes-gcm",
+ "aes-kw",
  "anyhow",
  "assert-json-diff",
  "async-trait",
@@ -559,6 +561,7 @@ dependencies = [
  "canon-json",
  "cfg-if",
  "clap",
+ "concat-kdf",
  "ear",
  "env_logger 0.10.2",
  "futures",
@@ -568,6 +571,7 @@ dependencies = [
  "lazy_static",
  "log",
  "openssl",
+ "p256",
  "prost",
  "rand",
  "reference-value-provider-service",

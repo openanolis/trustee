@@ -13,10 +13,17 @@ struct RvpsMessage<'a> {
 
 pub fn build_rvps_message(provenance_type: &str, payload: &Value) -> Result<String> {
     let payload_str = serde_json::to_string(payload).context("serialize RVPS payload to string")?;
+    build_rvps_message_with_payload_string(provenance_type, payload_str)
+}
+
+pub fn build_rvps_message_with_payload_string(
+    provenance_type: &str,
+    payload: String,
+) -> Result<String> {
     let message = RvpsMessage {
         version: Some("0.1.0"),
         provenance_type,
-        payload: payload_str,
+        payload,
     };
 
     serde_json::to_string(&message).context("serialize RVPS message")

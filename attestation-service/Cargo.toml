@@ -36,12 +36,15 @@ required-features = [ "restful-bin" ]
 
 [dependencies]
 actix-web = { workspace = true, optional = true }
+aes-gcm = "0.10"
+aes-kw = "0.2"
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 canon-json = { git = "https://github.com/inclavare-containers/canon-json-rs" }
 cfg-if.workspace = true
 clap = { workspace = true, optional = true }
+concat-kdf = "0.1"
 ear.workspace = true
 env_logger = { workspace = true, optional = true }
 futures = "0.3.17"
@@ -51,6 +54,7 @@ kbs-types.workspace = true
 lazy_static = "1.4.0"
 log.workspace = true
 openssl = "0.10.55"
+p256 = { version = "0.13", features = ["ecdh"] }
 prost = { workspace = true, optional = true }
 rand = "0.8.5"
 reqwest = { version = "0.12", features = ["json"] }
