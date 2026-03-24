@@ -1276,6 +1276,7 @@ EOF
     3. 解析 SLSA in-toto statement，提取制品哈希摘要值。
     4. 设置参考值名称为 `measurement.$type.$artifact-id`。
     5. 若该名称已存在且新旧参考值不同，根据 `operation_type` 进行追加或覆盖。
+    6. `type` 用于拼接参考值名称，即 `measurement.<type>.<artifact-id>`。
     
 *   **调用方法:**
     
@@ -1332,7 +1333,7 @@ curl -k -X POST http://<gateway-host>:<port>/api/rvps/set_reference_value_list \
     *   `rv_list`: 参考值列表数组。
     *   `id`: 制品标识。
     *   `version`: 制品版本。
-    *   `type`: 制品类型，将用于生成参考值名称 `measurement.$type.$artifact-id`。
+    *   `type`: 制品类型，将用于生成参考值名称 `measurement.$type.$artifact-id`。例如 `uki` 会生成 `measurement.uki.$artifact-id`。
     *   `provenance_info.type`: 目前仅支持 `slsa-intoto-statements`。
     *   `provenance_info.rekor_url`: Rekor 透明日志地址。
     *   `operation_type`: `add` 或 `refresh`。当名称已存在且新旧参考值不同：
