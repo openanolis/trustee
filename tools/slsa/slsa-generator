@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 usage() {
   cat <<'EOF'
 用法:
@@ -8,8 +10,11 @@ usage() {
     --artifact-version <version> --sign-key <key>
 
 参数:
-  --artifact-type     制品类型: binary | model-dir
-  --artifact          制品路径(文件或目录)
+  --artifact-type     制品类型: binary | model-dir | uki
+  --artifact          制品输入:
+                      - binary: 文件路径
+                      - model-dir: 目录路径
+                      - uki: UKI 参考值 JSON 文件路径
   --artifact-id       制品自定义ID
   --artifact-version  制品版本
   --sign-key          用于签名SLSA provenance的私钥路径(cosign生成)
@@ -86,18 +91,21 @@ if [ -z "$artifact_type" ] || [ -z "$artifact_path" ] || [ -z "$artifact_id" ] |
   exit 1
 fi
 
-require_cmd sha256sum
-require_cmd cryptpilot-verity
-require_cmd cosign
-require_cmd rekor-cli
-
 if [ -z "$artifact_id" ] || [ -z "$artifact_version" ]; then
   echo "artifact-id和artifact-version不能为空" >&2
   exit 1
 fi
 
+require_cmd sha256sum
+require_cmd cosign
+require_cmd rekor-cli
+
+artifact_digest_alg="sha256"
+attest_blob_path="$artifact_path"
+
 case "$artifact_type" in
   binary)
+    require_cmd sha256sum
     if [ ! -f "$artifact_path" ]; then
       echo "binary类型需要存在的文件: $artifact_path" >&2
       exit 1
@@ -105,11 +113,24 @@ case "$artifact_type" in
     artifact_hash=$(hash_file_sha256 "$artifact_path")
     ;;
   model-dir)
+    require_cmd cryptpilot-verity
     if [ ! -d "$artifact_path" ]; then
       echo "model-dir类型需要存在的目录: $artifact_path" >&2
       exit 1
     fi
     artifact_hash=$(hash_dir_sha256 "$artifact_path")
+    ;;
+  uki)
+    require_cmd python3
+    if [ ! -f "$artifact_path" ]; then
+      echo "uki类型需要存在的JSON文件: $artifact_path" >&2
+      exit 1
+    fi
+    parsed_uki_digest="$(
+      python3 "$SCRIPT_DIR/parse_uki_digest.py" "$artifact_path"
+    )"
+    artifact_digest_alg="${parsed_uki_digest%% *}"
+    artifact_hash="${parsed_uki_digest#* }"
     ;;
   *)
     echo "不支持的artifact-type: $artifact_type" >&2
@@ -132,6 +153,10 @@ mkdir -p "$out_dir"
 statement_file="$out_dir/statement.json"
 envelope_file="$out_dir/statement.dsse.json"
 attestation_file="$out_dir/statement.attestation.json"
+if [ "$artifact_type" = "uki" ]; then
+  attest_blob_path="$out_dir/uki-artifact.json"
+  cp -- "$artifact_path" "$attest_blob_path"
+fi
 
 cat >"$statement_file" <<EOF
 {
@@ -140,7 +165,7 @@ cat >"$statement_file" <<EOF
     {
       "name": "${escaped_artifact_id}",
       "digest": {
-        "sha256": "${artifact_hash}"
+        "${artifact_digest_alg}": "${artifact_hash}"
       }
     },
     {
@@ -173,7 +198,7 @@ cosign attest-blob \
   --statement "$statement_file" \
   --output-attestation "$attestation_file" \
   --output-signature "$envelope_file" \
-  "$artifact_path"
+  "$attest_blob_path"
 
 pub_key=""
 if [ -f "${sign_key}.pub" ]; then
