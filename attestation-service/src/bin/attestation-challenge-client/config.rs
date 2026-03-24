@@ -4,9 +4,18 @@ use attestation_service::rvps::{RvpsConfig, RvpsCrateConfig};
 use attestation_service::token::{ear_broker, AttestationTokenConfig};
 use reference_value_provider_service::storage::{local_json, ReferenceValueStorageConfig};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const DEFAULT_WORK_DIR: &str = "/var/lib/attestation";
+
+/// Work directory for RVPS storage and policies. Override with env
+/// `ATTESTATION_CHALLENGE_CLIENT_WORK_DIR` (e.g. for tests without `/var/lib/attestation`).
+pub fn resolve_work_dir() -> PathBuf {
+    std::env::var_os("ATTESTATION_CHALLENGE_CLIENT_WORK_DIR")
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_WORK_DIR))
+}
 
 pub fn build_default_config(work_dir: &Path) -> Result<Config> {
     let rvps_config = RvpsConfig::BuiltIn(RvpsCrateConfig {

@@ -168,6 +168,17 @@ impl Rvps {
                 bail!("rv_list item has empty id/version/type");
             }
 
+            let name = match &item.rv_name {
+                Some(n) => {
+                    let n = n.trim();
+                    if n.is_empty() {
+                        bail!("rv_list item rv_name cannot be empty or whitespace-only");
+                    }
+                    n.to_string()
+                }
+                None => format!("measurement.{}.{}", item.rv_type, item.id),
+            };
+
             let lookup = format!("{}{}", item.id, item.version);
             let rekor_client = rekor::RekorClient::new(&item.provenance_info.rekor_url)?;
             let slsa_docs = rekor_client
@@ -192,7 +203,6 @@ impl Rvps {
                 .and_then(|t| t.checked_add_months(Months::new(12)))
                 .ok_or_else(|| anyhow::anyhow!("failed to compute expiration time"))?;
 
-            let name = format!("measurement.{}.{}", item.rv_type, item.id);
             let mut rv = ReferenceValue::new()?
                 .set_version(reference_value::REFERENCE_VALUE_VERSION)
                 .set_name(&name)

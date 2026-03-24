@@ -79,6 +79,7 @@ sequenceDiagram
 - 从 `subject/subjects` 抽取 digest，过滤 `artifact-index-hash` 等索引项。
 - 参考值支持去重与合并更新，避免重复覆盖。
 - 默认设置过期时间（当前实现约 12 个月）。
+- `set_reference_value_list` 的 `rv_list` 项支持可选 `rv_name`：若设置则以其为 RVPS 参考值名称，否则仍为 `measurement.<type>.<id>`。
 
 ### 3.3 可选的强化校验
 

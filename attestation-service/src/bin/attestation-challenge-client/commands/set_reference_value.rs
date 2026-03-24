@@ -1,5 +1,5 @@
 use crate::cli::{ProvenanceType, SetReferenceValueArgs};
-use crate::config::{build_default_config, DEFAULT_WORK_DIR};
+use crate::config::{build_default_config, resolve_work_dir};
 use crate::rekor::RekorClient;
 use crate::rvps_message::{build_rvps_message, build_rvps_message_with_payload_string};
 use anyhow::{anyhow, bail, Context, Result};
@@ -9,7 +9,6 @@ use base64::Engine;
 use serde_json::json;
 use serde_json::Value;
 use std::fs;
-use std::path::PathBuf;
 
 pub async fn run(args: SetReferenceValueArgs) -> Result<()> {
     match args.provenance_type {
@@ -36,7 +35,7 @@ async fn handle_slsa(args: SetReferenceValueArgs) -> Result<()> {
         bail!("No SLSA provenance found on Rekor for artifact `{artifact_name}`");
     }
 
-    let work_dir = PathBuf::from(DEFAULT_WORK_DIR);
+    let work_dir = resolve_work_dir();
     let config = build_default_config(&work_dir)?;
     let mut attestation_service = AttestationService::new(config)
         .await
@@ -71,7 +70,7 @@ async fn handle_sample(args: SetReferenceValueArgs) -> Result<()> {
         serde_json::from_str(&payload_raw).context("parse payload JSON for sample provenance")?;
     let payload_b64 = encode_sample_payload(&payload)?;
 
-    let work_dir = PathBuf::from(DEFAULT_WORK_DIR);
+    let work_dir = resolve_work_dir();
     let config = build_default_config(&work_dir)?;
     let mut attestation_service = AttestationService::new(config)
         .await

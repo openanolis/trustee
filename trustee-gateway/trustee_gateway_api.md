@@ -1271,12 +1271,11 @@ EOF
 *   **端点:** `POST /api/rvps/set_reference_value_list`
     
 *   **说明:** 通过 gRPC 向后端 RVPS 服务批量设置参考值。RVPS 会遍历 `rv_list` 中的每一项：
-    1. 计算 `SHA256($artifact-id || $artifact-version)` 作为索引。
+    1. 计算 `SHA256($artifact-id || $artifact-version)` 作为 Rekor 索引。
     2. 使用 `provenance_info.rekor_url` 查询 Rekor，读取条目并校验签名。
     3. 解析 SLSA in-toto statement，提取制品哈希摘要值。
-    4. 设置参考值名称为 `measurement.$type.$artifact-id`。
+    4. 确定参考值名称：若该项提供可选字段 `rv_name`，则使用该字符串（去首尾空白后非空）；否则默认 `measurement.$type.$artifact-id`。
     5. 若该名称已存在且新旧参考值不同，根据 `operation_type` 进行追加或覆盖。
-    6. `type` 用于拼接参考值名称，即 `measurement.<type>.<artifact-id>`。
     
 *   **调用方法:**
     
@@ -1322,7 +1321,8 @@ curl -k -X POST http://<gateway-host>:<port>/api/rvps/set_reference_value_list \
         "type": "slsa-intoto-statements",
         "rekor_url": "https://rekor.sigstore.dev"
       },
-      "operation_type": "add"
+      "operation_type": "add",
+      "rv_name": "optional.custom.reference.name"
     }
   ]
 }
@@ -1333,7 +1333,8 @@ curl -k -X POST http://<gateway-host>:<port>/api/rvps/set_reference_value_list \
     *   `rv_list`: 参考值列表数组。
     *   `id`: 制品标识。
     *   `version`: 制品版本。
-    *   `type`: 制品类型，将用于生成参考值名称 `measurement.$type.$artifact-id`。例如 `uki` 会生成 `measurement.uki.$artifact-id`。
+    *   `type`: 制品类型；在未指定 `rv_name` 时用于生成默认参考值名称 `measurement.$type.$artifact-id`（例如 `uki` → `measurement.uki.$artifact-id`）。若指定了 `rv_name`，`type` 仍须填写且非空（与 Rekor 查询、`id`/`version` 语义一致），但不再参与名称拼接。
+    *   `rv_name`（可选）: 显式指定写入 RVPS 的参考值名称；不得为空或仅空白。省略时行为与原先一致，使用 `measurement.$type.$artifact-id`。
     *   `provenance_info.type`: 目前仅支持 `slsa-intoto-statements`。
     *   `provenance_info.rekor_url`: Rekor 透明日志地址。
     *   `operation_type`: `add` 或 `refresh`。当名称已存在且新旧参考值不同：

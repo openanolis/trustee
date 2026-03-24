@@ -14,6 +14,10 @@ pub struct ReferenceValueListItem {
     pub rv_type: String,
     pub provenance_info: ReferenceValueProvenanceInfo,
     pub operation_type: String,
+    /// When set, use this as the RVPS reference value name instead of
+    /// `measurement.{type}.{id}`.
+    #[serde(default)]
+    pub rv_name: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
