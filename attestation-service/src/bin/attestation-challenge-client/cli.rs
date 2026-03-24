@@ -132,6 +132,15 @@ pub enum Commands {
         group(ArgGroup::new("sample_args").args(["payload"]).requires_all(&["payload"]))
     )]
     SetReferenceValue(SetReferenceValueArgs),
+
+    #[command(
+        about = "Set reference values via RVPS set_reference_value_list using a Rekor-backed rv_list JSON file"
+    )]
+    SetReferenceValueList {
+        /// Path to JSON file with the same body as set_reference_value_list (top-level `rv_list`)
+        #[arg(long = "rv-list")]
+        rv_list: std::path::PathBuf,
+    },
 }
 
 #[derive(Args, Debug)]

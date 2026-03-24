@@ -34,6 +34,10 @@ required-features = [ "grpc-bin" ]
 name = "restful-as"
 required-features = [ "restful-bin" ]
 
+[[bin]]
+name = "attestation-challenge-client"
+path = "src/bin/attestation-challenge-client/main.rs"
+
 [dependencies]
 actix-web = { workspace = true, optional = true }
 aes-gcm = "0.10"

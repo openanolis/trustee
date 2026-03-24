@@ -1,4 +1,4 @@
-use crate::config::{build_default_config, DEFAULT_WORK_DIR};
+use crate::config::{build_default_config, resolve_work_dir};
 use crate::data::{
     decode_jwt_payload, load_init_data, load_runtime_data_for_verify, parse_runtime_hash_alg,
     parse_tee, read_evidence,
@@ -21,7 +21,7 @@ pub async fn run(
     policies: Vec<String>,
     claims: bool,
 ) -> Result<()> {
-    let work_dir = PathBuf::from(DEFAULT_WORK_DIR);
+    let work_dir = resolve_work_dir();
     let config = build_default_config(&work_dir)?;
 
     let attestation_service = AttestationService::new(config)

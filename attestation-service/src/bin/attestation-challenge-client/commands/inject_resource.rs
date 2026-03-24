@@ -1,4 +1,4 @@
-use crate::config::{build_default_config, DEFAULT_WORK_DIR};
+use crate::config::{build_default_config, resolve_work_dir};
 use crate::data::{load_init_data, parse_runtime_hash_alg, parse_tee, read_evidence};
 use aes_gcm::{
     aead::{generic_array::GenericArray, AeadMutInPlace},
@@ -150,7 +150,7 @@ async fn verify_evidence(
     std::io::Write::write_all(&mut evidence_file, evidence_text.as_bytes())
         .context("write temporary evidence")?;
 
-    let work_dir = PathBuf::from(DEFAULT_WORK_DIR);
+    let work_dir = resolve_work_dir();
     let config = build_default_config(&work_dir)?;
     let attestation_service = AttestationService::new(config)
         .await

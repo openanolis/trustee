@@ -105,3 +105,4 @@ UKI 示例（`--artifact` 指向 JSON 文件）:
 - `model-dir` 的摘要通过 `cryptpilot-verity dump <model-dir-path> --print-root-hash` 获取。
 - 脚本使用 `rekor-cli upload --type intoto`，上传对象为 `statement.dsse.json`（DSSE envelope），而不是原始 `statement.json`。
 - `uki` 会从 `measurement.uki.<algorithm>` 提取摘要算法和值，`<algorithm>` 兼容 `sha256`/`sha384`（大小写及连字符写法均可，例如 `SHA-256`、`SHA-384`）。解析逻辑见 `parse_uki_digest.py`。
+- 上传到 Rekor 后，可用 Gateway/KBS 的 `set_reference_value_list` 或本地 `attestation-challenge-client set-reference-value-list --rv-list <json>` 按 `rv_list`（含每项 `provenance_info.rekor_url`）从 Rekor 拉取并写入 RVPS。每项可选字段 `rv_name` 可覆盖默认参考值名 `measurement.<type>.<id>`（详见 `trustee-gateway/trustee_gateway_api.md` 与 `docs/challenge_ra.md`）。

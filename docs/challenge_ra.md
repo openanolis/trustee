@@ -40,9 +40,12 @@ attestation-challenge-client get-evidence \
 命令入口：
 ```bash
 attestation-challenge-client set-reference-value --provenance-type <slsa|sample> [args...]
+attestation-challenge-client set-reference-value-list --rv-list <rv-list.json>
 ```
 
 ### SLSA 模式 (rekor透明日志)
+
+#### 方式一（经典模式）
 ```bash
 attestation-challenge-client set-reference-value \
   --provenance-type slsa \
@@ -53,6 +56,16 @@ attestation-challenge-client set-reference-value \
 - 逻辑：对 `artifact-name` 做 sha256 作为索引，访问rekor透明日志查询相应条目，过滤并提取 SLSA provenance (包含度量参考值)，组装为 RVPS 能识别的 message 后注册。
 - `--rekor-url` 可选，默认 `https://rekor.sigstore.dev`。
 
+#### 方式二（批量模式）
+
+```bash
+attestation-challenge-client set-reference-value-list --rv-list /path/to/rv-list.json
+```
+
+- 逻辑：读取 JSON 文件（顶层字段 `rv_list`，格式与 Gateway/KBS 的 `POST .../set_reference_value_list` 请求体一致），调用内置 RVPS 的 `set_reference_value_list`：按每项的 `id`+`version` 及其 `provenance_info.rekor_url` 从 Rekor 拉取 SLSA，解析 digest 后写入参考值。
+- 每项可选 `rv_name`：若指定则作为 RVPS 中的参考值名称；省略时默认 `measurement.<type>.<id>`（与网关 API 行为一致）。
+
+
 ### Sample 模式
 ```bash
 attestation-challenge-client set-reference-value \
@@ -61,12 +74,14 @@ attestation-challenge-client set-reference-value \
 ```
 - 逻辑：直接读取 `payload.json`（需符合 RVPS sample extractor 格式），封装为 RVPS message 后注册。
 
-注册成功后，内置 RVPS 会持久化到 `/var/lib/attestation/reference_values.json`，后续 `verify` 会使用这些参考值。
+注册成功后，内置 RVPS 会持久化到 `/var/lib/attestation/reference_values.json`（见下述环境变量可覆盖路径），后续 `verify` 会使用这些参考值。
 
-可打开reference value文件以审计已经设置的参考值：
+可打开 reference value 文件以审计已经设置的参考值：
 ```shell
 cat /var/lib/attestation/reference_values.json | jq
 ```
+
+工作目录：默认使用 `/var/lib/attestation` 存放 `reference_values.json` 与策略目录。无 root 权限或本地测试时，可设置环境变量 `ATTESTATION_CHALLENGE_CLIENT_WORK_DIR` 指向可写目录（需提前存在或允许创建子目录）；`get-evidence` / `verify` / `inject-resource` / `set-reference-value` / `set-reference-value-list` 均使用该目录。
 
 
 ## 验证证据并生成 EAR 令牌
@@ -99,8 +114,9 @@ attestation-challenge-client verify \
 1. 在机密虚拟机TEE内启动 `api-server-rest`（确保可通过本地或端口转发访问）
 2. 准备挑战值/nonce，调用 `get-evidence` 获取 `evidence.json` 
 3. （可选）先向本地 RVPS 注册参考值：
-   - SLSA：`attestation-challenge-client set-reference-value --provenance-type slsa --artifact-type <type> --artifact-name <name> [--rekor-url ...]`
+   - SLSA（单条 Rekor 索引串）：`attestation-challenge-client set-reference-value --provenance-type slsa --artifact-type <type> --artifact-name <name> [--rekor-url ...]`
    - Sample：`attestation-challenge-client set-reference-value --provenance-type sample --payload /path/to/payload.json`
+   - 批量（与 `set_reference_value_list` 请求体一致）：`attestation-challenge-client set-reference-value-list --rv-list /path/to/rv-list.json`
 4. 在验证端运行 `verify`，指定相同的 runtime data 与正确的 `--tee`，得到 EAR 令牌
 5. 如需查看令牌内容，加 `--claims` 直接展示 payload
 

@@ -74,6 +74,9 @@ async fn main() -> Result<()> {
         Commands::SetReferenceValue(args) => {
             commands::set_reference_value::run(args).await?;
         }
+        Commands::SetReferenceValueList { rv_list } => {
+            commands::set_reference_value_list::run(rv_list).await?;
+        }
     }
 
     Ok(())
