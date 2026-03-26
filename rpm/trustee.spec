@@ -4,7 +4,7 @@
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.8.2
+Version:        1.8.3
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -148,6 +148,16 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Thu Mar 26 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.3-1
+- fix(slsa): generate and upload DSSE envelope for Rekor intoto
+- chore(slsa): upgrade cosign/rekor-cli and align generator with v3 APIs
+- migrate JWK cert-chain verification from OpenSSL to webpki
+- docs: add rekor transparency log documents
+- refactor(ci): migrate Rekor upload to GuanFu reusable workflow
+- feat(attestation-challenge-client): add challenge-based resource injection workflow
+- feat(tools/slsa): add UKI artifact type and parse_uki_digest helper by @jialez0
+- feat: add set-reference-value-list CLI and optional rv_name for RVPS by @jialez0S
+
 * Thu Feb 26 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.2-1
 - Impl slsa-generator script for eas artifacts
 - feat(rvps/gateway): add set_reference_value_list API
