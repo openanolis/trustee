@@ -15,6 +15,7 @@ type InstanceInfo struct {
 	EasModelID     string `json:"eas_model_id,omitempty" gorm:"column:eas_model_id;size:255"`       // Aliyun EAS model ID
 	EasInstanceID  string `json:"eas_instance_id,omitempty" gorm:"column:eas_instance_id;size:255"` // Aliyun EAS instance ID
 	EasPodName     string `json:"eas_pod_name,omitempty" gorm:"column:eas_pod_name;size:255"`       // Aliyun EAS pod name
+	IP             string `json:"ip,omitempty" gorm:"column:ip;size:45"`                            // Instance IP address from metadata (public IP preferred, fallback to private IP)
 }
 
 // Normalize fills derived fields for backward/forward compatibility.
