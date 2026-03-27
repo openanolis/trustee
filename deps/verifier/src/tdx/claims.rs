@@ -53,7 +53,7 @@ use serde_json::{Map, Value};
 
 use crate::{tdx::quote::QuoteV5Body, TeeEvidenceParsedClaim};
 
-use super::quote::Quote;
+use super::quote::{Quote, TcbVerificationResult};
 
 macro_rules! parse_claim {
     ($map_name: ident, $key_name: literal, $field: ident) => {
@@ -70,6 +70,7 @@ macro_rules! parse_claim {
 pub fn generate_parsed_claim(
     quote: Quote,
     cc_eventlog: Option<CcEventLog>,
+    tcb_verification: Option<TcbVerificationResult>,
 ) -> Result<TeeEvidenceParsedClaim> {
     let mut quote_map = Map::new();
     let mut quote_body = Map::new();
@@ -176,6 +177,14 @@ pub fn generate_parsed_claim(
     parse_claim!(claims, "report_data", quote.report_data());
     parse_claim!(claims, "init_data", quote.mr_config_id());
 
+    // Include TCB verification result from DCAP QVL in claims,
+    // enabling upper-layer policy engines to make fine-grained decisions
+    // based on TCB status, advisory IDs, tcb_level_date_tag, etc.
+    if let Some(tcb_result) = tcb_verification {
+        let tcb_claim = serde_json::to_value(&tcb_result)?;
+        claims.insert("tcb_verification".to_string(), tcb_claim);
+    }
+
     let claims_str = serde_json::to_string_pretty(&claims)?;
     debug!("Parsed Evidence claims map: \n{claims_str}\n");
 
@@ -279,7 +288,7 @@ mod tests {
         let ccel_bin = std::fs::read("./test_data/CCEL_data").expect("read ccel failed");
         let quote = parse_tdx_quote(&quote_bin).expect("parse quote");
         let ccel = CcEventLog::try_from(ccel_bin).expect("parse ccel");
-        let claims = generate_parsed_claim(quote, Some(ccel)).expect("parse claim failed");
+        let claims = generate_parsed_claim(quote, Some(ccel), None).expect("parse claim failed");
         let expected = json!({
             "uefi_event_logs": [
                 {
