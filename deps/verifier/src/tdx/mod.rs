@@ -67,9 +67,12 @@ async fn verify_evidence(
 
     // Verify TD quote ECDSA signature.
     let quote_bin = base64::engine::general_purpose::STANDARD.decode(evidence.quote)?;
-    ecdsa_quote_verification(quote_bin.as_slice()).await?;
+    let tcb_verification_result = ecdsa_quote_verification(quote_bin.as_slice()).await?;
 
-    info!("Quote DCAP check succeeded.");
+    info!(
+        "Quote DCAP check succeeded. TCB status: {}",
+        tcb_verification_result.tcb_status
+    );
 
     // Parse quote and Compare report data
     let quote = parse_tdx_quote(&quote_bin)?;
@@ -133,7 +136,8 @@ async fn verify_evidence(
     }
 
     let mut tdx_attestation_claims: serde_json::Value =
-        generate_parsed_claim(quote, ccel_option)? as serde_json::Value;
+        generate_parsed_claim(quote, ccel_option, Some(tcb_verification_result))?
+            as serde_json::Value;
 
     if let Some(gpu_evidence) = evidence.gpu_evidence {
         let mut gpu_claims = serde_json::Map::new();
@@ -214,7 +218,7 @@ mod tests {
         let quote_bin = fs::read("./test_data/tdx_quote_4.dat").unwrap();
         let quote = parse_tdx_quote(&quote_bin).unwrap();
 
-        let parsed_claim = generate_parsed_claim(quote, Some(ccel));
+        let parsed_claim = generate_parsed_claim(quote, Some(ccel), None);
         assert!(parsed_claim.is_ok());
 
         let _ = fs::write(
