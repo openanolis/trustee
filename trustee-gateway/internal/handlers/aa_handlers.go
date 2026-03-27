@@ -50,7 +50,12 @@ func (h *AAInstanceHandler) HandleHeartbeat(c *gin.Context) {
 		return
 	}
 
-	clientIP := c.ClientIP()
+	// Prefer IP from instance info (actual client IP from metadata)
+	// over the request IP (which may be a proxy/gateway IP)
+	clientIP := aaInstanceInfo.IP
+	if clientIP == "" {
+		clientIP = c.ClientIP()
+	}
 	now := time.Now()
 
 	// Create or update heartbeat record

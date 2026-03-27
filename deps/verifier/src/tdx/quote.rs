@@ -7,10 +7,72 @@ use qvl::{
     tee_qv_get_collateral, tee_supp_data_descriptor_t, tee_verify_quote,
 };
 use scroll::Pread;
+use serde::Serialize;
 use std::mem;
 use std::time::{Duration, SystemTime};
 
 use intel_tee_quote_verification_rs as qvl;
+
+/// Human-readable TCB verification status string.
+fn qv_result_to_str(result: sgx_ql_qv_result_t) -> &'static str {
+    match result {
+        sgx_ql_qv_result_t::SGX_QL_QV_RESULT_OK => "UpToDate",
+        sgx_ql_qv_result_t::SGX_QL_QV_RESULT_CONFIG_NEEDED => "ConfigurationNeeded",
+        sgx_ql_qv_result_t::SGX_QL_QV_RESULT_OUT_OF_DATE => "OutOfDate",
+        sgx_ql_qv_result_t::SGX_QL_QV_RESULT_OUT_OF_DATE_CONFIG_NEEDED => {
+            "OutOfDateConfigurationNeeded"
+        }
+        sgx_ql_qv_result_t::SGX_QL_QV_RESULT_SW_HARDENING_NEEDED => "SWHardeningNeeded",
+        sgx_ql_qv_result_t::SGX_QL_QV_RESULT_CONFIG_AND_SW_HARDENING_NEEDED => {
+            "ConfigurationAndSWHardeningNeeded"
+        }
+        sgx_ql_qv_result_t::SGX_QL_QV_RESULT_INVALID_SIGNATURE => "InvalidSignature",
+        sgx_ql_qv_result_t::SGX_QL_QV_RESULT_REVOKED => "Revoked",
+        sgx_ql_qv_result_t::SGX_QL_QV_RESULT_UNSPECIFIED => "Unspecified",
+        _ => "Unknown",
+    }
+}
+
+/// Captures the TCB verification result and supplemental data from DCAP QVL,
+/// so that upper-layer policy engines can make fine-grained attestation decisions.
+#[derive(Debug, Serialize)]
+pub struct TcbVerificationResult {
+    /// Human-readable TCB status, e.g. "UpToDate", "OutOfDate", "ConfigurationNeeded".
+    pub tcb_status: String,
+
+    /// Raw numeric value of the DCAP QVL verification result.
+    pub tcb_status_code: u32,
+
+    /// Whether the verification collateral (TCBInfo, CRL, etc.) has expired
+    /// based on the expiration_check_date provided to tee_verify_quote.
+    /// `false` means the collateral is still valid.
+    pub collateral_expired: bool,
+
+    /// Earliest issue date of all the collateral (UTC, seconds since epoch).
+    /// Useful for policy engine to check collateral freshness.
+    pub earliest_issue_date: i64,
+
+    /// Latest issue date of all the collateral (UTC, seconds since epoch).
+    pub latest_issue_date: i64,
+
+    /// Earliest expiration date of all the collateral (UTC, seconds since epoch).
+    pub earliest_expiration_date: i64,
+
+    /// The platform's TCB is not vulnerable to any Security Advisory
+    /// with a TCB impact released on or before this date (UTC, seconds since epoch).
+    /// This is the most critical field for grace-period / min_tcb_date policy decisions.
+    pub tcb_level_date_tag: i64,
+
+    /// TCB evaluation reference number from TCBInfo/QEIdentity.
+    pub tcb_eval_ref_num: u32,
+
+    /// Comma-separated list of Security Advisory IDs that apply to this TCB level.
+    /// Empty string if none.
+    pub advisory_ids: String,
+
+    /// TEE type: 0x00000000 for SGX, 0x00000081 for TDX.
+    pub tee_type: u32,
+}
 
 pub const QUOTE_HEADER_SIZE: usize = 48;
 
@@ -394,7 +456,7 @@ pub fn parse_tdx_quote(quote_bin: &[u8]) -> Result<Quote> {
     }
 }
 
-pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<()> {
+pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationResult> {
     let mut supp_data: sgx_ql_qv_supplemental_t = Default::default();
     let mut supp_data_desc = tee_supp_data_descriptor_t {
         major_version: 0,
@@ -505,7 +567,34 @@ pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<()> {
         }
     }
 
-    Ok(())
+    // Extract advisory IDs from supplemental data (null-terminated C string).
+    // sa_list is [c_char; 320] (i8 on Linux), containing comma-separated advisory IDs.
+    let advisory_ids = {
+        let sa_bytes: Vec<u8> = supp_data
+            .sa_list
+            .iter()
+            .take_while(|&&b| b != 0)
+            .map(|&b| b as u8)
+            .collect();
+        String::from_utf8_lossy(&sa_bytes).to_string()
+    };
+
+    let result = TcbVerificationResult {
+        tcb_status: qv_result_to_str(quote_verification_result).to_string(),
+        tcb_status_code: quote_verification_result as u32,
+        collateral_expired: collateral_expiration_status != 0,
+        earliest_issue_date: supp_data.earliest_issue_date,
+        latest_issue_date: supp_data.latest_issue_date,
+        earliest_expiration_date: supp_data.earliest_expiration_date,
+        tcb_level_date_tag: supp_data.tcb_level_date_tag,
+        tcb_eval_ref_num: supp_data.tcb_eval_ref_num,
+        advisory_ids,
+        tee_type: supp_data.tee_type,
+    };
+
+    debug!("TCB verification result: {:?}", result);
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -562,5 +651,8 @@ mod tests {
         let quote_bin = fs::read(quote).unwrap();
         let res = ecdsa_quote_verification(quote_bin.as_slice()).await;
         assert!(res.is_ok(), "{res:?}");
+        let tcb_result = res.unwrap();
+        println!("TCB status: {}, advisory_ids: {}, tcb_level_date_tag: {}",
+            tcb_result.tcb_status, tcb_result.advisory_ids, tcb_result.tcb_level_date_tag);
     }
 }
