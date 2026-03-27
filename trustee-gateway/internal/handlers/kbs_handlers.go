@@ -51,6 +51,15 @@ func parseAAInstanceInfo(c *gin.Context) (*models.InstanceInfo, error) {
 	return &aaInstanceInfo, nil
 }
 
+// getClientIP returns the client IP address, preferring the IP from instance info
+// if available. This provides the actual client IP from metadata rather than the proxy/gateway IP.
+func getClientIP(c *gin.Context, instanceInfo *models.InstanceInfo) string {
+	if instanceInfo != nil && instanceInfo.IP != "" {
+		return instanceInfo.IP
+	}
+	return c.ClientIP()
+}
+
 // HandleAuth handles the KBS authentication endpoint
 func (h *KBSHandler) HandleAuth(c *gin.Context) {
 	// Read the request body
@@ -145,7 +154,7 @@ func (h *KBSHandler) HandleAttest(c *gin.Context) {
 
 	// Create attestation record
 	record := &models.AttestationRecord{
-		ClientIP:      c.ClientIP(),
+		ClientIP:      getClientIP(c, aaInstanceInfo),
 		SessionID:     sessionID,
 		RequestBody:   "", // Do not save evidence content
 		Claims:        claims,
@@ -291,7 +300,7 @@ func (h *KBSHandler) HandleGetResource(c *gin.Context) {
 
 	// Create a record for this request
 	requestRecord := &models.ResourceRequest{
-		ClientIP:     c.ClientIP(),
+		ClientIP:     getClientIP(c, aaInstanceInfo),
 		SessionID:    sessionID,
 		Repository:   repository,
 		Type:         resourceType,
@@ -384,7 +393,7 @@ func (h *KBSHandler) HandleSetResource(c *gin.Context) {
 
 	// Create a record for this request
 	requestRecord := &models.ResourceRequest{
-		ClientIP:     c.ClientIP(),
+		ClientIP:     getClientIP(c, aaInstanceInfo),
 		SessionID:    sessionID,
 		Repository:   repository,
 		Type:         resourceType,
@@ -465,7 +474,7 @@ func (h *KBSHandler) HandleDeleteResource(c *gin.Context) {
 
 	// Create a record for this request
 	requestRecord := &models.ResourceRequest{
-		ClientIP:     c.ClientIP(),
+		ClientIP:     getClientIP(c, aaInstanceInfo),
 		SessionID:    sessionID,
 		Repository:   repository,
 		Type:         resourceType,

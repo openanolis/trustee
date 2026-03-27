@@ -51,6 +51,15 @@ func parseAAInstanceInfoAS(c *gin.Context) (*models.InstanceInfo, error) {
 	return &aaInstanceInfo, nil
 }
 
+// getClientIPAS returns the client IP address, preferring the IP from instance info
+// if available. This provides the actual client IP from metadata rather than the proxy/gateway IP.
+func getClientIPAS(c *gin.Context, instanceInfo *models.InstanceInfo) string {
+	if instanceInfo != nil && instanceInfo.IP != "" {
+		return instanceInfo.IP
+	}
+	return c.ClientIP()
+}
+
 // HandleAttest handles the attestation endpoint for the Attestation Service
 func (h *AttestationServiceHandler) HandleAttestation(c *gin.Context) {
 	// Read the request body
@@ -102,7 +111,7 @@ func (h *AttestationServiceHandler) HandleAttestation(c *gin.Context) {
 
 	// Create attestation record
 	record := &models.AttestationRecord{
-		ClientIP:      c.ClientIP(),
+		ClientIP:      getClientIPAS(c, aaInstanceInfo),
 		SessionID:     sessionID, // Use extracted session ID if applicable
 		RequestBody:   "", // Do not save evidence content
 		Claims:        claims,
