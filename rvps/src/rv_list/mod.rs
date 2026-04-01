@@ -1,12 +1,12 @@
 use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ReferenceValueListPayload {
     pub rv_list: Vec<ReferenceValueListItem>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ReferenceValueListItem {
     pub id: String,
     pub version: String,
@@ -22,7 +22,7 @@ pub struct ReferenceValueListItem {
     pub rv_name: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ReferenceValueProvenanceInfo {
     #[serde(rename = "type")]
     pub provenance_type: String,
@@ -31,7 +31,7 @@ pub struct ReferenceValueProvenanceInfo {
     pub rekor_api_version: Option<u8>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ReferenceValueProvenanceSource {
     pub protocol: String,
     pub uri: String,
@@ -39,6 +39,7 @@ pub struct ReferenceValueProvenanceSource {
     pub artifact: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ReferenceValueOperation {
     Add,
     Refresh,

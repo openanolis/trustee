@@ -10,7 +10,7 @@ pub mod pre_processor;
 mod provenance_source;
 pub mod reference_value;
 mod rekor;
-mod rv_list;
+pub mod rv_list;
 pub mod rvps_api;
 pub mod server;
 pub mod storage;

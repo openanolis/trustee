@@ -20,10 +20,10 @@ use crate::{
 
 use super::Extractor;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provenance {
     #[serde(flatten)]
-    rvs: HashMap<String, Vec<String>>,
+    pub rvs: HashMap<String, Vec<String>>,
 }
 
 #[derive(Default)]
