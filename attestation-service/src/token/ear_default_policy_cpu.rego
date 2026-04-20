@@ -326,40 +326,40 @@ executables := 3 if {
 	# Check the kernel, initrd, shim and grub measurements for any supported algorithm.
 	# Hygon TPM currently uses the same generic measurement key space as TPM, but
 	# typically records SM-3 digests.
-	validate_boot_measurements(input.hygon_tpm)
+	validate_boot_measurements(input.hygontpm)
 }
 
 hardware := 2 if {
 	# Placeholder to avoid empty body. Remove when enabling checks below.
-	input.hygon_tpm
+	input.hygontpm
 	# Check Hygon TPM EK cert issuer
-	# input.hygon_tpm.EK_cert_issuer.OU in data.reference["hygon_tpm.ek_cert_issuer_ou"]
+	# input.hygontpm.EK_cert_issuer.OU in data.reference["hygontpm.ek_cert_issuer_ou"]
 
 	# Check Hygon TPM firmware version
-	# input.hygon_tpm["quote.firmware_version"] in data.reference["hygon_tpm.firmware_version"]
+	# input.hygontpm["quote.firmware_version"] in data.reference["hygontpm.firmware_version"]
 }
 
 configuration := 2 if {
 	# Check kernel command line parameters have the expected value for any supported algorithm
-	validate_kernel_cmdline(input.hygon_tpm, input.hygon_tpm.kernel_cmdline)
+	validate_kernel_cmdline(input.hygontpm, input.hygontpm.kernel_cmdline)
 
 	# Check /etc measurements
-	# validate_aael_etc_measurements(input.hygon_tpm.uefi_event_logs)
+	# validate_aael_etc_measurements(input.hygontpm.uefi_event_logs)
 	# Check cryptpilot config
-	# validate_cryptpilot_config(input.hygon_tpm.uefi_event_logs)
+	# validate_cryptpilot_config(input.hygontpm.uefi_event_logs)
 }
 
 file_system := 2 if {
-	input.hygon_tpm
+	input.hygontpm
 
 	# Check /system, /lib, /include measurements
-	# validate_aael_system_measurements(input.hygon_tpm.uefi_event_logs)
+	# validate_aael_system_measurements(input.hygontpm.uefi_event_logs)
 
 	# Check rootfs integrity
-	# validate_cryptpilot_fde(input.hygon_tpm.uefi_event_logs)
+	# validate_cryptpilot_fde(input.hygontpm.uefi_event_logs)
 
 	# Check measured files - iterate through all file measurements
-	# validate_aael_file_measurements(input.hygon_tpm.uefi_event_logs)
+	# validate_aael_file_measurements(input.hygontpm.uefi_event_logs)
 }
 
 ##### Hygon CSV

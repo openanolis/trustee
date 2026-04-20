@@ -12,8 +12,8 @@ OpenAnolis系统为Trustee提供了配套的度量值参考值计算工具`crypt
 
 其中 `<algorithm>` 在海光 TPM 场景下通常取 `SM-3`。如果策略里还要对海光 TPM 的硬件侧字段做二次约束，可另外为如下键名准备参考值：
 
-- `hygon_tpm.firmware_version`
-- `hygon_tpm.ek_cert_issuer_ou`
+- `hygontpm.firmware_version`
+- `hygontpm.ek_cert_issuer_ou`
 
 # 使用方法
 

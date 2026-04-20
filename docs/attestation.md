@@ -71,6 +71,24 @@ attestation-agent-client get-token --token-type kbs
 
 OpenAnolis提供了一个简单易用的工具[cryptpilot](https://github.com/openanolis/cryptpilot)，用于对一个系统镜像一键计算出上述启动度量值的参考值（包括grub、shim、initrd、kernel、kernel_cmdline），具体方式参见文档[reference.md](./reference.md).
 
+### Hygon TPM AK Credential 兼容路径
+
+`Hygon TPM` 当前的 AK credential 接入方式与通用 TPM 保持一致，优先复用本地已经落地的 AK，而不修改 Trustee 现有的 `TPM PCA` 插件行为。
+
+若 guest 侧存在如下条件：
+
+- 环境变量 `KEYLIME_AGENT_UUID`
+- 本地文件 `/var/lib/keylime/agent_data.json`
+
+则 `Hygon TPM attester` 会优先从 `agent_data.json` 读取已激活的 AK（期望为 `SM2 + SM3`），直接使用该 AK 生成 quote，并在 evidence 中携带 `keylime_agent_uuid`。
+
+随后，Trustee 侧 `Hygon TPM verifier` 会使用该 UUID 向 Keylime registrar 查询 AK/EK 信息，并校验：
+
+- evidence 中的 EK 证书是否与 registrar 一致
+- evidence 中的 AK 公钥是否与 registrar 中的 `aik_tpm` 一致
+
+如果本地不存在可复用的 AK，`Hygon TPM attester` 会回退为临时生成新的 SM2 AK，仅完成主链路 quote 证明，不执行 registrar 绑定校验。
+
 ### 平台特定
 
 平台特定的证据字段内容已经在Trustee内部验证硬件证书和硬件签名时做过了一轮验证，确保其真实可信，如果想要在远程证明策略中对关注的字段再次做一次自定义的验证，就需要设置对应的参考值。
@@ -92,16 +110,16 @@ input.tdx.quote.body.xfam in data.reference["tdx.xfam"]
 同理，若在 `Hygon TPM` 策略中要求验证 TPM 固件版本或 EK 证书签发方，则可使用如下形式：
 
 ```rego
-input.hygon_tpm["quote.firmware_version"] in data.reference["hygon_tpm.firmware_version"]
-input.hygon_tpm.EK_cert_issuer.OU in data.reference["hygon_tpm.ek_cert_issuer_ou"]
+input.hygontpm["quote.firmware_version"] in data.reference["hygontpm.firmware_version"]
+input.hygontpm.EK_cert_issuer.OU in data.reference["hygontpm.ek_cert_issuer_ou"]
 ```
 
 对应的参考值示例：
 
 ```json
 {
-  "hygon_tpm.firmware_version": ["12345678"],
-  "hygon_tpm.ek_cert_issuer_ou": ["HYGON TPM EK CA"]
+  "hygontpm.firmware_version": ["12345678"],
+  "hygontpm.ek_cert_issuer_ou": ["HYGON TPM EK CA"]
 }
 ```
 

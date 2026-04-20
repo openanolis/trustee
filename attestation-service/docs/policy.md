@@ -124,4 +124,4 @@ We will introduce the format of policy by providing some examples to show the us
 2. An [SGX policy](../tests/coco-as/policy/example-1.rego). The client want to ensure the `mr_signer` and `mrenclave` are both expected value.
 3. A [TDX policy](../tests/coco-as/policy/example-2.rego). The client want to ensure the TDX module (reflected by `tdx.quote.body.mr_seam`), guest firmware (reflected by `tdx.quote.body.mr_td`), kernel (reflected by `tdx.ccel.kernel`) are all as expected.
 4. A [IBM SE policy](../tests/coco-as/policy/example-3.rego). The client want to ensure the `se.version`, `se.tag`, `se.user_data`, `se.image_phkh` and `se.attestation_phkh` are all expected value.
-5. A Hygon TPM policy can reuse the default policy helpers with `input.hygon_tpm` and `SM-3` reference values, for example `measurement.kernel.SM-3` or `hygon_tpm.firmware_version`.
+5. A Hygon TPM policy can reuse the default policy helpers with `input.hygontpm` and `SM-3` reference values, for example `measurement.kernel.SM-3` or `hygontpm.firmware_version`.
