@@ -95,14 +95,21 @@ pub async fn make_nonce() -> anyhow::Result<String> {
 }
 
 pub(crate) async fn generic_generate_challenge(
-    _tee: Tee,
+    tee: Tee,
     _tee_parameters: serde_json::Value,
 ) -> anyhow::Result<Challenge> {
     let nonce = make_nonce().await?;
 
+    let extra_params = match tee {
+        Tee::HygonTpm => json!({
+            "selected-hash-algorithm": "sm3",
+        }),
+        _ => serde_json::Value::String(String::new()),
+    };
+
     Ok(Challenge {
         nonce,
-        extra_params: serde_json::Value::String(String::new()),
+        extra_params,
     })
 }
 

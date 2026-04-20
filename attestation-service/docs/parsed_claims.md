@@ -93,6 +93,24 @@ The claim inherit the fields from the SEV-SNP claim with and additional `tpm` hi
 
 Note: The TD Report and TD Quote are fetched during early boot in this TEE. Kernel, Initrd and rootfs are measured into the vTPM's registers.
 
+## Hygon TPM
+
+Hygon TPM parsed claims follow the same generic boot-measurement naming style as TPM,
+but the digest algorithm is expected to be `SM-3` on Hygon TPM platforms.
+
+- `EK_cert_issuer.*`: issuer attributes parsed from the TPM EK certificate.
+- `quote.signer`: qualified signer name from the TPM quote.
+- `quote.clock_info`: TPM clock value from the quote.
+- `quote.firmware_version`: TPM firmware version from the quote.
+- `report_data`: report data embedded in the quote.
+- `measurement.shim.SM-3`: shim measurement parsed from the eventlog.
+- `measurement.grub.SM-3`: grub measurement parsed from the eventlog.
+- `measurement.initrd.SM-3`: initrd measurement parsed from the eventlog.
+- `measurement.kernel.SM-3`: kernel measurement parsed from the eventlog.
+- `measurement.kernel_cmdline.SM-3`: kernel command line measurement parsed from the eventlog.
+- `kernel_cmdline`: decoded kernel command line string, if present in eventlog entries.
+- `uefi_event_logs`: parsed AAEL records, when `aa_eventlog` is included in evidence.
+
 ## IBM Secure Execution (SE)
 - `se.version`: The version this quote structure.
 - `se.cuid`: The unique ID of the attested guest (configuration uniqe ID).

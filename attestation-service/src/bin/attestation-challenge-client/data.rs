@@ -94,6 +94,7 @@ pub fn parse_tee(text: &str) -> Result<Tee> {
         "system" => Ok(Tee::System),
         "se" => Ok(Tee::Se),
         "tpm" => Ok(Tee::Tpm),
+        "hygon_tpm" => Ok(Tee::HygonTpm),
         "hygondcu" => Ok(Tee::HygonDcu),
         other => bail!("unsupported tee `{other}`"),
     }

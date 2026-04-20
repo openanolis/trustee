@@ -2,6 +2,19 @@
 
 OpenAnolis系统为Trustee提供了配套的度量值参考值计算工具`cryptpilot`，对于一个Alinux/OpenAnolis操作系统的镜像（qcow2格式），可以一键计算出其启动度量链的参考值（grub-shim-initrd-kernel-kernel_cmdline）
 
+对于 `Hygon TPM attestation`，启动链参考值字段仍然沿用同一套通用命名：
+
+- `measurement.grub.<algorithm>`
+- `measurement.shim.<algorithm>`
+- `measurement.initrd.<algorithm>`
+- `measurement.kernel.<algorithm>`
+- `measurement.kernel_cmdline.<algorithm>`
+
+其中 `<algorithm>` 在海光 TPM 场景下通常取 `SM-3`。如果策略里还要对海光 TPM 的硬件侧字段做二次约束，可另外为如下键名准备参考值：
+
+- `hygon_tpm.firmware_version`
+- `hygon_tpm.ek_cert_issuer_ou`
+
 # 使用方法
 
 ### 安装cryptpilot
@@ -58,3 +71,15 @@ cryptpilot fde show-reference-value \
 ```
 
 可以直接以上述内容作为请求体payload，调用Trustee的[注册参考值API](../trustee-gateway/trustee_gateway_api.md#42-注册参考值-register-reference-value)，完成参考值的设置。
+
+例如，若希望给 `Hygon TPM` 准备一组 `SM-3` 启动链参考值，请保证输出中的算法后缀与默认策略期望一致，例如：
+
+```json
+{
+  "measurement.kernel.SM-3": ["<sm3_kernel_digest>"],
+  "measurement.initrd.SM-3": ["<sm3_initrd_digest>"],
+  "measurement.grub.SM-3": ["<sm3_grub_digest>"],
+  "measurement.shim.SM-3": ["<sm3_shim_digest>"],
+  "measurement.kernel_cmdline.SM-3": ["<sm3_cmdline_digest>"]
+}
+```

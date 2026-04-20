@@ -35,8 +35,6 @@ mod attestation {
 pub const DEFAULT_AS_ADDR: &str = "http://127.0.0.1:50004";
 pub const DEFAULT_POOL_SIZE: u64 = 100;
 
-pub const COCO_AS_HASH_ALGORITHM: &str = "sha384";
-
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct GrpcConfig {
     #[serde(default = "default_as_addr")]
@@ -154,6 +152,10 @@ impl Attest for GrpcClientPool {
         let mut verification_requests: Vec<IndividualAttestationRequest> = vec![];
 
         for evidence in evidence_to_verify {
+            let runtime_data_hash_algorithm = match evidence.tee {
+                Tee::HygonTpm => "sm3",
+                _ => "sha384",
+            };
             let tee = serde_json::to_string(&evidence.tee)
                 .context("CoCo AS client: serialize tee type failed.")?
                 .trim_end_matches('"')
@@ -163,7 +165,7 @@ impl Attest for GrpcClientPool {
             let mut request = IndividualAttestationRequest {
                 tee,
                 evidence: URL_SAFE_NO_PAD.encode(evidence.tee_evidence.to_string()),
-                runtime_data_hash_algorithm: COCO_AS_HASH_ALGORITHM.into(),
+                runtime_data_hash_algorithm: runtime_data_hash_algorithm.into(),
                 runtime_data: Some(RuntimeData::StructuredRuntimeData(
                     evidence.runtime_data.to_string(),
                 )),
@@ -220,9 +222,16 @@ impl Attest for GrpcClientPool {
             _ => make_nonce().await?,
         };
 
+        let extra_params = match tee {
+            Tee::HygonTpm => serde_json::json!({
+                "selected-hash-algorithm": "sm3",
+            }),
+            _ => serde_json::Value::String(String::new()),
+        };
+
         let challenge = Challenge {
             nonce,
-            extra_params: serde_json::Value::String(String::new()),
+            extra_params,
         };
 
         Ok(challenge)
