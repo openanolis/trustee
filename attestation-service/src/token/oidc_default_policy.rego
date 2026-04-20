@@ -34,7 +34,7 @@ default file_system := 35
 
 # Generic function to validate measurements for any platform and algorithm
 validate_boot_measurements(measurements_data) if {
-	some algorithm in {"SHA1", "SHA256", "SHA384"}
+	some algorithm in {"SHA1", "SHA256", "SHA384", "SM3", "SM-3"}
 	components := ["grub", "shim", "initrd", "kernel"]
 	every component in components {
 		measurement_key := sprintf("measurement.%s.%s", [component, algorithm])
@@ -44,7 +44,7 @@ validate_boot_measurements(measurements_data) if {
 
 # Generic function to validate kernel cmdline for any platform and algorithm
 validate_kernel_cmdline(measurements_data, cmdline_data) if {
-	some algorithm in {"SHA1", "SHA256", "SHA384"}
+	some algorithm in {"SHA1", "SHA256", "SHA384", "SM3", "SM-3"}
 	measurement_key := sprintf("measurement.kernel_cmdline.%s", [algorithm])
 	measurements_data[measurement_key] in data.reference[measurement_key]
 }
@@ -234,6 +234,31 @@ file_system := 2 if {
 
 	# Check measured files - iterate through all file measurements
 	# validate_aael_file_measurements(input.tpm.uefi_event_logs)
+}
+
+##### Hygon TPM
+
+executables := 3 if {
+	validate_boot_measurements(input.hygon_tpm)
+}
+
+hardware := 2 if {
+	input.hygon_tpm
+	# input.hygon_tpm.EK_cert_issuer.OU in data.reference["hygon_tpm.ek_cert_issuer_ou"]
+	# input.hygon_tpm["quote.firmware_version"] in data.reference["hygon_tpm.firmware_version"]
+}
+
+configuration := 2 if {
+	validate_kernel_cmdline(input.hygon_tpm, input.hygon_tpm.kernel_cmdline)
+}
+
+file_system := 2 if {
+	input.hygon_tpm
+
+	# Placeholder to avoid empty body being treated as true. Remove when enabling checks below.
+	false
+	# validate_cryptpilot_fde(input.hygon_tpm.uefi_event_logs)
+	# validate_aael_file_measurements(input.hygon_tpm.uefi_event_logs)
 }
 
 ##### Sample TEE (for testing)

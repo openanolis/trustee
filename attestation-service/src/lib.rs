@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 pub use serde_json::Value;
 use sha2::{Digest, Sha256, Sha384, Sha512};
+use sm3::Sm3;
 use std::collections::HashMap;
 use std::io::Read;
 use strum::{AsRefStr, Display, EnumString};
@@ -46,6 +47,10 @@ pub enum HashAlgorithm {
     #[strum(ascii_case_insensitive)]
     #[serde(rename = "sha512")]
     Sha512,
+
+    #[strum(ascii_case_insensitive)]
+    #[serde(rename = "sm3")]
+    Sm3,
 }
 
 impl HashAlgorithm {
@@ -63,6 +68,11 @@ impl HashAlgorithm {
             }
             HashAlgorithm::Sha512 => {
                 let mut hasher = Sha512::new();
+                hasher.update(materials);
+                hasher.finalize().to_vec()
+            }
+            HashAlgorithm::Sm3 => {
+                let mut hasher = Sm3::new();
                 hasher.update(materials);
                 hasher.finalize().to_vec()
             }

@@ -585,6 +585,7 @@ dependencies = [
  "serial_test 0.9.0",
  "sha2",
  "shadow-rs",
+ "sm3",
  "strum 0.25.0",
  "tempfile",
  "testing_logger",
@@ -3355,7 +3356,6 @@ dependencies = [
 [[package]]
 name = "kbs-types"
 version = "0.12.0"
-source = "git+https://github.com/inclavare-containers/kbs-types.git?rev=5c029c9#5c029c904afb458ce7e331d27d734fab1d0faf06"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -6944,6 +6944,7 @@ dependencies = [
  "kbs-types",
  "log",
  "openssl",
+ "openssl-sys",
  "quick-xml",
  "regex",
  "reqwest 0.12.12",
@@ -6958,6 +6959,7 @@ dependencies = [
  "sha1",
  "sha2",
  "shadow-rs",
+ "sm3",
  "strum 0.25.0",
  "thiserror 2.0.12",
  "tokio",

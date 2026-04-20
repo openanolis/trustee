@@ -52,11 +52,15 @@ impl Attest for BuiltInCoCoAs {
         let mut verification_requests = vec![];
 
         for evidence in evidence_to_verify {
+            let runtime_data_hash_algorithm = match evidence.tee {
+                Tee::HygonTpm => HashAlgorithm::Sm3,
+                _ => HashAlgorithm::Sha384,
+            };
             let mut request = VerificationRequest {
                 evidence: evidence.tee_evidence,
                 tee: evidence.tee,
                 runtime_data: Some(RuntimeData::Structured(evidence.runtime_data)),
-                runtime_data_hash_algorithm: HashAlgorithm::Sha384,
+                runtime_data_hash_algorithm,
                 init_data: None,
                 additional_data: None,
             };
@@ -94,9 +98,16 @@ impl Attest for BuiltInCoCoAs {
             _ => make_nonce().await?,
         };
 
+        let extra_params = match tee {
+            Tee::HygonTpm => serde_json::json!({
+                "selected-hash-algorithm": "sm3",
+            }),
+            _ => serde_json::Value::String(String::new()),
+        };
+
         let challenge = Challenge {
             nonce,
-            extra_params: serde_json::Value::String(String::new()),
+            extra_params,
         };
 
         Ok(challenge)

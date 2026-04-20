@@ -41,6 +41,9 @@ pub mod system;
 #[cfg(feature = "tpm-verifier")]
 pub mod tpm;
 
+#[cfg(feature = "tpm-verifier")]
+pub mod hygon_tpm;
+
 pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
     match tee {
         Tee::Sev => todo!(),
@@ -149,6 +152,15 @@ pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "tpm-verifier")] {
                     Ok(Box::<tpm::TpmVerifier>::default() as Box<dyn Verifier + Send + Sync>)
+                } else {
+                    bail!("feature `tpm-verifier` is not enabled for `verifier` crate.")
+                }
+            }
+        }
+        Tee::HygonTpm => {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "tpm-verifier")] {
+                    Ok(Box::<hygon_tpm::HygonTpmVerifier>::default() as Box<dyn Verifier + Send + Sync>)
                 } else {
                     bail!("feature `tpm-verifier` is not enabled for `verifier` crate.")
                 }

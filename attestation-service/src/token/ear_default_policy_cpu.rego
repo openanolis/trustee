@@ -34,7 +34,7 @@ default file_system := 35
 
 # Generic function to validate measurements for any platform and algorithm
 validate_boot_measurements(measurements_data) if {
-	some algorithm in {"SHA-1", "SHA-256", "SHA-384"}
+	some algorithm in {"SHA-1", "SHA-256", "SHA-384", "SM-3"}
 	components := ["grub", "shim", "initrd", "kernel"]
 	every component in components {
 		measurement_key := sprintf("measurement.%s.%s", [component, algorithm])
@@ -44,7 +44,7 @@ validate_boot_measurements(measurements_data) if {
 
 # Generic function to validate kernel cmdline for any platform and algorithm
 validate_kernel_cmdline(measurements_data, cmdline_data) if {
-	some algorithm in {"SHA-1", "SHA-256", "SHA-384"}
+	some algorithm in {"SHA-1", "SHA-256", "SHA-384", "SM-3"}
 	measurement_key := sprintf("measurement.kernel_cmdline.%s", [algorithm])
 	measurements_data[measurement_key] in data.reference[measurement_key]
 }
@@ -318,6 +318,48 @@ file_system := 2 if {
 
 	# Check measured files - iterate through all file measurements
 	# validate_aael_file_measurements(input.tpm.uefi_event_logs)
+}
+
+##### Hygon TPM
+
+executables := 3 if {
+	# Check the kernel, initrd, shim and grub measurements for any supported algorithm.
+	# Hygon TPM currently uses the same generic measurement key space as TPM, but
+	# typically records SM-3 digests.
+	validate_boot_measurements(input.hygon_tpm)
+}
+
+hardware := 2 if {
+	# Placeholder to avoid empty body. Remove when enabling checks below.
+	input.hygon_tpm
+	# Check Hygon TPM EK cert issuer
+	# input.hygon_tpm.EK_cert_issuer.OU in data.reference["hygon_tpm.ek_cert_issuer_ou"]
+
+	# Check Hygon TPM firmware version
+	# input.hygon_tpm["quote.firmware_version"] in data.reference["hygon_tpm.firmware_version"]
+}
+
+configuration := 2 if {
+	# Check kernel command line parameters have the expected value for any supported algorithm
+	validate_kernel_cmdline(input.hygon_tpm, input.hygon_tpm.kernel_cmdline)
+
+	# Check /etc measurements
+	# validate_aael_etc_measurements(input.hygon_tpm.uefi_event_logs)
+	# Check cryptpilot config
+	# validate_cryptpilot_config(input.hygon_tpm.uefi_event_logs)
+}
+
+file_system := 2 if {
+	input.hygon_tpm
+
+	# Check /system, /lib, /include measurements
+	# validate_aael_system_measurements(input.hygon_tpm.uefi_event_logs)
+
+	# Check rootfs integrity
+	# validate_cryptpilot_fde(input.hygon_tpm.uefi_event_logs)
+
+	# Check measured files - iterate through all file measurements
+	# validate_aael_file_measurements(input.hygon_tpm.uefi_event_logs)
 }
 
 ##### Hygon CSV

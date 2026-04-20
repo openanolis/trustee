@@ -29,7 +29,7 @@ hygon-dcu-verifier = ["csv-rs"]
 # cca-verifier = ["ear", "jsonwebtoken", "veraison-apiclient", "ccatoken"]
 se-verifier = ["openssl", "pv", "serde_with", "tokio/sync"]
 system-verifier = []
-tpm-verifier = ["openssl", "tss-esapi", "reqwest"]
+tpm-verifier = ["openssl", "openssl-sys", "tss-esapi", "reqwest"]
 gpu-verifier = [
     "reqwest",
     "quick-xml",
@@ -70,6 +70,7 @@ jsonwebtoken = { workspace = true, default-features = false, optional = true }
 kbs-types.workspace = true
 log.workspace = true
 openssl = { version = "0.10.55", optional = true }
+openssl-sys = { version = "0.9", optional = true }
 pv = { version = "0.10.0", package = "s390_pv", optional = true }
 quick-xml = { version = "0.36", optional = true }
 reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true }
@@ -83,6 +84,7 @@ serde_with = { workspace = true, optional = true }
 sev = { version = "4.0.0", features = ["openssl", "snp"], optional = true }
 sha1 = "0.10.6"
 sha2.workspace = true
+sm3 = "0.4.2"
 tokio = { workspace = true, optional = true, default-features = false }
 intel-tee-quote-verification-rs = { version = "0.3.0", optional = true }
 strum.workspace = true

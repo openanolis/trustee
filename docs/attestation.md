@@ -89,6 +89,22 @@ input.tdx.quote.body.xfam in data.reference["tdx.xfam"]
 }
 ```
 
+同理，若在 `Hygon TPM` 策略中要求验证 TPM 固件版本或 EK 证书签发方，则可使用如下形式：
+
+```rego
+input.hygon_tpm["quote.firmware_version"] in data.reference["hygon_tpm.firmware_version"]
+input.hygon_tpm.EK_cert_issuer.OU in data.reference["hygon_tpm.ek_cert_issuer_ou"]
+```
+
+对应的参考值示例：
+
+```json
+{
+  "hygon_tpm.firmware_version": ["12345678"],
+  "hygon_tpm.ek_cert_issuer_ou": ["HYGON TPM EK CA"]
+}
+```
+
 ## 远程证明策略
 
 远程证明策略，其本质上是一段用户可定制的代码，用于控制证据内容和参考值比对的具体要求：
@@ -124,6 +140,8 @@ input.tdx.quote.body.xfam in data.reference["tdx.xfam"]
 - 若`shim`、`grub`、`kernel`、`initrd`的度量值等于参考值，则将`executables`设置为0~32（可信）
 - 若AAEL中记录的文件度量值等于参考值，则将`file_system`设置为0~32（可信）
 - 若关注的硬件特定字段的值（例如安全版本号，闭源固件度量值等）等于参考值，则将`hardware`设置为0~32（可信）
+
+对于 `Hygon TPM`，默认策略中的启动链比对沿用通用 `measurement.*` 键空间，但通常使用 `SM-3` 作为算法后缀，例如 `measurement.kernel.SM-3`。
 
 如果不关注其中某个维度，例如没有关注的硬件特定字段值（因为Trustee在远程证明策略验证之前已经对硬件证据进行了一轮默认签名和证书验证），也可以直接将某个维度默认设置成0~32（可信）或33~96（警告）
 
