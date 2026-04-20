@@ -239,26 +239,26 @@ file_system := 2 if {
 ##### Hygon TPM
 
 executables := 3 if {
-	validate_boot_measurements(input.hygon_tpm)
+	validate_boot_measurements(input.hygontpm)
 }
 
 hardware := 2 if {
-	input.hygon_tpm
-	# input.hygon_tpm.EK_cert_issuer.OU in data.reference["hygon_tpm.ek_cert_issuer_ou"]
-	# input.hygon_tpm["quote.firmware_version"] in data.reference["hygon_tpm.firmware_version"]
+	input.hygontpm
+	# input.hygontpm.EK_cert_issuer.OU in data.reference["hygontpm.ek_cert_issuer_ou"]
+	# input.hygontpm["quote.firmware_version"] in data.reference["hygontpm.firmware_version"]
 }
 
 configuration := 2 if {
-	validate_kernel_cmdline(input.hygon_tpm, input.hygon_tpm.kernel_cmdline)
+	validate_kernel_cmdline(input.hygontpm, input.hygontpm.kernel_cmdline)
 }
 
 file_system := 2 if {
-	input.hygon_tpm
+	input.hygontpm
 
 	# Placeholder to avoid empty body being treated as true. Remove when enabling checks below.
 	false
-	# validate_cryptpilot_fde(input.hygon_tpm.uefi_event_logs)
-	# validate_aael_file_measurements(input.hygon_tpm.uefi_event_logs)
+	# validate_cryptpilot_fde(input.hygontpm.uefi_event_logs)
+	# validate_aael_file_measurements(input.hygontpm.uefi_event_logs)
 }
 
 ##### Sample TEE (for testing)

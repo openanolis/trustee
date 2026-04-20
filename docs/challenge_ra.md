@@ -98,12 +98,12 @@ attestation-challenge-client verify \
   --policy default \
   --claims
 ```
-- `--tee`：必填，支持 `tdx`、`sgx`、`snp`、`csv`、`azsnpvtpm`、`aztdxvtpm`、`sample`、`sampledevice`、`system`、`se`、`tpm`、`hygon_tpm`、`hygondcu`
+- `--tee`：必填，支持 `tdx`、`sgx`、`snp`、`csv`、`azsnpvtpm`、`aztdxvtpm`、`sample`、`sampledevice`、`system`、`se`、`tpm`、`hygontpm`、`hygondcu`
 - runtime data 互斥选项：
   - `--runtime-raw <STRING>`：以 UTF-8 字节作为 runtime data
   - `--runtime-raw-file <PATH>`：从文件读取原始字节
   - `--runtime-json <JSON>` / `--runtime-json-file <PATH>`：结构化 JSON runtime data
-- `--runtime-hash-alg`：哈希算法，默认 `sha384`（可选 `sha256`/`sha512`/`sm3`）。验证 `hygon_tpm` 证据时应使用 `sm3`。
+- `--runtime-hash-alg`：哈希算法，默认 `sha384`（可选 `sha256`/`sha512`/`sm3`）。验证 `hygontpm` 证据时应使用 `sm3`。
 - init data 互斥选项：
   - `--init-data-digest <HEX>`：16 进制编码的摘要
   - `--init-data-toml <PATH>`：TOML 格式的 init data
