@@ -1,0 +1,409 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SIGNER_DIR="/run/trustee/attestation-service/signer"
+API_SERVER_URL="http://127.0.0.1:8006"
+REKOR_URL="https://log2025-1.rekor.sigstore.dev"
+CERT_DAYS="365"
+CERT_SUBJECT="/CN=Trustee Attestation Service JWT Signer"
+CERT_URL=""
+FORCE_RENEW="false"
+CONFIG_PATH=""
+REKOR_KEY_DETAILS=""
+
+usage() {
+  cat <<'EOF'
+用法:
+  as-signer-transparency --config <as-config.json> [选项]
+
+选项:
+  --config <path>          Trustee AS JSON 配置文件路径（必填）
+  --signer-dir <path>      signer 输出目录（默认: /run/trustee/attestation-service/signer）
+  --api-server-url <url>   trustiflux-api-server 地址（默认: http://127.0.0.1:8006）
+  --rekor-url <url>        Rekor v2 地址（默认: https://log2025-1.rekor.sigstore.dev）
+  --cert-days <days>       自签名证书有效期天数（默认: 365）
+  --cert-subject <subj>    证书 subject（默认: /CN=Trustee Attestation Service JWT Signer）
+  --cert-url <url>         写入 AS signer.cert_url 的证书 URL（可选）
+  --rekor-key-details <v>  Rekor v2 verifier keyDetails（默认按 token 类型自动选择）
+  --force-renew            即使现有证书未过期也重新生成 signer
+  -h, --help               显示帮助
+EOF
+}
+
+require_cmd() {
+  local cmd="$1"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "缺少依赖命令: $cmd" >&2
+    exit 1
+  fi
+}
+
+json_escape() {
+  local s="$1"
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  printf '%s' "$s"
+}
+
+sha256_file() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+cert_der_sha256() {
+  openssl x509 -in "$1" -outform DER | sha256sum | awk '{print $1}'
+}
+
+generate_signer() {
+  local token_type="$1"
+  local key_path="$2"
+  local cert_path="$3"
+
+  rm -f -- "$key_path" "$cert_path"
+  if [[ "$token_type" == "Ear" ]]; then
+    openssl ecparam -name prime256v1 -genkey -noout -out "$key_path"
+  else
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$key_path"
+  fi
+
+  openssl req -new -x509 \
+    -key "$key_path" \
+    -out "$cert_path" \
+    -days "$CERT_DAYS" \
+    -subj "$CERT_SUBJECT" \
+    -sha256
+
+  chmod 0600 "$key_path"
+  chmod 0644 "$cert_path"
+}
+
+signer_is_valid() {
+  local key_path="$1"
+  local cert_path="$2"
+
+  [[ -f "$key_path" && -f "$cert_path" ]] || return 1
+  openssl x509 -checkend 0 -noout -in "$cert_path" >/dev/null 2>&1 || return 1
+
+  local cert_pub key_pub
+  cert_pub="$(openssl x509 -in "$cert_path" -pubkey -noout | sha256sum | awk '{print $1}')"
+  key_pub="$(openssl pkey -in "$key_path" -pubout | sha256sum | awk '{print $1}')"
+  [[ "$cert_pub" == "$key_pub" ]]
+}
+
+update_as_config() {
+  local config_path="$1"
+  local key_path="$2"
+  local cert_path="$3"
+  local tmp
+
+  tmp="$(mktemp)"
+  if [[ -n "$CERT_URL" ]]; then
+    jq \
+      --arg key_path "$key_path" \
+      --arg cert_path "$cert_path" \
+      --arg cert_url "$CERT_URL" \
+      '.attestation_token_broker.signer =
+        ((.attestation_token_broker.signer // {}) +
+          {key_path: $key_path, cert_path: $cert_path, cert_url: $cert_url})' \
+      "$config_path" > "$tmp"
+  else
+    jq \
+      --arg key_path "$key_path" \
+      --arg cert_path "$cert_path" \
+      '.attestation_token_broker.signer =
+        ((.attestation_token_broker.signer // {}) +
+          {key_path: $key_path, cert_path: $cert_path})' \
+      "$config_path" > "$tmp"
+  fi
+  install -m 0644 "$tmp" "$config_path"
+  rm -f -- "$tmp"
+}
+
+fetch_evidence() {
+  local report_data="$1"
+  local evidence_file="$2"
+  local base="${API_SERVER_URL%/}"
+  local code
+
+  code="$(curl -sS -G -o "$evidence_file" -w '%{http_code}' \
+    --data-urlencode "runtime_data=${report_data}" \
+    "${base}/aa/evidence")"
+  if [[ "$code" -lt 200 || "$code" -ge 300 ]]; then
+    echo "获取 evidence 失败，HTTP $code，响应：" >&2
+    sed -n '1,120p' "$evidence_file" >&2 || true
+    return 1
+  fi
+}
+
+build_signer_binding() {
+  local cert_path="$1"
+  local report_data="$2"
+  local evidence_file="$3"
+  local output_file="$4"
+
+  local generated_at not_after cert_hash evidence_json_arg evidence_json_file
+  generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  not_after="$(openssl x509 -in "$cert_path" -noout -enddate | sed 's/^notAfter=//')"
+  cert_hash="$(cert_der_sha256 "$cert_path")"
+  evidence_json_file="$(mktemp)"
+
+  if jq -e . "$evidence_file" >/dev/null 2>&1; then
+    jq -c . "$evidence_file" > "$evidence_json_file"
+  else
+    jq -n --arg data "$(base64 -w0 "$evidence_file")" \
+      '{encoding: "base64", data: $data}' > "$evidence_json_file"
+  fi
+  evidence_json_arg="$(jq -c . "$evidence_json_file")"
+
+  jq -n \
+    --arg schema "trustee.as.signer-binding/v1" \
+    --arg generated_at "$generated_at" \
+    --arg cert_path "$cert_path" \
+    --rawfile certificate_pem "$cert_path" \
+    --arg certificate_der_sha256 "$cert_hash" \
+    --arg certificate_not_after "$not_after" \
+    --arg api_server_url "$API_SERVER_URL" \
+    --arg report_data "$report_data" \
+    --argjson evidence "$evidence_json_arg" \
+    '{
+      schema_version: $schema,
+      generated_at: $generated_at,
+      signer_certificate: {
+        path: $cert_path,
+        pem: $certificate_pem,
+        der_sha256: $certificate_der_sha256,
+        not_after: $certificate_not_after
+      },
+      evidence_binding: {
+        api_server_url: $api_server_url,
+        report_data: $report_data,
+        report_data_algorithm: "sha256(x509 DER)",
+        runtime_data_encoding: "hex",
+        evidence: $evidence
+      }
+    }' > "$output_file"
+
+  rm -f -- "$evidence_json_file"
+}
+
+make_dsse_pae() {
+  local payload_type="$1"
+  local payload_file="$2"
+  local pae_file="$3"
+
+  python3 - "$payload_type" "$payload_file" "$pae_file" <<'PY'
+import pathlib
+import sys
+
+payload_type = sys.argv[1].encode()
+payload = pathlib.Path(sys.argv[2]).read_bytes()
+pae = b"DSSEv1 %d %s %d " % (len(payload_type), payload_type, len(payload)) + payload
+pathlib.Path(sys.argv[3]).write_bytes(pae)
+PY
+}
+
+upload_rekor_v2() {
+  local key_path="$1"
+  local payload_file="$2"
+  local key_details="$3"
+  local entry_file="$4"
+  local request_file="$5"
+
+  local payload_type="application/vnd.trustee.as.signer-binding+json"
+  local pae_file sig_file pub_der_file payload_b64 sig_b64 pub_der_b64
+  pae_file="$(mktemp)"
+  sig_file="$(mktemp)"
+  pub_der_file="$(mktemp)"
+
+  make_dsse_pae "$payload_type" "$payload_file" "$pae_file"
+  openssl dgst -sha256 -sign "$key_path" -out "$sig_file" "$pae_file"
+  openssl pkey -in "$key_path" -pubout -outform DER -out "$pub_der_file"
+
+  payload_b64="$(base64 -w0 "$payload_file")"
+  sig_b64="$(base64 -w0 "$sig_file")"
+  pub_der_b64="$(base64 -w0 "$pub_der_file")"
+
+  jq -n \
+    --arg payload "$payload_b64" \
+    --arg payloadType "$payload_type" \
+    --arg sig "$sig_b64" \
+    --arg keyDetails "$key_details" \
+    --arg rawBytes "$pub_der_b64" \
+    '{
+      dsseRequestV002: {
+        envelope: {
+          payload: $payload,
+          payloadType: $payloadType,
+          signatures: [{ sig: $sig, keyid: "" }]
+        },
+        verifiers: [
+          {
+            publicKey: { rawBytes: $rawBytes },
+            keyDetails: $keyDetails
+          }
+        ]
+      }
+    }' > "$request_file"
+
+  local base="${REKOR_URL%/}" code
+  code="$(curl -sS -o "$entry_file" -w '%{http_code}' \
+    -X POST "${base}/api/v2/log/entries" \
+    -H 'Content-Type: application/json' \
+    --data-binary @"$request_file")"
+  rm -f -- "$pae_file" "$sig_file" "$pub_der_file"
+
+  if [[ "$code" -lt 200 || "$code" -ge 300 ]]; then
+    echo "上传 Rekor v2 失败，HTTP $code，响应：" >&2
+    sed -n '1,160p' "$entry_file" >&2 || true
+    return 1
+  fi
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --config)
+      CONFIG_PATH="${2:-}"
+      shift 2
+      ;;
+    --signer-dir)
+      SIGNER_DIR="${2:-}"
+      shift 2
+      ;;
+    --api-server-url)
+      API_SERVER_URL="${2:-}"
+      shift 2
+      ;;
+    --rekor-url)
+      REKOR_URL="${2:-}"
+      shift 2
+      ;;
+    --cert-days)
+      CERT_DAYS="${2:-}"
+      shift 2
+      ;;
+    --cert-subject)
+      CERT_SUBJECT="${2:-}"
+      shift 2
+      ;;
+    --cert-url)
+      CERT_URL="${2:-}"
+      shift 2
+      ;;
+    --rekor-key-details)
+      REKOR_KEY_DETAILS="${2:-}"
+      shift 2
+      ;;
+    --force-renew)
+      FORCE_RENEW="true"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "未知参数: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ -z "$CONFIG_PATH" ]]; then
+  usage >&2
+  exit 1
+fi
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  echo "AS 配置文件不存在: $CONFIG_PATH" >&2
+  exit 1
+fi
+
+require_cmd base64
+require_cmd curl
+require_cmd date
+require_cmd jq
+require_cmd openssl
+require_cmd python3
+require_cmd sha256sum
+
+mkdir -p "$SIGNER_DIR"
+chmod 0755 "$SIGNER_DIR"
+
+TOKEN_TYPE="$(jq -r '.attestation_token_broker.type // "Ear"' "$CONFIG_PATH")"
+case "$TOKEN_TYPE" in
+  Ear)
+    KEY_DETAILS="${REKOR_KEY_DETAILS:-PKIX_ECDSA_P256_SHA_256}"
+    ;;
+  Simple|OIDC)
+    KEY_DETAILS="${REKOR_KEY_DETAILS:-PKIX_RSA_PKCS1V15_2048_SHA256}"
+    ;;
+  *)
+    echo "不支持的 attestation_token_broker.type: $TOKEN_TYPE" >&2
+    exit 1
+    ;;
+esac
+
+KEY_PATH="${SIGNER_DIR}/signer.key"
+CERT_PATH="${SIGNER_DIR}/signer.crt"
+EVIDENCE_PATH="${SIGNER_DIR}/signer_evidence.json"
+BINDING_PATH="${SIGNER_DIR}/signer_binding.json"
+REKOR_ENTRY_PATH="${SIGNER_DIR}/rekor_entry_v2.json"
+REKOR_REQUEST_PATH="${SIGNER_DIR}/rekor_request_v2.json"
+TRANSPARENCY_PATH="${SIGNER_DIR}/signer_transparency.json"
+
+if [[ "$FORCE_RENEW" == "true" ]] || ! signer_is_valid "$KEY_PATH" "$CERT_PATH"; then
+  echo "生成新的 AS signer key/certificate: $SIGNER_DIR"
+  generate_signer "$TOKEN_TYPE" "$KEY_PATH" "$CERT_PATH"
+else
+  echo "复用未过期且匹配的 AS signer key/certificate: $SIGNER_DIR"
+fi
+
+update_as_config "$CONFIG_PATH" "$KEY_PATH" "$CERT_PATH"
+
+CERT_HASH="$(cert_der_sha256 "$CERT_PATH")"
+fetch_evidence "$CERT_HASH" "$EVIDENCE_PATH"
+build_signer_binding "$CERT_PATH" "$CERT_HASH" "$EVIDENCE_PATH" "$BINDING_PATH"
+
+upload_rekor_v2 "$KEY_PATH" "$BINDING_PATH" "$KEY_DETAILS" "$REKOR_ENTRY_PATH" "$REKOR_REQUEST_PATH"
+
+PAYLOAD_SHA256="$(sha256_file "$BINDING_PATH")"
+PAYLOAD_SIZE="$(wc -c < "$BINDING_PATH" | tr -d ' ')"
+GENERATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+jq -n \
+  --arg schema "trustee.as.signer-transparency/v1" \
+  --arg generated_at "$GENERATED_AT" \
+  --arg media_type "application/vnd.trustee.as.signer-binding+json" \
+  --arg payload_path "$BINDING_PATH" \
+  --arg payload_sha256 "$PAYLOAD_SHA256" \
+  --argjson payload_size "$PAYLOAD_SIZE" \
+  --arg rekor_url "$REKOR_URL" \
+  --arg key_details "$KEY_DETAILS" \
+  --slurpfile payload "$BINDING_PATH" \
+  --slurpfile rekorEntryV2 "$REKOR_ENTRY_PATH" \
+  '{
+    schema_version: $schema,
+    generated_at: $generated_at,
+    payload: $payload[0],
+    payload_metadata: {
+      path: $payload_path,
+      media_type: $media_type,
+      digest: { sha256: $payload_sha256 },
+      size: $payload_size
+    },
+    rekor: {
+      url: $rekor_url,
+      api_version: "v2",
+      request_type: "dsseRequestV002",
+      key_details: $key_details,
+      rekorEntryV2: $rekorEntryV2[0]
+    }
+  }' > "$TRANSPARENCY_PATH"
+
+chmod 0644 "$BINDING_PATH" "$EVIDENCE_PATH" "$REKOR_ENTRY_PATH" "$REKOR_REQUEST_PATH" "$TRANSPARENCY_PATH"
+
+echo "完成 AS signer 透明可信材料生成"
+echo "AS 配置已更新: $CONFIG_PATH"
+echo "证书 DER SHA-256: $CERT_HASH"
+echo "signer_binding: $BINDING_PATH"
+echo "signer_transparency: $TRANSPARENCY_PATH"

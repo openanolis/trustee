@@ -32,7 +32,7 @@ use crate::policy_engine::{PolicyEngine, PolicyEngineType};
 use crate::token::{AttestationTokenBroker, DEFAULT_TOKEN_WORK_DIR};
 use crate::{TeeClaims, TeeEvidenceParsedClaim};
 
-use super::{COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
+use super::{signer_transparency, COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
 
 const RSA_KEY_BITS: u32 = 2048;
 const SIMPLE_TOKEN_ALG: &str = "RS384";
@@ -299,6 +299,9 @@ impl AttestationTokenBroker for SimpleAttestationTokenBroker {
                 .ok_or_else(|| anyhow!("Illegal token custom claims"))?
                 .to_owned(),
         );
+        if let Some(transparency) = signer_transparency::load_signer_transparency() {
+            jwt_claims.insert("signer_transparency".to_string(), transparency);
+        }
 
         let claims_value = Value::Object(jwt_claims);
         let claims_string = serde_json::to_string(&claims_value)?;
