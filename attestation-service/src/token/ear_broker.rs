@@ -11,7 +11,7 @@ use ear::{
     Algorithm, Appraisal, Ear, ExtensionKind, ExtensionValue, Extensions, RawValue, TrustVector,
     VerifierID,
 };
-use jsonwebtoken::jwk;
+use jsonwebtoken::{jwk, EncodingKey};
 use kbs_types::Tee;
 use log::{debug, info, warn};
 use openssl::bn::{BigNum, BigNumContext};
@@ -32,7 +32,7 @@ use crate::policy_engine::{PolicyEngine, PolicyEngineType};
 use crate::token::DEFAULT_TOKEN_WORK_DIR;
 use crate::{AttestationTokenBroker, TeeClaims};
 
-use super::{COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
+use super::{signer_transparency, COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
 
 pub const DEFAULT_PROFILE: &str = "tag:github.com,2024:confidential-containers/Trustee";
 pub const DEFAULT_DEVELOPER_NAME: &str = "https://confidentialcontainers.org";
@@ -317,7 +317,23 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
         let pkey = PKey::from_ec_key(self.private_key.clone())?;
         let private_key_bytes = pkey.private_key_to_pem_pkcs8()?;
 
-        let signed_ear = ear.sign_jwt_pem_with_header(&jwt_header, &private_key_bytes)?;
+        let signed_ear = if let Some(transparency) = signer_transparency::load_signer_transparency()
+        {
+            let mut ear_claims = serde_json::to_value(&ear)?
+                .as_object()
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow!("Internal Error: serialize EAR claims to JSON object failed")
+                })?;
+            ear_claims.insert("signer_transparency".to_string(), transparency);
+            jsonwebtoken::encode(
+                &jwt_header,
+                &Value::Object(ear_claims),
+                &EncodingKey::from_ec_pem(&private_key_bytes)?,
+            )?
+        } else {
+            ear.sign_jwt_pem_with_header(&jwt_header, &private_key_bytes)?
+        };
 
         Ok(signed_ear)
     }

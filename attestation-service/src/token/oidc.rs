@@ -32,7 +32,7 @@ use crate::policy_engine::{PolicyEngine, PolicyEngineType};
 use crate::token::{AttestationTokenBroker, DEFAULT_TOKEN_WORK_DIR};
 use crate::TeeClaims;
 
-use super::{COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
+use super::{signer_transparency, COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
 
 const RSA_KEY_BITS: u32 = 2048;
 const OIDC_TOKEN_ALG: &str = "RS256";
@@ -396,6 +396,9 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
                 .ok_or_else(|| anyhow!("Illegal token custom claims"))?
                 .to_owned(),
         );
+        if let Some(transparency) = signer_transparency::load_signer_transparency() {
+            jwt_claims.insert("signer_transparency".to_string(), transparency);
+        }
 
         let additional_claims: HashSet<String> = if let Some(oidc) = &self.config.oid_config {
             oidc.additional_claims
