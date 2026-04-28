@@ -33,6 +33,10 @@ func (r *AAInstanceRepository) UpsertHeartbeat(heartbeat *models.AAInstanceHeart
 			"image_id",
 			"instance_name",
 			"owner_account_id",
+			"eas_model_id",
+			"eas_instance_id",
+			"eas_pod_name",
+			"ip",
 			"client_ip",
 			"last_heartbeat",
 			"updated_at",
@@ -43,8 +47,22 @@ func (r *AAInstanceRepository) UpsertHeartbeat(heartbeat *models.AAInstanceHeart
 // GetActiveHeartbeats retrieves all heartbeats that are newer than the cutoff time
 func (r *AAInstanceRepository) GetActiveHeartbeats(cutoffTime time.Time) ([]models.AAInstanceHeartbeat, error) {
 	var heartbeats []models.AAInstanceHeartbeat
-	err := r.db.Where("last_heartbeat >= ?", cutoffTime).Order("last_heartbeat desc").Find(&heartbeats).Error
-	return heartbeats, err
+	err := r.db.Where("last_heartbeat >= ?", cutoffTime).Order("last_heartbeat desc, id desc").Find(&heartbeats).Error
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]struct{}, len(heartbeats))
+	deduped := make([]models.AAInstanceHeartbeat, 0, len(heartbeats))
+	for _, heartbeat := range heartbeats {
+		if _, ok := seen[heartbeat.InstanceID]; ok {
+			continue
+		}
+		seen[heartbeat.InstanceID] = struct{}{}
+		deduped = append(deduped, heartbeat)
+	}
+
+	return deduped, nil
 }
 
 // CleanupExpiredHeartbeats removes heartbeat records older than the cutoff time

@@ -167,12 +167,14 @@ func (d *Database) migrateSchema() error {
 	// This prevents duplicate heartbeat records for the same instance
 	if d.config.Type == "mysql" {
 		if err := d.migrateAAInstanceHeartbeatIndexMySQL(); err != nil {
-			logrus.Warnf("Failed to migrate AAInstanceHeartbeat index: %v", err)
+			return fmt.Errorf("failed to migrate AAInstanceHeartbeat index: %w", err)
 		}
 	} else {
 		// SQLite - file-based SQLite has built-in file locking
 		// In-memory SQLite is per-process, so no cross-process conflict
-		d.migrateAAInstanceHeartbeatIndexSQLite()
+		if err := d.migrateAAInstanceHeartbeatIndexSQLite(); err != nil {
+			return fmt.Errorf("failed to migrate AAInstanceHeartbeat index: %w", err)
+		}
 	}
 
 	return nil
@@ -190,8 +192,7 @@ func (d *Database) migrateAAInstanceHeartbeatIndexMySQL() error {
 	}
 
 	if lockResult != 1 {
-		logrus.Info("Another instance is running migration, skipping")
-		return nil
+		return fmt.Errorf("failed to acquire migration lock: another instance is running migration")
 	}
 
 	// Ensure lock is released when done
@@ -213,18 +214,26 @@ func (d *Database) migrateAAInstanceHeartbeatIndexMySQL() error {
 
 	// Alter column to VARCHAR(255) for index compatibility
 	if err := d.DB.Exec("ALTER TABLE aa_instance_heartbeats MODIFY instance_id VARCHAR(255)").Error; err != nil {
-		logrus.Warnf("Failed to alter instance_id column: %v", err)
+		return fmt.Errorf("failed to alter instance_id column: %w", err)
+	}
+
+	if err := d.DB.Exec("DELETE FROM aa_instance_heartbeats WHERE instance_id IS NULL OR instance_id = ''").Error; err != nil {
+		return fmt.Errorf("failed to clean up empty instance_id records: %w", err)
 	}
 
 	// Clean up duplicate instance_id records before creating unique index
-	// Keep only the latest record (by id) for each instance_id
+	// Keep only the latest heartbeat for each instance_id.
 	cleanupSQL := `
 		DELETE t1 FROM aa_instance_heartbeats t1
 		INNER JOIN aa_instance_heartbeats t2
-		WHERE t1.instance_id = t2.instance_id AND t1.id < t2.id
+		WHERE t1.instance_id = t2.instance_id
+		  AND (
+		    t1.last_heartbeat < t2.last_heartbeat
+		    OR (t1.last_heartbeat = t2.last_heartbeat AND t1.id < t2.id)
+		  )
 	`
 	if err := d.DB.Exec(cleanupSQL).Error; err != nil {
-		logrus.Warnf("Failed to clean up duplicate instance_id records: %v", err)
+		return fmt.Errorf("failed to clean up duplicate instance_id records: %w", err)
 	} else {
 		logrus.Info("Cleaned up duplicate instance_id records in aa_instance_heartbeats")
 	}
@@ -238,29 +247,45 @@ func (d *Database) migrateAAInstanceHeartbeatIndexMySQL() error {
 }
 
 // migrateAAInstanceHeartbeatIndexSQLite handles unique index creation for SQLite
-func (d *Database) migrateAAInstanceHeartbeatIndexSQLite() {
+func (d *Database) migrateAAInstanceHeartbeatIndexSQLite() error {
 	migrator := d.DB.Migrator()
 	if migrator.HasIndex(&models.AAInstanceHeartbeat{}, "idx_aa_heartbeat_instance_id") {
-		return
+		return nil
+	}
+
+	if err := d.DB.Exec("DELETE FROM aa_instance_heartbeats WHERE instance_id IS NULL OR instance_id = ''").Error; err != nil {
+		return fmt.Errorf("failed to clean up empty instance_id records: %w", err)
 	}
 
 	// Clean up duplicate instance_id records before creating unique index
-	// Keep only the latest record (by id) for each instance_id
+	// Keep only the latest heartbeat for each instance_id.
 	cleanupSQL := `
 		DELETE FROM aa_instance_heartbeats
 		WHERE id NOT IN (
-			SELECT MAX(id) FROM aa_instance_heartbeats GROUP BY instance_id
+			SELECT id FROM (
+				SELECT h1.id
+				FROM aa_instance_heartbeats h1
+				LEFT JOIN aa_instance_heartbeats h2
+				  ON h1.instance_id = h2.instance_id
+				 AND (
+				   h1.last_heartbeat < h2.last_heartbeat
+				   OR (h1.last_heartbeat = h2.last_heartbeat AND h1.id < h2.id)
+				 )
+				WHERE h2.id IS NULL
+			)
 		)
 	`
 	if err := d.DB.Exec(cleanupSQL).Error; err != nil {
-		logrus.Warnf("Failed to clean up duplicate instance_id records: %v", err)
+		return fmt.Errorf("failed to clean up duplicate instance_id records: %w", err)
 	} else {
 		logrus.Info("Cleaned up duplicate instance_id records in aa_instance_heartbeats")
 	}
 
 	if err := d.DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_aa_heartbeat_instance_id ON aa_instance_heartbeats(instance_id)").Error; err != nil {
-		logrus.Warnf("Failed to create unique index on instance_id: %v", err)
+		return fmt.Errorf("failed to create unique index on instance_id: %w", err)
 	}
+
+	return nil
 }
 
 // restoreFromBackup restores data from backup file to in-memory database using native backup API
