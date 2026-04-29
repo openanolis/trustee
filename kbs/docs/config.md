@@ -220,21 +220,66 @@ This is also called "Repository" in old versions. The properties to be configure
 
 **`Aliyun` Properties**
 
-| Property          | Type   | Description                       | Required | Example                                             |
-|-------------------|--------|-----------------------------------|----------|-----------------------------------------------------|
-| `client_key`      | String | The KMS instance's AAP client key | No       | `{"KeyId": "KA..", "PrivateKeyData": "MIIJqwI..."}` |
-| `kms_instance_id` | String | The KMS instance id               | No       | `kst-shh668f7...`                                   |
-| `password`        | String | AAP client key password           | No       | `8f9989c18d27...`                                   |
-| `cert_pem`        | String | CA cert for the KMS instance      | No       | `-----BEGIN CERTIFICATE----- ...`                   |
+The Aliyun backend reads KBS resources from Aliyun KMS generic secrets. It
+supports AAP client key authentication and AccessKey authentication.
+
+| Property                   | Type    | Description                                                                                                                                      | Required | Example                                             |
+|----------------------------|---------|--------------------------------------------------------------------------------------------------------------------------------------------------|----------|-----------------------------------------------------|
+| `client_key`               | String  | The KMS instance's AAP client key                                                                                                                | No       | `{"KeyId": "KA..", "PrivateKeyData": "MIIJqwI..."}` |
+| `kms_instance_id`          | String  | The KMS instance id                                                                                                                              | No       | `kst-shh668f7...`                                   |
+| `password`                 | String  | AAP client key password                                                                                                                          | No       | `8f9989c18d27...`                                   |
+| `access_key_id`            | String  | AccessKey ID. The recommended approach is to omit this field and set `ALIYUN_KMS_ACCESS_KEY_ID` in the environment.                              | No       | `LTAI...`                                           |
+| `access_key_secret`        | String  | AccessKey Secret. The recommended approach is to omit this field and set `ALIYUN_KMS_ACCESS_KEY_SECRET` in the environment.                      | No       | `secret...`                                         |
+| `region_id`                | String  | Region ID used by AccessKey authentication. The recommended approach is to omit this field and set `ALIYUN_KMS_REGION_ID` in the environment.    | No       | `cn-hangzhou`                                       |
+| `endpoint`                 | String  | Optional KMS endpoint. If omitted, KBS uses the public cloud defaults: `{kms_instance_id}.cryptoservice.kms.aliyuncs.com` for AAP or `kms.{region_id}.aliyuncs.com` for AccessKey. Private cloud deployments should set the intranet endpoint provided by the KMS owner. | No       | `kms-intranet.cn-test.example.com`                  |
+| `cert_pem`                 | String  | CA cert used to verify the KMS HTTPS endpoint. For AAP authentication this is the KMS instance CA cert. For private cloud AccessKey authentication, set this when the endpoint uses a private CA. | No       | `-----BEGIN CERTIFICATE----- ...`                   |
+| `insecure_skip_tls_verify` | Boolean | Skip HTTPS certificate verification. This should only be used for development or temporary private cloud tests.                                 | No       | `false`                                             |
 
 If the AAP client key fields above are not fully provided, KBS will fall back to
-AccessKey authentication by reading the following environment variables:
+AccessKey authentication. For AccessKey authentication, the recommended approach
+is to provide credentials through the following environment variables so secrets
+do not need to be stored in the KBS config file:
 
 | Environment Variable            | Description                          |
 |---------------------------------|--------------------------------------|
 | `ALIYUN_KMS_ACCESS_KEY_ID`      | AccessKey ID                         |
 | `ALIYUN_KMS_ACCESS_KEY_SECRET`  | AccessKey Secret                     |
 | `ALIYUN_KMS_REGION_ID`          | Region ID (e.g. `cn-hangzhou`)       |
+
+Private cloud AccessKey example:
+
+```toml
+[[plugins]]
+name = "resource"
+type = "Aliyun"
+endpoint = "kms-intranet.cn-test.example.com"
+cert_pem = """-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----"""
+```
+
+Set the credentials and region in the KBS process environment:
+
+```shell
+export ALIYUN_KMS_ACCESS_KEY_ID="LTAI..."
+export ALIYUN_KMS_ACCESS_KEY_SECRET="secret..."
+export ALIYUN_KMS_REGION_ID="cn-test"
+```
+
+Private cloud AAP client key example:
+
+```toml
+[[plugins]]
+name = "resource"
+type = "Aliyun"
+client_key = """{"KeyId":"KA...","PrivateKeyData":"..."}"""
+kms_instance_id = "kst-..."
+password = "..."
+endpoint = "kst-....cryptoservice.kms-private.example.com"
+cert_pem = """-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----"""
+```
 
 **`ExternalKms` Properties**
 

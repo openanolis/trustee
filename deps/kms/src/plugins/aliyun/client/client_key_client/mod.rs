@@ -10,7 +10,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::Utc;
 use log::{error, info};
 use prost::Message;
-use reqwest::{header::HeaderMap, Certificate, ClientBuilder};
+use reqwest::{header::HeaderMap, Certificate, Client, ClientBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -53,11 +53,51 @@ impl ClientKeyClient {
         Ok(kms_instance_ca_cert)
     }
 
+    fn build_http_client(cert_pem: Option<&str>, insecure_skip_tls_verify: bool) -> Result<Client> {
+        let mut builder = ClientBuilder::new().use_rustls_tls();
+
+        if let Some(cert_pem) = cert_pem.filter(|v| !v.is_empty()) {
+            let cert = Self::read_kms_instance_cert(cert_pem.as_bytes())?;
+            builder = builder.add_root_certificate(cert);
+        } else if !insecure_skip_tls_verify {
+            return Err(Error::AliyunKmsError(
+                "kms instance ca cert is required unless insecure_skip_tls_verify is enabled"
+                    .to_string(),
+            ));
+        }
+
+        if insecure_skip_tls_verify {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+
+        builder
+            .build()
+            .map_err(|e| Error::AliyunKmsError(format!("build http client failed: {e:?}")))
+    }
+
     pub fn new(
         client_key: &str,
         kms_instance_id: &str,
         password: &str,
         cert_pem: &str,
+    ) -> Result<Self> {
+        Self::new_with_options(
+            client_key,
+            kms_instance_id,
+            password,
+            Some(cert_pem),
+            None,
+            false,
+        )
+    }
+
+    pub fn new_with_options(
+        client_key: &str,
+        kms_instance_id: &str,
+        password: &str,
+        cert_pem: Option<&str>,
+        endpoint: Option<&str>,
+        insecure_skip_tls_verify: bool,
     ) -> Result<Self> {
         let credential = CredentialClientKey::new(client_key, password).map_err(|e| {
             Error::AliyunKmsError(format!(
@@ -65,15 +105,13 @@ impl ClientKeyClient {
             ))
         })?;
 
-        let endpoint = format!("{kms_instance_id}.cryptoservice.kms.aliyuncs.com");
+        let endpoint = endpoint
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("{kms_instance_id}.cryptoservice.kms.aliyuncs.com"));
         let config = ConfigClientKey::new(kms_instance_id, &endpoint);
 
-        let cert = Self::read_kms_instance_cert(cert_pem.as_bytes())?;
-        let http_client = ClientBuilder::new()
-            .use_rustls_tls()
-            .add_root_certificate(cert)
-            .build()
-            .map_err(|e| Error::AliyunKmsError(format!("build http client failed: {e:?}")))?;
+        let http_client = Self::build_http_client(cert_pem, insecure_skip_tls_verify)?;
 
         Ok(Self {
             credential,

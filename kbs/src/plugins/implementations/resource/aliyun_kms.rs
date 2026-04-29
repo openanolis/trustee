@@ -19,6 +19,14 @@ pub struct AliyunKmsBackendConfig {
     #[derivative(Debug = "ignore")]
     password: Option<String>,
     cert_pem: Option<String>,
+    #[derivative(Debug = "ignore")]
+    access_key_id: Option<String>,
+    #[derivative(Debug = "ignore")]
+    access_key_secret: Option<String>,
+    region_id: Option<String>,
+    endpoint: Option<String>,
+    #[serde(default)]
+    insecure_skip_tls_verify: bool,
 }
 
 pub struct AliyunKmsBackend {
@@ -80,34 +88,133 @@ impl AliyunKmsBackend {
             .as_ref()
             .map(|v| !v.is_empty())
             .unwrap_or(false);
+        let has_endpoint = repo_desc
+            .endpoint
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let has_access_key_id = repo_desc
+            .access_key_id
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let has_access_key_secret = repo_desc
+            .access_key_secret
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let has_region_id = repo_desc
+            .region_id
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
 
-        let client = if has_client_key && has_instance_id && has_password && has_cert {
-            AliyunKmsClient::new(
+        let client = if has_client_key
+            && has_instance_id
+            && has_password
+            && (has_cert || repo_desc.insecure_skip_tls_verify)
+        {
+            AliyunKmsClient::new_client_key_client_with_options(
                 repo_desc.client_key.as_ref().expect("checked"),
                 repo_desc.kms_instance_id.as_ref().expect("checked"),
                 repo_desc.password.as_ref().expect("checked"),
-                repo_desc.cert_pem.as_ref().expect("checked"),
+                repo_desc.cert_pem.as_deref(),
+                has_endpoint.then(|| repo_desc.endpoint.as_ref().expect("checked").as_str()),
+                repo_desc.insecure_skip_tls_verify,
             )
             .context("create aliyun KMS backend with AAP client key")?
         } else {
-            let access_key_id = env::var("ALIYUN_KMS_ACCESS_KEY_ID").map_err(|_| {
-                anyhow!(
-                    "missing ALIYUN_KMS_ACCESS_KEY_ID env var and AAP client key config is incomplete"
-                )
-            })?;
-            let access_key_secret = env::var("ALIYUN_KMS_ACCESS_KEY_SECRET").map_err(|_| {
-                anyhow!(
-                    "missing ALIYUN_KMS_ACCESS_KEY_SECRET env var and AAP client key config is incomplete"
-                )
-            })?;
-            let region_id = env::var("ALIYUN_KMS_REGION_ID").map_err(|_| {
-                anyhow!(
-                    "missing ALIYUN_KMS_REGION_ID env var and AAP client key config is incomplete"
-                )
-            })?;
-            AliyunKmsClient::new_access_key_client(&access_key_id, &access_key_secret, &region_id)
-                .context("create aliyun KMS backend with AccessKey")?
+            if has_access_key_id != has_access_key_secret {
+                return Err(anyhow!(
+                    "access_key_id and access_key_secret must be configured together"
+                ));
+            }
+
+            let access_key_id = if has_access_key_id {
+                repo_desc.access_key_id.as_ref().expect("checked").clone()
+            } else {
+                env::var("ALIYUN_KMS_ACCESS_KEY_ID").map_err(|_| {
+                    anyhow!(
+                        "missing ALIYUN_KMS_ACCESS_KEY_ID env var and AAP client key config is incomplete"
+                    )
+                })?
+            };
+            let access_key_secret = if has_access_key_secret {
+                repo_desc
+                    .access_key_secret
+                    .as_ref()
+                    .expect("checked")
+                    .clone()
+            } else {
+                env::var("ALIYUN_KMS_ACCESS_KEY_SECRET").map_err(|_| {
+                    anyhow!(
+                        "missing ALIYUN_KMS_ACCESS_KEY_SECRET env var and AAP client key config is incomplete"
+                    )
+                })?
+            };
+            let region_id = if has_region_id {
+                repo_desc.region_id.as_ref().expect("checked").clone()
+            } else {
+                env::var("ALIYUN_KMS_REGION_ID").map_err(|_| {
+                    anyhow!(
+                        "missing ALIYUN_KMS_REGION_ID env var and AAP client key config is incomplete"
+                    )
+                })?
+            };
+
+            AliyunKmsClient::new_access_key_client_with_options(
+                &access_key_id,
+                &access_key_secret,
+                &region_id,
+                has_endpoint.then(|| repo_desc.endpoint.as_ref().expect("checked").as_str()),
+                repo_desc.cert_pem.as_deref(),
+                repo_desc.insecure_skip_tls_verify,
+            )
+            .context("create aliyun KMS backend with AccessKey")?
         };
         Ok(Self { client })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AliyunKmsBackendConfig;
+
+    #[test]
+    fn parse_access_key_private_cloud_config() {
+        let config: AliyunKmsBackendConfig = toml::from_str(
+            r#"
+            access_key_id = "ak"
+            access_key_secret = "sk"
+            region_id = "cn-test"
+            endpoint = "kms-intranet.cn-test.example.com"
+            cert_pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
+            insecure_skip_tls_verify = false
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.access_key_id.as_deref(), Some("ak"));
+        assert_eq!(config.access_key_secret.as_deref(), Some("sk"));
+        assert_eq!(config.region_id.as_deref(), Some("cn-test"));
+        assert_eq!(
+            config.endpoint.as_deref(),
+            Some("kms-intranet.cn-test.example.com")
+        );
+        assert!(!config.insecure_skip_tls_verify);
+    }
+
+    #[test]
+    fn default_tls_verify_is_enabled() {
+        let config: AliyunKmsBackendConfig = toml::from_str(
+            r#"
+            access_key_id = "ak"
+            access_key_secret = "sk"
+            region_id = "cn-test"
+            "#,
+        )
+        .unwrap();
+
+        assert!(!config.insecure_skip_tls_verify);
     }
 }

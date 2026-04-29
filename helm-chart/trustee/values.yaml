@@ -70,10 +70,25 @@ kbs:
 
   aliyunKms:
     enabled: false
+    # kmsIntanceId is kept for backward compatibility with older chart values.
     kmsIntanceId:
+    kmsInstanceId:
     password: 
     clientKey:
     certPem:
+    # Recommended AccessKey configuration path: inject credentials through
+    # ALIYUN_KMS_* environment variables. Prefer accessKeyExistingSecret for
+    # production deployments.
+    accessKeyId:
+    accessKeySecret:
+    accessKeyExistingSecret:
+    accessKeyIdSecretKey: access_key_id
+    accessKeySecretSecretKey: access_key_secret
+    regionId:
+    # Private cloud KMS intranet endpoint, for example kms-intranet.<region>.<domain>.
+    endpoint:
+    # Use only for test environments where the private cloud KMS certificate cannot be trusted.
+    insecureSkipTlsVerify: false
 
 as:
   pccsURL: ''

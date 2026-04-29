@@ -15,7 +15,7 @@ use chrono::Utc;
 use credential::StsCredential;
 use log::error;
 use rand::{distributions::Alphanumeric, Rng};
-use reqwest::{header::HeaderMap, ClientBuilder};
+use reqwest::{header::HeaderMap, Certificate, Client, ClientBuilder};
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::fs;
@@ -43,11 +43,29 @@ pub struct StsSettings {
 }
 
 impl StsTokenClient {
-    pub fn from_sts_token(sts: StsCredential, endpoint: String, region_id: String) -> Result<Self> {
-        let http_client = ClientBuilder::new()
-            .use_rustls_tls()
+    fn build_http_client(
+        ca_cert_pem: Option<&str>,
+        insecure_skip_tls_verify: bool,
+    ) -> Result<Client> {
+        let mut builder = ClientBuilder::new().use_rustls_tls();
+
+        if let Some(ca_cert_pem) = ca_cert_pem.filter(|v| !v.is_empty()) {
+            let ca_cert = Certificate::from_pem(ca_cert_pem.as_bytes())
+                .map_err(|e| Error::AliyunKmsError(format!("read kms ca cert failed: {e:?}")))?;
+            builder = builder.add_root_certificate(ca_cert);
+        }
+
+        if insecure_skip_tls_verify {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+
+        builder
             .build()
-            .map_err(|e| Error::AliyunKmsError(format!("build http client failed: {e:?}")))?;
+            .map_err(|e| Error::AliyunKmsError(format!("build http client failed: {e:?}")))
+    }
+
+    pub fn from_sts_token(sts: StsCredential, endpoint: String, region_id: String) -> Result<Self> {
+        let http_client = Self::build_http_client(None, false)?;
         Ok(Self {
             ak: sts.ak,
             sk: sts.sk,
@@ -64,10 +82,25 @@ impl StsTokenClient {
         endpoint: String,
         region_id: String,
     ) -> Result<Self> {
-        let http_client = ClientBuilder::new()
-            .use_rustls_tls()
-            .build()
-            .map_err(|e| Error::AliyunKmsError(format!("build http client failed: {e:?}")))?;
+        Self::from_access_key_with_options(
+            access_key_id,
+            access_key_secret,
+            endpoint,
+            region_id,
+            None,
+            false,
+        )
+    }
+
+    pub fn from_access_key_with_options(
+        access_key_id: String,
+        access_key_secret: String,
+        endpoint: String,
+        region_id: String,
+        ca_cert_pem: Option<&str>,
+        insecure_skip_tls_verify: bool,
+    ) -> Result<Self> {
+        let http_client = Self::build_http_client(ca_cert_pem, insecure_skip_tls_verify)?;
         Ok(Self {
             ak: access_key_id,
             sk: access_key_secret,
