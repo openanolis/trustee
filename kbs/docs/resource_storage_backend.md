@@ -68,9 +68,30 @@ private_key_path = "/etc/kbs/resource-private.pem"
 [Alibaba Cloud KMS](https://www.alibabacloud.com/en/product/kms?_p_lc=1)(a.k.a Aliyun KMS)
 can also work as the KBS resource storage backend.
 In this mode, resources will be stored with [generic secrets](https://www.alibabacloud.com/help/en/kms/user-guide/manage-and-use-generic-secrets?spm=a2c63.p38356.0.0.dc4d24f7s0ZuW7) in a [KMS instance](https://www.alibabacloud.com/help/en/kms/user-guide/kms-overview?spm=a2c63.p38356.0.0.4aacf9e6V7IQGW).
-One KBS can be configured with a specified KMS instance in `repository_config` field of KBS launch config. For config, see the [document](./config.md#repository-configuration).
-These materials can be found in KMS instance's [AAP](https://www.alibabacloud.com/help/en/kms/user-guide/manage-aaps?spm=a3c0i.23458820.2359477120.1.4fd96e9bmEFST4).
-When being accessed, a resource URI of `kbs:///repo/type/tag` will be translated into the generic secret with name `tag`. Hinting that `repo/type` field will be ignored.
+One KBS can be configured with a specified KMS instance by setting a
+`[[plugins]]` section whose `name` is `resource` and whose `type` is `Aliyun`.
+For config, see the [document](./config.md#resource-configuration).
+
+The Aliyun backend supports two authentication modes:
+- AAP client key authentication with `client_key`, `kms_instance_id`,
+  `password`, and `cert_pem`. These materials can be found in the KMS
+  instance's [AAP](https://www.alibabacloud.com/help/en/kms/user-guide/manage-aaps?spm=a3c0i.23458820.2359477120.1.4fd96e9bmEFST4).
+- AccessKey authentication. The recommended approach is to set
+  `ALIYUN_KMS_ACCESS_KEY_ID`, `ALIYUN_KMS_ACCESS_KEY_SECRET`, and
+  `ALIYUN_KMS_REGION_ID` in the KBS process environment. The config file fields
+  `access_key_id`, `access_key_secret`, and `region_id` are also supported for
+  compatibility and local experiments.
+
+Public cloud deployments can omit `endpoint` and use the built-in Aliyun public
+cloud endpoint conventions. Private cloud deployments should set `endpoint` to
+the KMS intranet endpoint provided by the private cloud KMS owner. If the private
+cloud endpoint uses a private CA, set `cert_pem` to the CA certificate. The
+`insecure_skip_tls_verify` option is available for temporary test environments
+where the private cloud certificate cannot yet be trusted.
+
+When being accessed, a resource URI of `kbs:///repo/type/tag` will be translated
+into the generic secret with name `tag`. This means that the `repo/type` fields
+will be ignored by the Aliyun backend.
 
 ### External KMS (Dynamic Provider)
 

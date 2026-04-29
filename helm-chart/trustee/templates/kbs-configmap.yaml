@@ -22,9 +22,11 @@ data:
     {{- if .Values.kbs.aliyunKms.enabled }}
     type = "Aliyun"
     client_key = {{ .Values.kbs.aliyunKms.clientKey | quote }}
-    kms_instance_id = "{{ .Values.kbs.aliyunKms.kmsIntanceId }}"
+    kms_instance_id = "{{ default .Values.kbs.aliyunKms.kmsIntanceId .Values.kbs.aliyunKms.kmsInstanceId }}"
     password = "{{ .Values.kbs.aliyunKms.password }}"
     cert_pem = {{ .Values.kbs.aliyunKms.certPem | quote}}
+    endpoint = {{ .Values.kbs.aliyunKms.endpoint | quote }}
+    insecure_skip_tls_verify = {{ .Values.kbs.aliyunKms.insecureSkipTlsVerify }}
     {{- else }}
     type = "LocalFs"
     dir_path = "/opt/confidential-containers/kbs/repository"

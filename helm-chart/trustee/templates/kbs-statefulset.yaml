@@ -43,6 +43,33 @@ spec:
           env:
             - name: RUST_LOG
               value: {{ .Values.log_level }}
+            {{- if .Values.kbs.aliyunKms.enabled }}
+            {{- if .Values.kbs.aliyunKms.regionId }}
+            - name: ALIYUN_KMS_REGION_ID
+              value: {{ .Values.kbs.aliyunKms.regionId | quote }}
+            {{- end }}
+            {{- if .Values.kbs.aliyunKms.accessKeyExistingSecret }}
+            - name: ALIYUN_KMS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kbs.aliyunKms.accessKeyExistingSecret | quote }}
+                  key: {{ .Values.kbs.aliyunKms.accessKeyIdSecretKey | quote }}
+            - name: ALIYUN_KMS_ACCESS_KEY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kbs.aliyunKms.accessKeyExistingSecret | quote }}
+                  key: {{ .Values.kbs.aliyunKms.accessKeySecretSecretKey | quote }}
+            {{- else }}
+            {{- if .Values.kbs.aliyunKms.accessKeyId }}
+            - name: ALIYUN_KMS_ACCESS_KEY_ID
+              value: {{ .Values.kbs.aliyunKms.accessKeyId | quote }}
+            {{- end }}
+            {{- if .Values.kbs.aliyunKms.accessKeySecret }}
+            - name: ALIYUN_KMS_ACCESS_KEY_SECRET
+              value: {{ .Values.kbs.aliyunKms.accessKeySecret | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.kbs.service.port }}

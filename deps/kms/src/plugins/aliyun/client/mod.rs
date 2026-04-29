@@ -63,6 +63,26 @@ impl AliyunKmsClient {
         Ok(Self::ClientKey { inner })
     }
 
+    pub fn new_client_key_client_with_options(
+        client_key: &str,
+        kms_instance_id: &str,
+        password: &str,
+        cert_pem: Option<&str>,
+        endpoint: Option<&str>,
+        insecure_skip_tls_verify: bool,
+    ) -> Result<Self> {
+        let inner = ClientKeyClient::new_with_options(
+            client_key,
+            kms_instance_id,
+            password,
+            cert_pem,
+            endpoint,
+            insecure_skip_tls_verify,
+        )?;
+
+        Ok(Self::ClientKey { inner })
+    }
+
     pub fn new_ecs_ram_role_client(ecs_ram_role_name: &str, region_id: &str) -> Self {
         let ecs_ram_role_client =
             EcsRamRoleClient::new(ecs_ram_role_name.to_string(), region_id.to_string());
@@ -77,12 +97,35 @@ impl AliyunKmsClient {
         access_key_secret: &str,
         region_id: &str,
     ) -> Result<Self> {
-        let endpoint = format!("kms.{region_id}.aliyuncs.com");
-        let client = StsTokenClient::from_access_key(
+        Self::new_access_key_client_with_options(
+            access_key_id,
+            access_key_secret,
+            region_id,
+            None,
+            None,
+            false,
+        )
+    }
+
+    pub fn new_access_key_client_with_options(
+        access_key_id: &str,
+        access_key_secret: &str,
+        region_id: &str,
+        endpoint: Option<&str>,
+        ca_cert_pem: Option<&str>,
+        insecure_skip_tls_verify: bool,
+    ) -> Result<Self> {
+        let endpoint = endpoint
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("kms.{region_id}.aliyuncs.com"));
+        let client = StsTokenClient::from_access_key_with_options(
             access_key_id.to_string(),
             access_key_secret.to_string(),
             endpoint,
             region_id.to_string(),
+            ca_cert_pem,
+            insecure_skip_tls_verify,
         )?;
         Ok(Self::AccessKey { client })
     }
