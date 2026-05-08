@@ -43,11 +43,21 @@ attestation-challenge-client set-reference-value --provenance-type <slsa|sample>
 attestation-challenge-client set-reference-value-list --rv-list <rv-list.json>
 ```
 
-### SLSA 模式 (rekor透明日志)
+### RV release manifest 模式（推荐）
+
+```bash
+attestation-challenge-client set-reference-value-list --rv-list /path/to/rv-list.json
+```
+
+- 逻辑：读取 JSON 文件（顶层字段 `rv_list`，格式与 Gateway/KBS 的 `POST .../set_reference_value_list` 请求体一致），调用内置 RVPS 的 `set_reference_value_list`：从 `provenance_source` 获取 release manifest bundle，解析 `measurements` 并校验 bundle 内 Rekor entry 的 payload hash 后写入参考值。
+- `provenance_info.type` 使用 `rv-release-manifest`。每项的 `id` 是要导入的 measurement 名称，可完全自定义，只要与 release manifest `measurements` 中的键一致。
+- 每项可选 `rv_name`：若指定则作为 RVPS 中的参考值名称；省略时新格式默认使用 `id`。
+
+### SLSA 模式（历史兼容）
 
 #### 方式一（经典模式）
 
-这种方式只支持rekor v1
+这种方式只支持 Rekor v1，不再作为新设计推荐路径。
 
 ```bash
 attestation-challenge-client set-reference-value \
@@ -56,19 +66,11 @@ attestation-challenge-client set-reference-value \
   --artifact-name <artifact_name> \
   [--rekor-url https://rekor.sigstore.dev]
 ```
-- 逻辑：对 `artifact-name` 做 sha256 作为索引，访问rekor透明日志查询相应条目，过滤并提取 SLSA provenance (包含度量参考值)，组装为 RVPS 能识别的 message 后注册。
-- `--rekor-url` 可选，默认 `https://rekor.sigstore.dev`。
+- 逻辑：对 `artifact-name` 做 sha256 作为索引，访问 Rekor 透明日志查询相应条目，过滤并提取 SLSA provenance，组装为 RVPS 能识别的 message 后注册。
+ 
+#### 方式二（批量兼容模式）
 
-#### 方式二（批量模式）
-
-这种方式能够支持rekor v2
-
-```bash
-attestation-challenge-client set-reference-value-list --rv-list /path/to/rv-list.json
-```
-
-- 逻辑：读取 JSON 文件（顶层字段 `rv_list`，格式与 Gateway/KBS 的 `POST .../set_reference_value_list` 请求体一致），调用内置 RVPS 的 `set_reference_value_list`：按每项的 `id`+`version` 及其 `provenance_info.rekor_url` 从 Rekor 拉取 SLSA，解析 digest 后写入参考值。
-- 每项可选 `rv_name`：若指定则作为 RVPS 中的参考值名称；省略时默认 `measurement.<type>.<id>`（与网关 API 行为一致）。
+当 `provenance_info.type` 仍为 `slsa-intoto-statements` 时，`set-reference-value-list` 会沿用历史 SLSA 解析逻辑。
 
 
 ### Sample 模式

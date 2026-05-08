@@ -34,10 +34,10 @@ pub mod reference_value_provider_service_client {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value
+        clippy::let_unit_value,
     )]
-    use tonic::codegen::http::Uri;
     use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
     #[derive(Debug, Clone)]
     pub struct ReferenceValueProviderServiceClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -81,10 +81,13 @@ pub mod reference_value_provider_service_client {
                     <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
                 >,
             >,
-            <T as tonic::codegen::Service<http::Request<tonic::body::BoxBody>>>::Error:
-                Into<StdError> + std::marker::Send + std::marker::Sync,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
         {
-            ReferenceValueProviderServiceClient::new(InterceptedService::new(inner, interceptor))
+            ReferenceValueProviderServiceClient::new(
+                InterceptedService::new(inner, interceptor),
+            )
         }
         /// Compress requests with the given encoding.
         ///
@@ -120,20 +123,30 @@ pub mod reference_value_provider_service_client {
         pub async fn query_reference_value(
             &mut self,
             request: impl tonic::IntoRequest<super::ReferenceValueQueryRequest>,
-        ) -> std::result::Result<tonic::Response<super::ReferenceValueQueryResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::ReferenceValueQueryResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/reference.ReferenceValueProviderService/QueryReferenceValue",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "reference.ReferenceValueProviderService",
-                "QueryReferenceValue",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "reference.ReferenceValueProviderService",
+                        "QueryReferenceValue",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn register_reference_value(
@@ -143,56 +156,84 @@ pub mod reference_value_provider_service_client {
             tonic::Response<super::ReferenceValueRegisterResponse>,
             tonic::Status,
         > {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/reference.ReferenceValueProviderService/RegisterReferenceValue",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "reference.ReferenceValueProviderService",
-                "RegisterReferenceValue",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "reference.ReferenceValueProviderService",
+                        "RegisterReferenceValue",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn delete_reference_value(
             &mut self,
             request: impl tonic::IntoRequest<super::ReferenceValueDeleteRequest>,
-        ) -> std::result::Result<tonic::Response<super::ReferenceValueDeleteResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::ReferenceValueDeleteResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/reference.ReferenceValueProviderService/DeleteReferenceValue",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "reference.ReferenceValueProviderService",
-                "DeleteReferenceValue",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "reference.ReferenceValueProviderService",
+                        "DeleteReferenceValue",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn set_reference_value_list(
             &mut self,
             request: impl tonic::IntoRequest<super::ReferenceValueListRequest>,
-        ) -> std::result::Result<tonic::Response<super::ReferenceValueListResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::ReferenceValueListResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/reference.ReferenceValueProviderService/SetReferenceValueList",
             );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "reference.ReferenceValueProviderService",
-                "SetReferenceValueList",
-            ));
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "reference.ReferenceValueProviderService",
+                        "SetReferenceValueList",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
     }
@@ -204,18 +245,19 @@ pub mod reference_value_provider_service_server {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value
+        clippy::let_unit_value,
     )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with ReferenceValueProviderServiceServer.
     #[async_trait]
-    pub trait ReferenceValueProviderService:
-        std::marker::Send + std::marker::Sync + 'static
-    {
+    pub trait ReferenceValueProviderService: std::marker::Send + std::marker::Sync + 'static {
         async fn query_reference_value(
             &self,
             request: tonic::Request<super::ReferenceValueQueryRequest>,
-        ) -> std::result::Result<tonic::Response<super::ReferenceValueQueryResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::ReferenceValueQueryResponse>,
+            tonic::Status,
+        >;
         async fn register_reference_value(
             &self,
             request: tonic::Request<super::ReferenceValueRegisterRequest>,
@@ -226,11 +268,17 @@ pub mod reference_value_provider_service_server {
         async fn delete_reference_value(
             &self,
             request: tonic::Request<super::ReferenceValueDeleteRequest>,
-        ) -> std::result::Result<tonic::Response<super::ReferenceValueDeleteResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::ReferenceValueDeleteResponse>,
+            tonic::Status,
+        >;
         async fn set_reference_value_list(
             &self,
             request: tonic::Request<super::ReferenceValueListRequest>,
-        ) -> std::result::Result<tonic::Response<super::ReferenceValueListResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::ReferenceValueListResponse>,
+            tonic::Status,
+        >;
     }
     #[derive(Debug)]
     pub struct ReferenceValueProviderServiceServer<T> {
@@ -253,7 +301,10 @@ pub mod reference_value_provider_service_server {
                 max_encoding_message_size: None,
             }
         }
-        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
         where
             F: tonic::service::Interceptor,
         {
@@ -288,7 +339,8 @@ pub mod reference_value_provider_service_server {
             self
         }
     }
-    impl<T, B> tonic::codegen::Service<http::Request<B>> for ReferenceValueProviderServiceServer<T>
+    impl<T, B> tonic::codegen::Service<http::Request<B>>
+    for ReferenceValueProviderServiceServer<T>
     where
         T: ReferenceValueProviderService,
         B: Body + std::marker::Send + 'static,
@@ -307,13 +359,18 @@ pub mod reference_value_provider_service_server {
             match req.uri().path() {
                 "/reference.ReferenceValueProviderService/QueryReferenceValue" => {
                     #[allow(non_camel_case_types)]
-                    struct QueryReferenceValueSvc<T: ReferenceValueProviderService>(pub Arc<T>);
-                    impl<T: ReferenceValueProviderService>
-                        tonic::server::UnaryService<super::ReferenceValueQueryRequest>
-                        for QueryReferenceValueSvc<T>
-                    {
+                    struct QueryReferenceValueSvc<T: ReferenceValueProviderService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: ReferenceValueProviderService,
+                    > tonic::server::UnaryService<super::ReferenceValueQueryRequest>
+                    for QueryReferenceValueSvc<T> {
                         type Response = super::ReferenceValueQueryResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::ReferenceValueQueryRequest>,
@@ -321,9 +378,10 @@ pub mod reference_value_provider_service_server {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
                                 <T as ReferenceValueProviderService>::query_reference_value(
-                                    &inner, request,
-                                )
-                                .await
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -352,13 +410,18 @@ pub mod reference_value_provider_service_server {
                 }
                 "/reference.ReferenceValueProviderService/RegisterReferenceValue" => {
                     #[allow(non_camel_case_types)]
-                    struct RegisterReferenceValueSvc<T: ReferenceValueProviderService>(pub Arc<T>);
-                    impl<T: ReferenceValueProviderService>
-                        tonic::server::UnaryService<super::ReferenceValueRegisterRequest>
-                        for RegisterReferenceValueSvc<T>
-                    {
+                    struct RegisterReferenceValueSvc<T: ReferenceValueProviderService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: ReferenceValueProviderService,
+                    > tonic::server::UnaryService<super::ReferenceValueRegisterRequest>
+                    for RegisterReferenceValueSvc<T> {
                         type Response = super::ReferenceValueRegisterResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::ReferenceValueRegisterRequest>,
@@ -366,9 +429,10 @@ pub mod reference_value_provider_service_server {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
                                 <T as ReferenceValueProviderService>::register_reference_value(
-                                    &inner, request,
-                                )
-                                .await
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -397,13 +461,18 @@ pub mod reference_value_provider_service_server {
                 }
                 "/reference.ReferenceValueProviderService/DeleteReferenceValue" => {
                     #[allow(non_camel_case_types)]
-                    struct DeleteReferenceValueSvc<T: ReferenceValueProviderService>(pub Arc<T>);
-                    impl<T: ReferenceValueProviderService>
-                        tonic::server::UnaryService<super::ReferenceValueDeleteRequest>
-                        for DeleteReferenceValueSvc<T>
-                    {
+                    struct DeleteReferenceValueSvc<T: ReferenceValueProviderService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: ReferenceValueProviderService,
+                    > tonic::server::UnaryService<super::ReferenceValueDeleteRequest>
+                    for DeleteReferenceValueSvc<T> {
                         type Response = super::ReferenceValueDeleteResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::ReferenceValueDeleteRequest>,
@@ -411,9 +480,10 @@ pub mod reference_value_provider_service_server {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
                                 <T as ReferenceValueProviderService>::delete_reference_value(
-                                    &inner, request,
-                                )
-                                .await
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -442,13 +512,18 @@ pub mod reference_value_provider_service_server {
                 }
                 "/reference.ReferenceValueProviderService/SetReferenceValueList" => {
                     #[allow(non_camel_case_types)]
-                    struct SetReferenceValueListSvc<T: ReferenceValueProviderService>(pub Arc<T>);
-                    impl<T: ReferenceValueProviderService>
-                        tonic::server::UnaryService<super::ReferenceValueListRequest>
-                        for SetReferenceValueListSvc<T>
-                    {
+                    struct SetReferenceValueListSvc<T: ReferenceValueProviderService>(
+                        pub Arc<T>,
+                    );
+                    impl<
+                        T: ReferenceValueProviderService,
+                    > tonic::server::UnaryService<super::ReferenceValueListRequest>
+                    for SetReferenceValueListSvc<T> {
                         type Response = super::ReferenceValueListResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::ReferenceValueListRequest>,
@@ -456,9 +531,10 @@ pub mod reference_value_provider_service_server {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
                                 <T as ReferenceValueProviderService>::set_reference_value_list(
-                                    &inner, request,
-                                )
-                                .await
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -485,19 +561,23 @@ pub mod reference_value_provider_service_server {
                     };
                     Box::pin(fut)
                 }
-                _ => Box::pin(async move {
-                    let mut response = http::Response::new(empty_body());
-                    let headers = response.headers_mut();
-                    headers.insert(
-                        tonic::Status::GRPC_STATUS,
-                        (tonic::Code::Unimplemented as i32).into(),
-                    );
-                    headers.insert(
-                        http::header::CONTENT_TYPE,
-                        tonic::metadata::GRPC_CONTENT_TYPE,
-                    );
-                    Ok(response)
-                }),
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(empty_body());
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
             }
         }
     }

@@ -32,7 +32,10 @@ use sha2::Digest;
 use std::collections::{HashMap, HashSet};
 
 use provenance_source::{OciProvenanceFetcher, ProvenanceFetcher, ProvenanceSource};
-use rv_list::{extract_slsa_digests, parse_reference_value_list, ReferenceValueOperation};
+use rv_list::{
+    extract_release_manifest_digests, extract_slsa_digests, parse_reference_value_list,
+    parse_release_manifest_documents_from_material, ReferenceValueOperation,
+};
 
 /// Default version of Message
 static MESSAGE_VERSION: &str = "0.1.0";
@@ -162,7 +165,11 @@ impl Rvps {
         for item in request.rv_list {
             let operation = ReferenceValueOperation::parse(&item.operation_type)?;
 
-            if item.provenance_info.provenance_type != "slsa-intoto-statements" {
+            let provenance_type = item.provenance_info.provenance_type.as_str();
+            if !matches!(
+                provenance_type,
+                "rv-release-manifest" | "slsa-intoto-statements"
+            ) {
                 bail!(
                     "unsupported provenance_info.type `{}`",
                     item.provenance_info.provenance_type
@@ -181,48 +188,60 @@ impl Rvps {
                     }
                     n.to_string()
                 }
+                None if provenance_type == "rv-release-manifest" => item.id.clone(),
                 None => format!("measurement.{}.{}", item.rv_type, item.id),
             };
 
-            let slsa_docs = if let Some(source) = &item.provenance_source {
-                let protocol = source.protocol.to_ascii_lowercase();
-                let material = match protocol.as_str() {
-                    "oci" => {
-                        let fetcher = OciProvenanceFetcher::new();
-                        let src = ProvenanceSource {
-                            protocol: source.protocol.clone(),
-                            uri: source.uri.clone(),
-                            artifact: source.artifact.clone(),
-                        };
-                        fetcher
-                            .fetch(&src)
-                            .await
-                            .with_context(|| format!("fetch provenance from OCI `{}`", src.uri))?
-                    }
-                    other => bail!("unsupported provenance_source.protocol `{other}`"),
-                };
-                parse_slsa_documents_from_material(&material.raw_bytes).with_context(|| {
-                    format!(
-                        "parse fetched provenance material for `{}` (media type: {:?})",
-                        item.id, material.media_type
+            let digest_set = if provenance_type == "rv-release-manifest" {
+                let source = item.provenance_source.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "rv-release-manifest requires provenance_source with release manifest material"
                     )
-                })?
-            } else {
-                let lookup = format!("{}{}", item.id, item.version);
-                let rekor_client = rekor::RekorClient::new(&item.provenance_info.rekor_url)?;
-                rekor_client
-                    .fetch_slsa_provenance_for_lookup(&lookup)
-                    .await
-                    .with_context(|| format!("fetch SLSA provenance for {}", item.id))?
-            };
+                })?;
+                let material = fetch_provenance_material(source).await?;
+                let manifests = parse_release_manifest_documents_from_material(&material.raw_bytes)
+                    .with_context(|| {
+                        format!(
+                            "parse fetched release manifest material for `{}` (media type: {:?})",
+                            item.id, material.media_type
+                        )
+                    })?;
 
-            let mut digest_set = HashSet::new();
-            for doc in &slsa_docs {
-                let doc_digests = extract_slsa_digests(doc, &item.id)?;
-                for digest in doc_digests {
-                    digest_set.insert(digest);
+                let mut digest_set = HashSet::new();
+                for manifest in &manifests {
+                    let manifest_digests = extract_release_manifest_digests(manifest, &item.id)?;
+                    for digest in manifest_digests {
+                        digest_set.insert(digest);
+                    }
                 }
-            }
+                digest_set
+            } else {
+                let slsa_docs = if let Some(source) = &item.provenance_source {
+                    let material = fetch_provenance_material(source).await?;
+                    parse_slsa_documents_from_material(&material.raw_bytes).with_context(|| {
+                        format!(
+                            "parse fetched provenance material for `{}` (media type: {:?})",
+                            item.id, material.media_type
+                        )
+                    })?
+                } else {
+                    let lookup = format!("{}{}", item.id, item.version);
+                    let rekor_client = rekor::RekorClient::new(&item.provenance_info.rekor_url)?;
+                    rekor_client
+                        .fetch_slsa_provenance_for_lookup(&lookup)
+                        .await
+                        .with_context(|| format!("fetch SLSA provenance for {}", item.id))?
+                };
+
+                let mut digest_set = HashSet::new();
+                for doc in &slsa_docs {
+                    let doc_digests = extract_slsa_digests(doc, &item.id)?;
+                    for digest in doc_digests {
+                        digest_set.insert(digest);
+                    }
+                }
+                digest_set
+            };
 
             if digest_set.is_empty() {
                 bail!("no digest entries found for {}", item.id);
@@ -308,6 +327,36 @@ impl Rvps {
                 Ok(false)
             }
         }
+    }
+}
+
+async fn fetch_provenance_material(
+    source: &rv_list::ReferenceValueProvenanceSource,
+) -> Result<provenance_source::FetchedProvenanceMaterial> {
+    let protocol = source.protocol.to_ascii_lowercase();
+    match protocol.as_str() {
+        "oci" => {
+            let fetcher = OciProvenanceFetcher::new();
+            let src = ProvenanceSource {
+                protocol: source.protocol.clone(),
+                uri: source.uri.clone(),
+                artifact: source.artifact.clone(),
+            };
+            fetcher
+                .fetch(&src)
+                .await
+                .with_context(|| format!("fetch provenance from OCI `{}`", src.uri))
+        }
+        "file" => {
+            let path = source.uri.strip_prefix("file://").unwrap_or(&source.uri);
+            let raw_bytes = std::fs::read(path)
+                .with_context(|| format!("read provenance material from file `{path}`"))?;
+            Ok(provenance_source::FetchedProvenanceMaterial {
+                media_type: source.artifact.clone(),
+                raw_bytes,
+            })
+        }
+        other => bail!("unsupported provenance_source.protocol `{other}`"),
     }
 }
 
@@ -507,6 +556,7 @@ fn unique_docs(docs: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::{local_json, ReferenceValueStorageConfig};
 
     #[test]
     fn parse_direct_statement() {
@@ -525,5 +575,48 @@ mod tests {
         let docs = parse_slsa_documents_from_material(dsse.as_bytes()).unwrap();
         assert_eq!(docs.len(), 1);
         assert!(docs[0].contains("predicateType"));
+    }
+
+    #[tokio::test]
+    async fn set_reference_value_list_from_release_manifest_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundle_path = tmp.path().join("release-manifest.bundle.json");
+        let storage_path = tmp.path().join("reference_values.json");
+        let manifest = r#"{"measurements":{"cvm_container_proxy":{"algorithm":"sha256","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"schemaVersion":1}"#;
+        std::fs::write(&bundle_path, format!(r#"{{"releasePayload":{manifest}}}"#)).unwrap();
+
+        let mut rvps = Rvps::new(Config {
+            storage: ReferenceValueStorageConfig::LocalJson(local_json::Config {
+                file_path: storage_path.to_string_lossy().to_string(),
+            }),
+        })
+        .unwrap();
+        let payload = serde_json::json!({
+            "rv_list": [{
+                "id": "cvm_container_proxy",
+                "version": "1.0.0",
+                "type": "container",
+                "provenance_info": {
+                    "type": "rv-release-manifest",
+                    "rekor_url": "https://rekor.sigstore.dev",
+                    "rekor_api_version": 1
+                },
+                "provenance_source": {
+                    "protocol": "file",
+                    "uri": bundle_path.to_string_lossy(),
+                    "artifact": "bundle"
+                },
+                "operation_type": "refresh"
+            }]
+        });
+
+        rvps.set_reference_value_list(&payload.to_string())
+            .await
+            .unwrap();
+        let digests = rvps.get_digests().await.unwrap();
+        assert_eq!(
+            digests.get("cvm_container_proxy").unwrap(),
+            &vec!["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()]
+        );
     }
 }
