@@ -152,6 +152,7 @@ cd trustee/tools/slsa
 - 把 release manifest metadata 上传到指定存储地址（首期支持 OCI）。
 
 > 说明：CI 发布到 GitHub Release 的 `*.release-manifest.bundle.json` 与 `rv-release-tool` 的 `release-manifest.trustee-bundle.json` 已统一为同一 schema（`releasePayload + dsseEnvelope + rekorEntryV1/rekorEntryV2`）。
+> CI release workflow 仍会保留原有 `*.intoto.jsonl` SLSA provenance 作为 Release 资产；新增的 RV release manifest bundle 是额外资产。Rekor 上传对象改为 RV release manifest DSSE，不再上传 SLSA provenance。
 
 ### 4.3 审计侧：使用脚本验证参考值与 Rekor v2 一致性
 

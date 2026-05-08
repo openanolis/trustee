@@ -158,7 +158,8 @@ jobs:
       input_artifact: build-input-${{ matrix.os_flavor.id }}
       output_artifact: build-output-${{ matrix.os_flavor.id }}
       release_slsa_provenance: true
-      provenance_name: "${{ matrix.os_flavor.id == 'alinux3' && needs.create-build-artifacts.outputs.rpm_name_al8 || needs.create-build-artifacts.outputs.rpm_name_an23 }}.rv-release-manifest.bundle.json"
+      provenance_name: "${{ matrix.os_flavor.id == 'alinux3' && needs.create-build-artifacts.outputs.rpm_name_al8 || needs.create-build-artifacts.outputs.rpm_name_an23 }}.intoto.jsonl"
+      rv_release_manifest_name: "${{ matrix.os_flavor.id == 'alinux3' && needs.create-build-artifacts.outputs.rpm_name_al8 || needs.create-build-artifacts.outputs.rpm_name_an23 }}.rv-release-manifest.bundle.json"
       rpm_detail_provenance: true
       upload_provenance_to_rekor: true
       release_tag_name: ${{ github.event.release.tag_name || inputs.tag_name }}
