@@ -159,7 +159,7 @@ fi
 - feat: add set-reference-value-list CLI and optional rv_name for RVPS by @jialez0S
 
 * Thu Feb 26 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.2-1
-- Impl slsa-generator script for eas artifacts
+- Impl rv-release-tool script for eas artifacts
 - feat(rvps/gateway): add set_reference_value_list API
 
 * Tue Feb 3 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.1-1
