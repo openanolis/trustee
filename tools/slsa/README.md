@@ -1,6 +1,6 @@
 # RV Release Manifest 生成与上链工具
 
-本目录包含脚本 `slsa-generator`，用于为制品生成 JCS 规范化的 `application/vnd.trustee.rv.release+json` RV release manifest，封装为 DSSE 后上传到 Rekor（v1/v2），并可将 release manifest bundle 上传到指定存储地址（首期支持 OCI）。
+本目录包含脚本 `rv-release-tool`，用于为制品生成 JCS 规范化的 `application/vnd.trustee.rv.release+json` RV release manifest，封装为 DSSE 后上传到 Rekor（v1/v2），并可将 release manifest bundle 上传到指定存储地址（首期支持 OCI）。
 
 ## 依赖
 
@@ -21,7 +21,7 @@
 进入 `tools/slsa` 目录后运行:
 
 ```
-./slsa-generator --artifact-type <type> --artifact <path> --artifact-id <id> \
+./rv-release-tool --artifact-type <type> --artifact <path> --artifact-id <id> \
   --artifact-version <version> --sign-key <key> [--measurement-name <name>] [更多可选参数]
 ```
 
@@ -39,14 +39,14 @@
 - `--rekor-url`: Rekor 地址（默认 `https://rekor.sigstore.dev`）
 - `--rekor-api-version`: Rekor API 主版本，`1` 或 `2`（默认 `1`）
 - `--rekor-v2-key-details`: Rekor v2 verifier key details（默认 `PKIX_ECDSA_P256_SHA_256`）
-- `--provenance-store-protocol`: provenance 存储协议（当前支持 `oci`）
-- `--provenance-store-uri`: provenance 存储地址（如 `oci://127.0.0.1:5000/ns/repo:tag`）
+- `--provenance-store-protocol`: release manifest metadata 存储协议（当前支持 `oci`）
+- `--provenance-store-uri`: release manifest metadata 存储地址（如 `oci://127.0.0.1:5000/ns/repo:tag`）
 - `--provenance-store-artifact`: 上传到存储的对象类型（`bundle`、`payload` 或 `dsse`，默认 `bundle`）
 
 运行完成后会在当前目录生成输出目录，例如:
 
 ```
-./slsa-output-<artifact-id>-<timestamp>/
+./rv-release-output-<artifact-id>-<timestamp>/
   ├── release_payload.json
   ├── release.dsse.json
   ├── rekor-v1-entry.json / rekor-v2-entry.json
@@ -72,9 +72,9 @@ openssl pkey -in rv-release.key -pubout -out rv-release.pub
 ## 示例
 
 ```
-./slsa-generator --artifact-type binary --artifact /path/to/app.bin \
+./rv-release-tool --artifact-type binary --artifact /path/to/app.bin \
   --artifact-id app-binary --artifact-version 1.0.0 \
-  --measurement-name cvm_container_proxy \
+  --measurement-name my_custom_reference \
   --sign-key /path/to/rv-release.key \
   --rekor-url https://log2025-1.rekor.sigstore.dev --rekor-api-version 2 \
   --provenance-store-protocol oci \
@@ -83,7 +83,7 @@ openssl pkey -in rv-release.key -pubout -out rv-release.pub
 ```
 
 ```
-./slsa-generator --artifact-type model-dir --artifact /path/to/model \
+./rv-release-tool --artifact-type model-dir --artifact /path/to/model \
   --artifact-id modelA --artifact-version 2024-02-01 --sign-key /path/to/rv-release.key
 ```
 
@@ -98,7 +98,7 @@ UKI 示例（`--artifact` 指向 JSON 文件）:
 ```
 
 ```bash
-./slsa-generator --artifact-type uki --artifact /path/to/uki.json \
+./rv-release-tool --artifact-type uki --artifact /path/to/uki.json \
   --artifact-id uki-image --artifact-version 1.0.0 --sign-key /path/to/rv-release.key
 ```
 

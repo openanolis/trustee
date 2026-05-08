@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Parse UKI reference-value JSON and print "<alg> <digest>" for slsa-generator.
+"""Parse UKI reference-value JSON and print "<alg> <digest>" for rv-release-tool.
 
 Expected file content: a single JSON object with one key
 ``measurement.uki.<algorithm>`` and a one-element array of hex digest string.

@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
   cat <<'EOF'
 用法:
-  slsa-generator --artifact-type <type> --artifact <path> --artifact-id <id> \
+  rv-release-tool --artifact-type <type> --artifact <path> --artifact-id <id> \
     --artifact-version <version> --sign-key <key> [--measurement-name <name>] \
     [--rekor-url <url>] \
     [--rekor-api-version <1|2>] \
@@ -26,8 +26,8 @@ usage() {
   --rekor-url         Rekor 服务地址（默认: https://rekor.sigstore.dev）
   --rekor-api-version Rekor API 主版本: 1 或 2（默认: 1）
   --rekor-v2-key-details Rekor v2 verifier keyDetails（默认: PKIX_ECDSA_P256_SHA_256）
-  --provenance-store-protocol provenance存储协议（当前支持: oci）
-  --provenance-store-uri provenance存储地址（如 oci://127.0.0.1:5000/ns/repo:tag）
+  --provenance-store-protocol release manifest metadata 存储协议（当前支持: oci）
+  --provenance-store-uri release manifest metadata 存储地址（如 oci://127.0.0.1:5000/ns/repo:tag）
   --provenance-store-artifact 存储对象类型: bundle | payload | dsse（默认: bundle）
 EOF
 }
@@ -485,7 +485,7 @@ esac
 
 timestamp=$(date +%Y%m%d%H%M%S)
 safe_id=${artifact_id//[^a-zA-Z0-9._-]/_}
-out_dir="./slsa-output-${safe_id}-${timestamp}"
+out_dir="./rv-release-output-${safe_id}-${timestamp}"
 mkdir -p "$out_dir"
 
 payload_type="application/vnd.trustee.rv.release+json"

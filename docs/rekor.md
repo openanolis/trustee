@@ -57,7 +57,7 @@ sequenceDiagram
     participant RC as RekorClient
     participant RK as Rekor
 
-    U->>RV: 提交 rv_list(id=cvm_uki/cvm_container_xxx, provenance_source)
+    U->>RV: 提交 rv_list(id=<measurement-name>, provenance_source)
     RV->>RV: 拉取 release manifest bundle
     RV->>RV: 解码 DSSE payload
     RV->>RV: 校验 payload hash 与 Rekor entry 一致
@@ -68,15 +68,16 @@ sequenceDiagram
 
 - 新格式使用 `provenance_info.type = "rv-release-manifest"`。
 - release manifest 必须包含 `schemaVersion=1` 与非空 `measurements`。
-- `cvm_uki`、`cvm_firmware`、`host_uki` 必须使用 `sha384`；`cvm_container_*` 必须使用 `sha256`。
-- 从 `measurements[id]` 抽取 digest 并写入 RVPS；默认参考值名就是 `id`，如 `cvm_uki`。
+- measurement 名称允许完全自定义；`rv_list[].id` 只需与 release manifest `measurements` 中的键一致。
+- measurement 的 `algorithm` 支持 `sha256` 或 `sha384`，`value` 必须是对应算法的小写 hex digest。
+- 从 `measurements[id]` 抽取 digest 并写入 RVPS；默认参考值名就是 `id`，也可通过 `rv_name` 覆盖。
 - 参考值支持去重与合并更新，避免重复覆盖。
 - 默认设置过期时间（当前实现约 12 个月）。
 - `set_reference_value_list` 的 `rv_list` 项支持可选 `rv_name`：若设置则以其为 RVPS 参考值名称。
 
 ### 3.3 可选的强化校验
 
-RVPS 的 SLSA extractor 支持配置外部 `slsa-verifier`（通过环境变量）进行更严格校验（如 Rekor URL、builder identity、OIDC issuer）。
+历史 SLSA 兼容路径中的 extractor 仍支持配置外部 `slsa-verifier`（通过环境变量）进行更严格校验（如 Rekor URL、builder identity、OIDC issuer）；RV release manifest 新路径的核心校验是 DSSE payload hash 与 Rekor entry 一致。
 
 ---
 
@@ -125,7 +126,7 @@ curl -k -X POST http://<gateway-host>:<port>/api/rvps/set_reference_value_list \
 
 ```bash
 cd trustee/tools/slsa
-./slsa-generator \
+./rv-release-tool \
   --artifact-type binary \
   --artifact /path/to/artifact \
   --artifact-id app-binary \
@@ -148,9 +149,9 @@ cd trustee/tools/slsa
 
 - 上传到 Rekor v1（`kind=dsse`）；
 - 上传到 Rekor v2（`/api/v2/log/entries`，`dsseRequestV002`）；
-- 把 provenance 元数据上传到指定存储地址（首期支持 OCI）。
+- 把 release manifest metadata 上传到指定存储地址（首期支持 OCI）。
 
-> 说明：CI 发布到 GitHub Release 的 `*.release-manifest.bundle.json` 与 `slsa-generator` 的 `release-manifest.trustee-bundle.json` 已统一为同一 schema（`releasePayload + dsseEnvelope + rekorEntryV1/rekorEntryV2`）。
+> 说明：CI 发布到 GitHub Release 的 `*.release-manifest.bundle.json` 与 `rv-release-tool` 的 `release-manifest.trustee-bundle.json` 已统一为同一 schema（`releasePayload + dsseEnvelope + rekorEntryV1/rekorEntryV2`）。
 
 ### 4.3 审计侧：使用脚本验证参考值与 Rekor v2 一致性
 
@@ -174,7 +175,7 @@ cd trustee/tools/slsa
 
 脚本会在终端输出完整审计过程，并给出 PASS/FAIL 结果，覆盖：
 
-1. 参考值与 statement 中 `subject(name=id).digest.sha256` 一致；
+1. 参考值与 release manifest 中 `measurements[id]` 的 `algorithm/value` 一致；
 2. DSSE payload 摘要与 Rekor v2 `canonicalizedBody.spec.dsseV002` 一致；
 3. 校验 proof checkpoint 与 latest checkpoint 的签名（基于 Sigstore trusted root）；
 4. 通过 `logIndex + tile` 验证 entry 确实存在于透明日志；
