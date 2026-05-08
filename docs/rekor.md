@@ -2,10 +2,10 @@
 
 ## 1. 概述
 
-Trustee 已经具备比较完整的 **Rekor 透明日志参考值能力**：
+Trustee 已经具备基于 **RV release manifest + Rekor DSSE** 的透明日志参考值能力：
 
-- 支持从 Rekor 检索 SLSA provenance。
-- 支持解析 in-toto Statement / DSSE payload，提取制品 digest。
+- 支持解析 `application/vnd.trustee.rv.release+json` DSSE payload，提取 `measurements`。
+- 支持校验本地 release manifest payload hash 与 Rekor DSSE entry 的 `payloadHash`/v2 digest 一致。
 - 支持把提取出的参考值注册到 RVPS，供后续远程证明校验。
 
 ---
@@ -18,12 +18,12 @@ Trustee 已经具备比较完整的 **Rekor 透明日志参考值能力**：
 flowchart LR
     subgraph Producer["发布侧 / 供应链"]
         A["构建系统 / CI"]
-        B["SLSA Provenance"]
+        B["RV Release Manifest DSSE"]
         A --> B
     end
 
     R["Rekor 透明日志"]
-    B -->|"rekor-cli upload (intoto)"| R
+    B -->|"POST dsse log entry"| R
 
     subgraph Trustee["Trustee 侧"]
         D["Trustee Gateway API"]
@@ -33,22 +33,22 @@ flowchart LR
         E --> F
     end
 
-    R -->|"查询 provenance"| E
+    R -->|"校验 payload hash / inclusion proof"| E
     CI["Trustee Owner"] -->|"POST /api/rvps/set_reference_value_list"| D
 ```
 
 ### 2.2 关键角色
 
-- **Rekor**：透明日志服务，存储可查询的 in-toto/SLSA 条目。
+- **Rekor**：透明日志服务，存储 RV release manifest DSSE 条目。
 - **Trustee Gateway**：对外 API 入口，可触发 RVPS 批量设置参考值。
-- **RVPS**：负责 Rekor 查询（批量场景）、SLSA 解析、digest 提取与参考值落库。
+- **RVPS**：负责 release manifest 解析、digest 提取、Rekor entry 一致性校验与参考值落库。
 - **Attestation Service / KBS**：在证明决策中消费 RVPS 参考值。
 
 ---
 
 ## 3. 透明日志接入设计
 
-### 3.1 Rekor 检索策略
+### 3.1 Release Manifest 消费策略
 
 ```mermaid
 sequenceDiagram
@@ -57,29 +57,22 @@ sequenceDiagram
     participant RC as RekorClient
     participant RK as Rekor
 
-    U->>RV: 提交 rv_list(id,version,type,rekor_url)
-    RV->>RC: 为每个条目发起 Rekor 查询
-    RC->>RC: 计算 sha256 索引
-    RC->>RK: POST /api/v1/index/retrieve
-    RK-->>RC: 返回 entry UUID 列表
-    RC->>RK: POST /api/v1/log/entries/retrieve
-    RK-->>RC: 返回 entries
-    RC->>RC: 解析 attestation.data / body.DSSE
-    RC->>RC: 过滤 predicateType=slsa
-    RC->>RV: 传入 SLSA payload
-    RV->>RV: 提取 subject digest 并写入参考值
+    U->>RV: 提交 rv_list(id=cvm_uki/cvm_container_xxx, provenance_source)
+    RV->>RV: 拉取 release manifest bundle
+    RV->>RV: 解码 DSSE payload
+    RV->>RV: 校验 payload hash 与 Rekor entry 一致
+    RV->>RV: 提取 measurements[id] 并写入参考值
 ```
 
 ### 3.2 解析与落库规则
 
-- 同时兼容两种条目路径：
-  - `attestation.data`（base64 JSON）
-  - `body` 中 `intoto` DSSE payload（base64）
-- 仅接受 `predicateType` 包含 `slsa` 的 statement。
-- 从 `subject/subjects` 抽取 digest，过滤 `artifact-index-hash` 等索引项。
+- 新格式使用 `provenance_info.type = "rv-release-manifest"`。
+- release manifest 必须包含 `schemaVersion=1` 与非空 `measurements`。
+- `cvm_uki`、`cvm_firmware`、`host_uki` 必须使用 `sha384`；`cvm_container_*` 必须使用 `sha256`。
+- 从 `measurements[id]` 抽取 digest 并写入 RVPS；默认参考值名就是 `id`，如 `cvm_uki`。
 - 参考值支持去重与合并更新，避免重复覆盖。
 - 默认设置过期时间（当前实现约 12 个月）。
-- `set_reference_value_list` 的 `rv_list` 项支持可选 `rv_name`：若设置则以其为 RVPS 参考值名称，否则仍为 `measurement.<type>.<id>`。
+- `set_reference_value_list` 的 `rv_list` 项支持可选 `rv_name`：若设置则以其为 RVPS 参考值名称。
 
 ### 3.3 可选的强化校验
 
@@ -100,7 +93,7 @@ cat << EOF > rvps-set-list.json
       "version": "artifact-version",
       "type": "model",
       "provenance_info": {
-        "type": "slsa-intoto-statements",
+        "type": "rv-release-manifest",
         "rekor_url": "https://log2025-1.rekor.sigstore.dev",
         "rekor_api_version": 2
       },
@@ -125,7 +118,8 @@ curl -k -X POST http://<gateway-host>:<port>/api/rvps/set_reference_value_list \
 - `provenance_source.protocol`：当前支持 `oci`
 - `provenance_source.uri`：OCI 地址，格式 `oci://<registry>/<repo>:<tag>` 或 `oci://<registry>/<repo>@sha256:<digest>`
 - `provenance_source.artifact`：`bundle` 或 `provenance`，默认建议 `bundle`
-- 当请求中未提供 `provenance_source` 字段时，仍走现有 Rekor v1 索引查询兼容路径
+- 新格式需要通过 `provenance_source` 提供完整 release manifest bundle/DSSE/payload；RVPS 会用 bundle 内 Rekor entry 校验 payload hash。
+- 旧的 `slsa-intoto-statements` 兼容路径仍可用于历史数据，但不再作为新设计推荐路径。
 
 ### 4.2 发布侧：生成并上传 Rekor
 
@@ -144,19 +138,19 @@ cd trustee/tools/slsa
   --provenance-store-artifact bundle
 ```
 
-该脚本会生成 statement + DSSE，并在 `bundle` 模式输出统一的 provenance metadata 结构：
+该脚本会生成 JCS 规范化 release payload + DSSE，并在 `bundle` 模式输出统一 metadata 结构：
 
-- `sourceBundle`：来源 bundle（与 Sigstore bundle 结构对齐）；
-- `dsseEnvelope`：便于直接消费的 DSSE；
-- `rekorEntryV2`：可选（v2 上传成功时带上）。
+- `releasePayload`：JCS 规范化后的 release manifest；
+- `dsseEnvelope`：`application/vnd.trustee.rv.release+json` DSSE；
+- `rekorEntryV1`/`rekorEntryV2`：可选，上传成功时带上。
 
 同时支持：
 
-- 上传到 Rekor v1（`rekor-cli upload --type intoto`）；
+- 上传到 Rekor v1（`kind=dsse`）；
 - 上传到 Rekor v2（`/api/v2/log/entries`，`dsseRequestV002`）；
 - 把 provenance 元数据上传到指定存储地址（首期支持 OCI）。
 
-> 说明：CI 发布到 GitHub Release 的 `*.provenance-metadata.json` 与 `slsa-generator` 的 `provenance.trustee-bundle.json` 已统一为同一 schema（`sourceBundle + dsseEnvelope + rekorEntryV2`）。
+> 说明：CI 发布到 GitHub Release 的 `*.release-manifest.bundle.json` 与 `slsa-generator` 的 `release-manifest.trustee-bundle.json` 已统一为同一 schema（`releasePayload + dsseEnvelope + rekorEntryV1/rekorEntryV2`）。
 
 ### 4.3 审计侧：使用脚本验证参考值与 Rekor v2 一致性
 

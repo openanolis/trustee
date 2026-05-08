@@ -7,10 +7,11 @@ usage() {
   cat <<'EOF'
 用法:
   slsa-generator --artifact-type <type> --artifact <path> --artifact-id <id> \
-    --artifact-version <version> --sign-key <key> [--rekor-url <url>] \
+    --artifact-version <version> --sign-key <key> [--measurement-name <name>] \
+    [--rekor-url <url>] \
     [--rekor-api-version <1|2>] \
     [--provenance-store-protocol <oci>] [--provenance-store-uri <uri>] \
-    [--provenance-store-artifact <bundle|provenance>]
+    [--provenance-store-artifact <bundle|payload|dsse>]
 
 参数:
   --artifact-type     制品类型: binary | model-dir | uki
@@ -20,13 +21,14 @@ usage() {
                       - uki: UKI 参考值 JSON 文件路径
   --artifact-id       制品自定义ID
   --artifact-version  制品版本
-  --sign-key          用于签名SLSA provenance的私钥路径(cosign生成)
+  --sign-key          用于签名 release manifest DSSE 的 PEM 私钥路径
+  --measurement-name  release manifest measurements 中的名称（默认: artifact-id）
   --rekor-url         Rekor 服务地址（默认: https://rekor.sigstore.dev）
   --rekor-api-version Rekor API 主版本: 1 或 2（默认: 1）
   --rekor-v2-key-details Rekor v2 verifier keyDetails（默认: PKIX_ECDSA_P256_SHA_256）
   --provenance-store-protocol provenance存储协议（当前支持: oci）
   --provenance-store-uri provenance存储地址（如 oci://127.0.0.1:5000/ns/repo:tag）
-  --provenance-store-artifact 存储对象类型: bundle | provenance（默认: bundle）
+  --provenance-store-artifact 存储对象类型: bundle | payload | dsse（默认: bundle）
 EOF
 }
 
@@ -182,16 +184,102 @@ EOF
     --data-binary @"$manifest_file" >/dev/null
 }
 
+json_canonicalize() {
+  local input="$1"
+  local output="$2"
+  python3 - "$input" "$output" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    obj = json.load(f)
+with open(sys.argv[2], "w", encoding="utf-8") as f:
+    f.write(json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+PY
+}
+
+dsse_pae_file() {
+  local payload_type="$1"
+  local payload_file="$2"
+  local pae_file="$3"
+  python3 - "$payload_type" "$payload_file" "$pae_file" <<'PY'
+import sys
+payload_type = sys.argv[1].encode("utf-8")
+with open(sys.argv[2], "rb") as f:
+    payload = f.read()
+pae = b"DSSEv1 %d " % len(payload_type) + payload_type + b" %d " % len(payload) + payload
+with open(sys.argv[3], "wb") as f:
+    f.write(pae)
+PY
+}
+
+sign_dsse_envelope() {
+  local payload_type="$1"
+  local payload_file="$2"
+  local sign_key="$3"
+  local envelope_file="$4"
+  local pae_file="$out_dir/release-pae.bin"
+  local sig_file="$out_dir/release.sig"
+  local payload_b64 sig_b64
+
+  dsse_pae_file "$payload_type" "$payload_file" "$pae_file"
+  openssl dgst -sha256 -sign "$sign_key" -out "$sig_file" "$pae_file"
+  payload_b64=$(base64 -w0 "$payload_file")
+  sig_b64=$(base64 -w0 "$sig_file")
+
+  jq -n \
+    --arg payload "$payload_b64" \
+    --arg payloadType "$payload_type" \
+    --arg sig "$sig_b64" \
+    '{payload: $payload, payloadType: $payloadType, signatures: [{sig: $sig}]}' > "$envelope_file"
+}
+
+ensure_public_key() {
+  local sign_key="$1"
+  local pubkey="$2"
+  if [ -f "${sign_key}.pub" ]; then
+    cp -- "${sign_key}.pub" "$pubkey"
+  elif [ -f "${sign_key%.*}.pub" ]; then
+    cp -- "${sign_key%.*}.pub" "$pubkey"
+  else
+    openssl pkey -in "$sign_key" -pubout -out "$pubkey"
+  fi
+}
+
 upload_rekor_v1() {
   local rekor_url="$1"
   local envelope="$2"
   local pubkey="$3"
   local output_file="$4"
-  rekor-cli upload \
-    --rekor_server "$rekor_url" \
-    --artifact "$envelope" \
-    --public-key "$pubkey" \
-    --type intoto | tee "$output_file"
+  local req_file="$5"
+
+  local envelope_json pubkey_b64
+  envelope_json=$(jq -c . "$envelope")
+  pubkey_b64=$(base64 -w0 "$pubkey")
+  jq -n \
+    --arg envelope "$envelope_json" \
+    --arg verifier "$pubkey_b64" \
+    '{
+      kind: "dsse",
+      apiVersion: "0.0.1",
+      spec: {
+        proposedContent: {
+          envelope: $envelope,
+          verifiers: [$verifier]
+        }
+      }
+    }' > "$req_file"
+
+  local base="${rekor_url%/}"
+  local code
+  code=$(curl -sS -o "$output_file" -w '%{http_code}' \
+    -X POST "${base}/api/v1/log/entries" \
+    -H 'Content-Type: application/json' \
+    --data-binary @"$req_file")
+  if [[ "$code" -lt 200 || "$code" -ge 300 ]]; then
+    echo "上传 Rekor v1 DSSE 失败，HTTP $code，响应：" >&2
+    cat "$output_file" >&2 || true
+    return 1
+  fi
 }
 
 upload_rekor_v2() {
@@ -252,6 +340,7 @@ artifact_path=""
 artifact_id=""
 artifact_version=""
 sign_key=""
+measurement_name=""
 rekor_url="https://rekor.sigstore.dev"
 rekor_api_version="1"
 rekor_v2_key_details="PKIX_ECDSA_P256_SHA_256"
@@ -279,6 +368,10 @@ while [ $# -gt 0 ]; do
       ;;
     --sign-key)
       sign_key="${2:-}"
+      shift 2
+      ;;
+    --measurement-name)
+      measurement_name="${2:-}"
       shift 2
       ;;
     --rekor-url)
@@ -323,10 +416,11 @@ if [ -z "$artifact_type" ] || [ -z "$artifact_path" ] || [ -z "$artifact_id" ] |
 fi
 
 require_cmd sha256sum
-require_cmd cosign
 require_cmd jq
 require_cmd curl
 require_cmd openssl
+require_cmd python3
+require_cmd base64
 
 if [ "$artifact_type" = "model-dir" ]; then
   require_cmd cryptpilot-verity
@@ -349,10 +443,6 @@ if [ -z "$artifact_id" ] || [ -z "$artifact_version" ]; then
   echo "artifact-id和artifact-version不能为空" >&2
   exit 1
 fi
-
-require_cmd sha256sum
-require_cmd cosign
-require_cmd rekor-cli
 
 artifact_digest_alg="sha256"
 attest_blob_path="$artifact_path"
@@ -393,90 +483,39 @@ case "$artifact_type" in
     ;;
 esac
 
-index_hash=$(printf '%s%s' "$artifact_id" "$artifact_version" | sha256sum | awk '{print $1}')
-
-escaped_artifact_id=$(json_escape "$artifact_id")
-escaped_artifact_version=$(json_escape "$artifact_version")
-escaped_artifact_type=$(json_escape "$artifact_type")
-
 timestamp=$(date +%Y%m%d%H%M%S)
 safe_id=${artifact_id//[^a-zA-Z0-9._-]/_}
 out_dir="./slsa-output-${safe_id}-${timestamp}"
 mkdir -p "$out_dir"
 
-statement_file="$out_dir/statement.json"
-envelope_file="$out_dir/statement.dsse.json"
-attestation_file="$out_dir/statement.attestation.json"
-
-if [ "$artifact_type" = "uki" ]; then
-  attest_blob_path="$out_dir/uki-artifact.json"
-  cp -- "$artifact_path" "$attest_blob_path"
-fi
-
-bundle_jsonl_file="$out_dir/statement.intoto.jsonl"
-rekor_v1_output_file="$out_dir/rekor-v1-upload.txt"
+payload_type="application/vnd.trustee.rv.release+json"
+payload_pretty_file="$out_dir/release_payload.pretty.json"
+payload_file="$out_dir/release_payload.json"
+envelope_file="$out_dir/release.dsse.json"
+pub_key="$out_dir/release.pub"
+rekor_v1_output_file="$out_dir/rekor-v1-entry.json"
+rekor_v1_req_file="$out_dir/rekor-v1-request.json"
 rekor_v2_output_file="$out_dir/rekor-v2-entry.json"
 rekor_v2_req_file="$out_dir/rekor-v2-request.json"
-trustee_bundle_file="$out_dir/provenance.trustee-bundle.json"
+trustee_bundle_file="$out_dir/release-manifest.trustee-bundle.json"
 
-cat >"$statement_file" <<EOF
-{
-  "_type": "https://in-toto.io/Statement/v0.1",
-  "subject": [
-    {
-      "name": "${escaped_artifact_id}",
-      "digest": {
-        "${artifact_digest_alg}": "${artifact_hash}"
-      }
-    },
-    {
-      "name": "artifact-index-hash",
-      "digest": {
-        "sha256": "${index_hash}"
-      }
-    }
-  ],
-  "predicateType": "https://slsa.dev/provenance/v1",
-  "predicate": {
-    "buildType": "https://slsa.dev/provenance/v1",
-    "invocation": {
-      "environment": {
-        "artifactVersion": "${escaped_artifact_version}",
-        "artifactType": "${escaped_artifact_type}"
-      }
-    },
-    "buildConfig": {},
-    "metadata": {},
-    "materials": []
-  }
-}
-EOF
-
-cosign attest-blob \
-  --new-bundle-format=false \
-  --key "$sign_key" \
-  --yes \
-  --use-signing-config=false \
-  --statement "$statement_file" \
-  --output-attestation "$attestation_file" \
-  --output-signature "$envelope_file" \
-  "$attest_blob_path"
-
-jq -c . "$envelope_file" > "$bundle_jsonl_file"
-
-pub_key=""
-if [ -f "${sign_key}.pub" ]; then
-  pub_key="${sign_key}.pub"
-elif [ -f "${sign_key%.*}.pub" ]; then
-  pub_key="${sign_key%.*}.pub"
-else
-  echo "未找到公钥文件，期望: ${sign_key}.pub 或 ${sign_key%.*}.pub" >&2
-  exit 1
+if [ -z "$measurement_name" ]; then
+  measurement_name="$artifact_id"
 fi
 
+jq -n \
+  --arg name "$measurement_name" \
+  --arg algorithm "$artifact_digest_alg" \
+  --arg value "$artifact_hash" \
+  '{schemaVersion: 1, measurements: {($name): {algorithm: $algorithm, value: $value}}}' \
+  > "$payload_pretty_file"
+json_canonicalize "$payload_pretty_file" "$payload_file"
+
+ensure_public_key "$sign_key" "$pub_key"
+sign_dsse_envelope "$payload_type" "$payload_file" "$sign_key" "$envelope_file"
+
 if [ "$rekor_api_version" = "1" ]; then
-  require_cmd rekor-cli
-  upload_rekor_v1 "$rekor_url" "$envelope_file" "$pub_key" "$rekor_v1_output_file"
+  upload_rekor_v1 "$rekor_url" "$envelope_file" "$pub_key" "$rekor_v1_output_file" "$rekor_v1_req_file"
 else
   upload_rekor_v2 "$rekor_url" "$envelope_file" "$pub_key" "$rekor_v2_key_details" "$rekor_v2_output_file" "$rekor_v2_req_file"
 fi
@@ -484,15 +523,16 @@ fi
 if [ "$provenance_store_artifact" = "bundle" ]; then
   if [ -f "$rekor_v2_output_file" ]; then
     jq -n \
-      --argfile sourceBundle "$bundle_jsonl_file" \
+      --argfile releasePayload "$payload_file" \
       --argfile dsse "$envelope_file" \
       --argfile rekor "$rekor_v2_output_file" \
-      '{sourceBundle: $sourceBundle, dsseEnvelope: $dsse, rekorEntryV2: $rekor}' > "$trustee_bundle_file"
+      '{releasePayload: $releasePayload, dsseEnvelope: $dsse, rekorEntryV2: $rekor}' > "$trustee_bundle_file"
   else
     jq -n \
-      --argfile sourceBundle "$bundle_jsonl_file" \
+      --argfile releasePayload "$payload_file" \
       --argfile dsse "$envelope_file" \
-      '{sourceBundle: $sourceBundle, dsseEnvelope: $dsse}' > "$trustee_bundle_file"
+      --argfile rekor "$rekor_v1_output_file" \
+      '{releasePayload: $releasePayload, dsseEnvelope: $dsse, rekorEntryV1: $rekor}' > "$trustee_bundle_file"
   fi
 fi
 
@@ -501,13 +541,16 @@ if [ -n "$provenance_store_protocol" ]; then
     oci)
       case "$provenance_store_artifact" in
         bundle)
-          upload_to_oci_storage "$provenance_store_uri" "$trustee_bundle_file" "application/vnd.in-toto.bundle+json" "application/vnd.in-toto.bundle"
+          upload_to_oci_storage "$provenance_store_uri" "$trustee_bundle_file" "application/vnd.trustee.rv.release.bundle+json" "application/vnd.trustee.rv.release.bundle"
           ;;
-        provenance)
-          upload_to_oci_storage "$provenance_store_uri" "$statement_file" "application/vnd.in-toto.provenance+json" "application/vnd.in-toto.provenance"
+        payload)
+          upload_to_oci_storage "$provenance_store_uri" "$payload_file" "application/vnd.trustee.rv.release+json" "application/vnd.trustee.rv.release"
+          ;;
+        dsse)
+          upload_to_oci_storage "$provenance_store_uri" "$envelope_file" "application/vnd.dsse.envelope.v1+json" "application/vnd.dsse.envelope"
           ;;
         *)
-          echo "不支持的 --provenance-store-artifact: $provenance_store_artifact（仅支持 bundle|provenance）" >&2
+          echo "不支持的 --provenance-store-artifact: $provenance_store_artifact（仅支持 bundle|payload|dsse）" >&2
           exit 1
           ;;
       esac
@@ -519,5 +562,5 @@ if [ -n "$provenance_store_protocol" ]; then
   esac
 fi
 
-echo "完成: SLSA provenance生成并上传Rekor"
+echo "完成: RV release manifest 生成并上传 Rekor"
 echo "输出目录: $out_dir"

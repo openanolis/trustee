@@ -1270,12 +1270,14 @@ EOF
 
 *   **端点:** `POST /api/rvps/set_reference_value_list`
     
-*   **说明:** 通过 gRPC 向后端 RVPS 服务批量设置参考值。RVPS 会遍历 `rv_list` 中的每一项：
-    1. 若未提供 `provenance_source`，计算 `SHA256($artifact-id || $artifact-version)` 作为索引并走 Rekor v1 兼容查询路径。
-    2. 若提供 `provenance_source`，按 `provenance_source.protocol` 拉取 provenance/bundle 元数据（当前支持 OCI）。
-    3. 解析 SLSA in-toto statement，提取制品哈希摘要值。
-    4. 确定参考值名称：若该项提供可选字段 `rv_name`，则使用该字符串（去首尾空白后非空）；否则默认 `measurement.$type.$artifact-id`。
+*   **说明:** 通过 gRPC 向后端 RVPS 服务批量设置参考值。新格式使用 `provenance_info.type = "rv-release-manifest"`，RVPS 会遍历 `rv_list` 中的每一项：
+    1. 通过 `provenance_source` 拉取 release manifest bundle/DSSE/payload 元数据（当前支持 OCI，也支持本地测试用 `file`）。
+    2. 解析 `application/vnd.trustee.rv.release+json` release manifest，并校验 bundle 内 Rekor entry 的 payload hash。
+    3. 从 `measurements[$id]` 提取制品哈希摘要值。
+    4. 确定参考值名称：若该项提供可选字段 `rv_name`，则使用该字符串（去首尾空白后非空）；否则新格式默认使用 `$id`。
     5. 若该名称已存在且新旧参考值不同，根据 `operation_type` 进行追加或覆盖。
+    
+    历史 `slsa-intoto-statements` 路径仍保留兼容：未提供 `provenance_source` 时仍会计算 `SHA256($artifact-id || $artifact-version)` 并走 Rekor v1 索引查询。
     
 *   **调用方法:**
     
@@ -1284,11 +1286,11 @@ cat << EOF > rvps-set-list.json
 {
   "rv_list": [
     {
-      "id": "artifact-id",
+      "id": "cvm_container_proxy",
       "version": "artifact-version",
-      "type": "model",
+      "type": "container",
       "provenance_info": {
-        "type": "slsa-intoto-statements",
+        "type": "rv-release-manifest",
         "rekor_url": "https://log2025-1.rekor.sigstore.dev",
         "rekor_api_version": 2
       },
@@ -1320,11 +1322,11 @@ curl -k -X POST http://<gateway-host>:<port>/api/rvps/set_reference_value_list \
 {
   "rv_list": [
     {
-      "id": "artifact-id",
+      "id": "cvm_container_proxy",
       "version": "artifact-version",
-      "type": "model",
+      "type": "container",
       "provenance_info": {
-        "type": "slsa-intoto-statements",
+        "type": "rv-release-manifest",
         "rekor_url": "https://log2025-1.rekor.sigstore.dev",
         "rekor_api_version": 2
       },
@@ -1343,16 +1345,16 @@ curl -k -X POST http://<gateway-host>:<port>/api/rvps/set_reference_value_list \
 *   **字段说明:**
     
     *   `rv_list`: 参考值列表数组。
-    *   `id`: 制品标识。
+    *   `id`: 新格式下为 release manifest 中的 measurement 名称，例如 `cvm_uki`、`cvm_firmware`、`host_uki` 或 `cvm_container_proxy`。
     *   `version`: 制品版本。
-    *   `type`: 制品类型；在未指定 `rv_name` 时用于生成默认参考值名称 `measurement.$type.$artifact-id`（例如 `uki` → `measurement.uki.$artifact-id`）。若指定了 `rv_name`，`type` 仍须填写且非空（与 Rekor 查询、`id`/`version` 语义一致），但不再参与名称拼接。
-    *   `rv_name`（可选）: 显式指定写入 RVPS 的参考值名称；不得为空或仅空白。省略时行为与原先一致，使用 `measurement.$type.$artifact-id`。
-    *   `provenance_info.type`: 目前仅支持 `slsa-intoto-statements`。
+    *   `type`: 制品类型；新格式下仍须填写且非空，但默认参考值名称使用 `id`。历史 SLSA 兼容路径未指定 `rv_name` 时仍使用 `measurement.$type.$artifact-id`。
+    *   `rv_name`（可选）: 显式指定写入 RVPS 的参考值名称；不得为空或仅空白。
+    *   `provenance_info.type`: 推荐 `rv-release-manifest`；历史兼容值为 `slsa-intoto-statements`。
     *   `provenance_info.rekor_url`: Rekor 透明日志地址。
     *   `provenance_info.rekor_api_version`: Rekor API 大版本（`1`/`2`，可选）。
-    *   `provenance_source.protocol`: provenance/bundle 获取协议，当前支持 `oci`。
-    *   `provenance_source.uri`: provenance/bundle 地址，如 `oci://<registry>/<repo>:<tag>`。
-    *   `provenance_source.artifact`: 拉取对象类型，建议 `bundle`（可选 `provenance`）。
+    *   `provenance_source.protocol`: release manifest bundle 获取协议，当前支持 `oci`；本地测试可用 `file`。
+    *   `provenance_source.uri`: release manifest bundle 地址，如 `oci://<registry>/<repo>:<tag>`。
+    *   `provenance_source.artifact`: 拉取对象类型，建议 `bundle`。
     *   `operation_type`: `add` 或 `refresh`。当名称已存在且新旧参考值不同：
         *   `add`: 将新参考值追加到该名称的参考值数组中。
         *   `refresh`: 清空旧参考值，仅保留最新参考值。

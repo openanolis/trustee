@@ -59,6 +59,10 @@ pub fn parse_reference_value_list(payload: &str) -> Result<ReferenceValueListPay
     serde_json::from_str(payload).context("parse reference value list payload")
 }
 
+mod release_manifest;
 mod slsa_parse;
 
+pub use release_manifest::{
+    extract_release_manifest_digests, parse_release_manifest_documents_from_material,
+};
 pub use slsa_parse::extract_slsa_digests;
