@@ -4,7 +4,7 @@
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.8.3
+Version:        1.8.4
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -148,6 +148,18 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Mon May 18 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.4-1
+- KBS: support private cloud Aliyun KMS endpoints
+- AS: add signer transparency support
+- Verifier: add Hygon TPM verifier with sm2/sm3 keylime support
+- Verifier/TDX: expose TCB verification result and supplemental data in claims
+- Verifier: make eventlog a required dependency
+- RVPS: export types for external use, add release manifest Rekor support
+- Gateway: prefer instance info IP in audit records
+- Gateway: fix AA instance heartbeat deduplication
+- Rekor v2: unify provenance metadata schema and add OCI-based RVPS verification path
+- Release: keep SLSA provenance in release workflow
+
 * Thu Mar 26 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.3-1
 - fix(slsa): generate and upload DSSE envelope for Rekor intoto
 - chore(slsa): upgrade cosign/rekor-cli and align generator with v3 APIs
