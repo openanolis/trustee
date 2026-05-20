@@ -2,18 +2,33 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::{Arc, OnceLock};
+use std::{
+    env,
+    fmt::{self, Display},
+    str::FromStr,
+    sync::{Arc, OnceLock},
+};
 
-use anyhow::{bail, Context, Error, Result};
+use anyhow::{anyhow, bail, Context, Error, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 #[cfg(feature = "encrypted-local-fs")]
 use super::encrypted_local_fs;
 use super::local_fs;
 
 type RepositoryInstance = Arc<dyn StorageBackend>;
+
+const ENV_RESOURCE_STORAGE_TYPE: &str = "KBS_RESOURCE_STORAGE_TYPE";
+const ENV_RESOURCE_STORAGE_DIR_PATH: &str = "KBS_RESOURCE_STORAGE_DIR_PATH";
+
+#[cfg(feature = "encrypted-local-fs")]
+const ENV_RESOURCE_STORAGE_PRIVATE_KEY_PATH: &str = "KBS_RESOURCE_STORAGE_PRIVATE_KEY_PATH";
+
+const ENV_RESOURCE_STORAGE_LIBRARY_PATH: &str = "KBS_RESOURCE_STORAGE_LIBRARY_PATH";
+const ENV_RESOURCE_STORAGE_INITIAL_BUFFER_SIZE: &str = "KBS_RESOURCE_STORAGE_INITIAL_BUFFER_SIZE";
+const ENV_RESOURCE_STORAGE_MAX_BUFFER_SIZE: &str = "KBS_RESOURCE_STORAGE_MAX_BUFFER_SIZE";
+const ENV_RESOURCE_STORAGE_ERROR_BUFFER_SIZE: &str = "KBS_RESOURCE_STORAGE_ERROR_BUFFER_SIZE";
 
 /// Interface of a `Repository`.
 #[async_trait::async_trait]
@@ -150,6 +165,157 @@ impl Default for RepositoryConfig {
     fn default() -> Self {
         Self::LocalFs(local_fs::LocalFsRepoDesc::default())
     }
+}
+
+impl RepositoryConfig {
+    pub(crate) fn env_overrides_present() -> bool {
+        let present = [
+            ENV_RESOURCE_STORAGE_TYPE,
+            ENV_RESOURCE_STORAGE_DIR_PATH,
+            ENV_RESOURCE_STORAGE_LIBRARY_PATH,
+            ENV_RESOURCE_STORAGE_INITIAL_BUFFER_SIZE,
+            ENV_RESOURCE_STORAGE_MAX_BUFFER_SIZE,
+            ENV_RESOURCE_STORAGE_ERROR_BUFFER_SIZE,
+        ]
+        .into_iter()
+        .any(|name| env::var_os(name).is_some());
+
+        #[cfg(feature = "encrypted-local-fs")]
+        let present = present || env::var_os(ENV_RESOURCE_STORAGE_PRIVATE_KEY_PATH).is_some();
+
+        #[cfg(feature = "aliyun")]
+        let present = present || super::aliyun_kms::AliyunKmsBackendConfig::env_overrides_present();
+
+        present
+    }
+
+    pub(crate) fn from_env_overrides() -> Result<Self> {
+        let backend_type = env_string(ENV_RESOURCE_STORAGE_TYPE)?.ok_or_else(|| {
+            anyhow!(
+                "{ENV_RESOURCE_STORAGE_TYPE} is required when configuring the resource plugin only from environment variables"
+            )
+        })?;
+
+        let mut config = Self::from_env_type(&backend_type)?;
+        config.apply_field_env_overrides()?;
+        Ok(config)
+    }
+
+    pub(crate) fn apply_env_overrides(&mut self) -> Result<()> {
+        if let Some(backend_type) = env_string(ENV_RESOURCE_STORAGE_TYPE)? {
+            *self = Self::from_env_type(&backend_type)?;
+        }
+
+        self.apply_field_env_overrides()
+    }
+
+    fn from_env_type(backend_type: &str) -> Result<Self> {
+        let normalized = backend_type
+            .trim()
+            .to_ascii_lowercase()
+            .replace('_', "")
+            .replace('-', "");
+
+        match normalized.as_str() {
+            "localfs" => Ok(Self::LocalFs(local_fs::LocalFsRepoDesc::default())),
+            "encryptedlocalfs" => {
+                #[cfg(feature = "encrypted-local-fs")]
+                {
+                    Ok(Self::EncryptedLocalFs(
+                        encrypted_local_fs::EncryptedLocalFsRepoDesc::default(),
+                    ))
+                }
+
+                #[cfg(not(feature = "encrypted-local-fs"))]
+                {
+                    bail!(
+                        "{ENV_RESOURCE_STORAGE_TYPE}=EncryptedLocalFs requires the encrypted-local-fs feature"
+                    )
+                }
+            }
+            "aliyun" => {
+                #[cfg(feature = "aliyun")]
+                {
+                    Ok(Self::Aliyun(
+                        super::aliyun_kms::AliyunKmsBackendConfig::default(),
+                    ))
+                }
+
+                #[cfg(not(feature = "aliyun"))]
+                {
+                    bail!("{ENV_RESOURCE_STORAGE_TYPE}=Aliyun requires the aliyun feature")
+                }
+            }
+            "externalkms" => Ok(Self::ExternalKms(
+                super::external_kms::ExternalKmsBackendConfig::default(),
+            )),
+            _ => bail!("unsupported {ENV_RESOURCE_STORAGE_TYPE} value `{backend_type}`"),
+        }
+    }
+
+    fn apply_field_env_overrides(&mut self) -> Result<()> {
+        match self {
+            Self::LocalFs(desc) => {
+                if let Some(dir_path) = env_string(ENV_RESOURCE_STORAGE_DIR_PATH)? {
+                    desc.dir_path = dir_path;
+                }
+            }
+            #[cfg(feature = "encrypted-local-fs")]
+            Self::EncryptedLocalFs(desc) => {
+                if let Some(dir_path) = env_string(ENV_RESOURCE_STORAGE_DIR_PATH)? {
+                    desc.dir_path = dir_path;
+                }
+                if let Some(private_key_path) = env_string(ENV_RESOURCE_STORAGE_PRIVATE_KEY_PATH)? {
+                    desc.private_key_path = private_key_path;
+                }
+            }
+            #[cfg(feature = "aliyun")]
+            Self::Aliyun(config) => {
+                config.apply_env_overrides()?;
+            }
+            Self::ExternalKms(config) => {
+                if let Some(library_path) = env_string(ENV_RESOURCE_STORAGE_LIBRARY_PATH)? {
+                    config.library_path = library_path;
+                }
+                if let Some(initial_buffer_size) =
+                    env_parse(ENV_RESOURCE_STORAGE_INITIAL_BUFFER_SIZE)?
+                {
+                    config.initial_buffer_size = initial_buffer_size;
+                }
+                if let Some(max_buffer_size) = env_parse(ENV_RESOURCE_STORAGE_MAX_BUFFER_SIZE)? {
+                    config.max_buffer_size = max_buffer_size;
+                }
+                if let Some(error_buffer_size) = env_parse(ENV_RESOURCE_STORAGE_ERROR_BUFFER_SIZE)?
+                {
+                    config.error_buffer_size = error_buffer_size;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn env_string(name: &str) -> Result<Option<String>> {
+    match env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(err) => Err(anyhow!("read environment variable {name}: {err}")),
+    }
+}
+
+fn env_parse<T>(name: &str) -> Result<Option<T>>
+where
+    T: FromStr,
+    T::Err: Display,
+{
+    env_string(name)?
+        .map(|value| {
+            value
+                .parse::<T>()
+                .map_err(|err| anyhow!("parse environment variable {name}: {err}"))
+        })
+        .transpose()
 }
 
 #[derive(Clone)]

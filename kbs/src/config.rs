@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::admin::config::{AdminConfig, DEFAULT_INSECURE_API};
-use crate::plugins::PluginsConfig;
+use crate::plugins::{PluginsConfig, RepositoryConfig};
 use crate::policy_engine::PolicyEngineConfig;
 use crate::token::AttestationTokenVerifierConfig;
 use anyhow::anyhow;
@@ -75,6 +75,30 @@ pub struct KbsConfig {
     pub plugins: Vec<PluginsConfig>,
 }
 
+impl KbsConfig {
+    fn apply_resource_plugin_env_overrides(&mut self) -> anyhow::Result<()> {
+        if !RepositoryConfig::env_overrides_present() {
+            return Ok(());
+        }
+
+        let mut found_resource_plugin = false;
+        for plugin in &mut self.plugins {
+            if let PluginsConfig::ResourceStorage(repository_config) = plugin {
+                repository_config.apply_env_overrides()?;
+                found_resource_plugin = true;
+            }
+        }
+
+        if !found_resource_plugin {
+            let repository_config = RepositoryConfig::from_env_overrides()?;
+            self.plugins
+                .push(PluginsConfig::ResourceStorage(repository_config));
+        }
+
+        Ok(())
+    }
+}
+
 impl TryFrom<&Path> for KbsConfig {
     type Error = anyhow::Error;
 
@@ -93,8 +117,11 @@ impl TryFrom<&Path> for KbsConfig {
             .add_source(File::with_name(config_path.to_str().unwrap()))
             .build()?;
 
-        c.try_deserialize()
-            .map_err(|e| anyhow!("invalid config: {}", e.to_string()))
+        let mut kbs_config: Self = c
+            .try_deserialize()
+            .map_err(|e| anyhow!("invalid config: {}", e.to_string()))?;
+        kbs_config.apply_resource_plugin_env_overrides()?;
+        Ok(kbs_config)
     }
 }
 
@@ -110,7 +137,11 @@ pub struct Cli {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::{
+        env,
+        ffi::OsString,
+        path::{Path, PathBuf},
+    };
 
     use crate::{
         admin::config::AdminConfig,
@@ -120,7 +151,8 @@ mod tests {
         },
         plugins::{
             implementations::{
-                resource::local_fs::LocalFsRepoDesc, RepositoryConfig, SampleConfig,
+                resource::{external_kms::ExternalKmsBackendConfig, local_fs::LocalFsRepoDesc},
+                RepositoryConfig, SampleConfig,
             },
             PluginsConfig,
         },
@@ -139,6 +171,56 @@ mod tests {
     use reference_value_provider_service::storage::{local_fs, ReferenceValueStorageConfig};
 
     use rstest::rstest;
+    use serial_test::serial;
+
+    const RESOURCE_STORAGE_ENV_VARS: &[&str] = &[
+        "KBS_RESOURCE_STORAGE_TYPE",
+        "KBS_RESOURCE_STORAGE_DIR_PATH",
+        "KBS_RESOURCE_STORAGE_PRIVATE_KEY_PATH",
+        "KBS_RESOURCE_STORAGE_LIBRARY_PATH",
+        "KBS_RESOURCE_STORAGE_INITIAL_BUFFER_SIZE",
+        "KBS_RESOURCE_STORAGE_MAX_BUFFER_SIZE",
+        "KBS_RESOURCE_STORAGE_ERROR_BUFFER_SIZE",
+        "KBS_RESOURCE_STORAGE_ALIYUN_CLIENT_KEY",
+        "KBS_RESOURCE_STORAGE_ALIYUN_KMS_INSTANCE_ID",
+        "KBS_RESOURCE_STORAGE_ALIYUN_PASSWORD",
+        "KBS_RESOURCE_STORAGE_ALIYUN_CERT_PEM",
+        "KBS_RESOURCE_STORAGE_ALIYUN_ACCESS_KEY_ID",
+        "KBS_RESOURCE_STORAGE_ALIYUN_ACCESS_KEY_SECRET",
+        "KBS_RESOURCE_STORAGE_ALIYUN_REGION_ID",
+        "KBS_RESOURCE_STORAGE_ALIYUN_ENDPOINT",
+        "KBS_RESOURCE_STORAGE_ALIYUN_INSECURE_SKIP_TLS_VERIFY",
+    ];
+
+    struct EnvGuard {
+        saved: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl EnvGuard {
+        fn clear() -> Self {
+            let saved = RESOURCE_STORAGE_ENV_VARS
+                .iter()
+                .map(|name| {
+                    let value = env::var_os(name);
+                    env::remove_var(name);
+                    (*name, value)
+                })
+                .collect();
+
+            Self { saved }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (name, value) in &self.saved {
+                match value {
+                    Some(value) => env::set_var(name, value),
+                    None => env::remove_var(name),
+                }
+            }
+        }
+    }
 
     #[rstest]
     #[case("test_data/configs/coco-as-grpc-1.toml",         KbsConfig {
@@ -360,8 +442,87 @@ mod tests {
             },
         ))],
     })]
+    #[serial]
     fn read_config(#[case] config_path: &str, #[case] expected: KbsConfig) {
+        let _env = EnvGuard::clear();
         let config = KbsConfig::try_from(Path::new(config_path)).unwrap();
         assert_eq!(config, expected, "case {config_path}");
+    }
+
+    #[test]
+    #[serial]
+    fn resource_storage_env_overrides_existing_local_fs() {
+        let _env = EnvGuard::clear();
+        env::set_var("KBS_RESOURCE_STORAGE_DIR_PATH", "/env/kbs-resource");
+
+        let config =
+            KbsConfig::try_from(Path::new("test_data/configs/coco-as-grpc-1.toml")).unwrap();
+
+        assert_eq!(
+            config.plugins[1],
+            PluginsConfig::ResourceStorage(RepositoryConfig::LocalFs(LocalFsRepoDesc {
+                dir_path: "/env/kbs-resource".into(),
+            }))
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn resource_storage_env_replaces_existing_backend_type() {
+        let _env = EnvGuard::clear();
+        env::set_var("KBS_RESOURCE_STORAGE_TYPE", "ExternalKms");
+        env::set_var("KBS_RESOURCE_STORAGE_LIBRARY_PATH", "/opt/kms/libcustom.so");
+        env::set_var("KBS_RESOURCE_STORAGE_INITIAL_BUFFER_SIZE", "128");
+        env::set_var("KBS_RESOURCE_STORAGE_MAX_BUFFER_SIZE", "8192");
+        env::set_var("KBS_RESOURCE_STORAGE_ERROR_BUFFER_SIZE", "256");
+
+        let config =
+            KbsConfig::try_from(Path::new("test_data/configs/coco-as-grpc-1.toml")).unwrap();
+
+        assert_eq!(
+            config.plugins[1],
+            PluginsConfig::ResourceStorage(RepositoryConfig::ExternalKms(
+                ExternalKmsBackendConfig {
+                    library_path: "/opt/kms/libcustom.so".into(),
+                    initial_buffer_size: 128,
+                    max_buffer_size: 8192,
+                    error_buffer_size: 256,
+                }
+            ))
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn resource_storage_env_adds_resource_plugin() {
+        let _env = EnvGuard::clear();
+        env::set_var("KBS_RESOURCE_STORAGE_TYPE", "LocalFs");
+        env::set_var("KBS_RESOURCE_STORAGE_DIR_PATH", "/env/kbs-resource");
+
+        let config =
+            KbsConfig::try_from(Path::new("test_data/configs/coco-as-grpc-3.toml")).unwrap();
+
+        assert_eq!(
+            config.plugins,
+            vec![PluginsConfig::ResourceStorage(RepositoryConfig::LocalFs(
+                LocalFsRepoDesc {
+                    dir_path: "/env/kbs-resource".into(),
+                }
+            ))]
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn resource_storage_env_requires_type_when_adding_plugin() {
+        let _env = EnvGuard::clear();
+        env::set_var("KBS_RESOURCE_STORAGE_DIR_PATH", "/env/kbs-resource");
+
+        let err = KbsConfig::try_from(Path::new("test_data/configs/coco-as-grpc-3.toml"))
+            .expect_err("resource storage type should be required");
+
+        assert!(err
+            .to_string()
+            .contains("KBS_RESOURCE_STORAGE_TYPE is required"));
     }
 }

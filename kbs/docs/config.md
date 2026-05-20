@@ -212,6 +212,46 @@ This is also called "Repository" in old versions. The properties to be configure
 |----------|--------|-------------------------------------------------------------------------------|----------|-----------|
 | `type`   | String | The resource repository type. Valid values: `LocalFs`, `EncryptedLocalFs`, `Aliyun`, `ExternalKms` | Yes      | `LocalFs` |
 
+Resource plugin configuration can also be overridden with environment
+variables. Environment variables are applied after the configuration file is
+loaded, so they take precedence over the `[[plugins]]` section. If the config
+file does not contain a `resource` plugin, `KBS_RESOURCE_STORAGE_TYPE` must be
+set to create one from environment variables.
+
+| Environment Variable | Description |
+|----------------------|-------------|
+| `KBS_RESOURCE_STORAGE_TYPE` | Replaces or creates the resource backend type. Supported values: `LocalFs`, `EncryptedLocalFs`, `Aliyun`, `ExternalKms`. |
+| `KBS_RESOURCE_STORAGE_DIR_PATH` | Overrides `dir_path` for `LocalFs` and `EncryptedLocalFs`. |
+| `KBS_RESOURCE_STORAGE_PRIVATE_KEY_PATH` | Overrides `private_key_path` for `EncryptedLocalFs`. |
+| `KBS_RESOURCE_STORAGE_LIBRARY_PATH` | Overrides `library_path` for `ExternalKms`. |
+| `KBS_RESOURCE_STORAGE_INITIAL_BUFFER_SIZE` | Overrides `initial_buffer_size` for `ExternalKms`. |
+| `KBS_RESOURCE_STORAGE_MAX_BUFFER_SIZE` | Overrides `max_buffer_size` for `ExternalKms`. |
+| `KBS_RESOURCE_STORAGE_ERROR_BUFFER_SIZE` | Overrides `error_buffer_size` for `ExternalKms`. |
+
+Aliyun backend fields can be overridden with the following variables:
+
+| Environment Variable | Description |
+|----------------------|-------------|
+| `KBS_RESOURCE_STORAGE_ALIYUN_CLIENT_KEY` | Overrides `client_key`. |
+| `KBS_RESOURCE_STORAGE_ALIYUN_KMS_INSTANCE_ID` | Overrides `kms_instance_id`. |
+| `KBS_RESOURCE_STORAGE_ALIYUN_PASSWORD` | Overrides `password`. |
+| `KBS_RESOURCE_STORAGE_ALIYUN_CERT_PEM` | Overrides `cert_pem`. |
+| `KBS_RESOURCE_STORAGE_ALIYUN_ACCESS_KEY_ID` | Overrides `access_key_id`. |
+| `KBS_RESOURCE_STORAGE_ALIYUN_ACCESS_KEY_SECRET` | Overrides `access_key_secret`. |
+| `KBS_RESOURCE_STORAGE_ALIYUN_REGION_ID` | Overrides `region_id`. |
+| `KBS_RESOURCE_STORAGE_ALIYUN_ENDPOINT` | Overrides `endpoint`. |
+| `KBS_RESOURCE_STORAGE_ALIYUN_INSECURE_SKIP_TLS_VERIFY` | Overrides `insecure_skip_tls_verify`; use `true` or `false`. |
+
+Example:
+
+```shell
+export KBS_RESOURCE_STORAGE_TYPE=ExternalKms
+export KBS_RESOURCE_STORAGE_LIBRARY_PATH=/opt/trustee/kbs/libkms_provider.so
+export KBS_RESOURCE_STORAGE_INITIAL_BUFFER_SIZE=4096
+export KBS_RESOURCE_STORAGE_MAX_BUFFER_SIZE=1048576
+export KBS_RESOURCE_STORAGE_ERROR_BUFFER_SIZE=1024
+```
+
 **`LocalFs` Properties**
 
 | Property   | Type   | Description                     | Required | Default                                             |

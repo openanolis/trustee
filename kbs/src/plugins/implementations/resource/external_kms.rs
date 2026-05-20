@@ -35,6 +35,17 @@ pub struct ExternalKmsBackendConfig {
     pub error_buffer_size: u32,
 }
 
+impl Default for ExternalKmsBackendConfig {
+    fn default() -> Self {
+        Self {
+            library_path: default_library_path(),
+            initial_buffer_size: default_initial_buffer_size(),
+            max_buffer_size: default_max_buffer_size(),
+            error_buffer_size: default_error_buffer_size(),
+        }
+    }
+}
+
 fn default_library_path() -> String {
     DEFAULT_LIBRARY_PATH.to_string()
 }
