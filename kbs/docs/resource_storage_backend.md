@@ -8,6 +8,36 @@ The [KBS config file](./config.md)
 defines which resource backend KBS will use. The default is the local
 file system (`LocalFs`).
 
+The resource backend can also be overridden by environment variables. These
+variables are applied after the config file is loaded, so they take precedence
+over the `[[plugins]] name = "resource"` section. Set
+`KBS_RESOURCE_STORAGE_TYPE` to replace the backend type or to create the
+resource plugin when the config file does not define one.
+
+Common variables:
+
+| Environment Variable | Description |
+| -------------------- | ----------- |
+| `KBS_RESOURCE_STORAGE_TYPE` | Backend type: `LocalFs`, `EncryptedLocalFs`, `Aliyun`, or `ExternalKms`. |
+| `KBS_RESOURCE_STORAGE_DIR_PATH` | `dir_path` for `LocalFs` and `EncryptedLocalFs`. |
+| `KBS_RESOURCE_STORAGE_PRIVATE_KEY_PATH` | `private_key_path` for `EncryptedLocalFs`. |
+
+External KMS variables:
+
+| Environment Variable | Description |
+| -------------------- | ----------- |
+| `KBS_RESOURCE_STORAGE_LIBRARY_PATH` | Provider shared library path. |
+| `KBS_RESOURCE_STORAGE_INITIAL_BUFFER_SIZE` | Initial secret buffer size in bytes. |
+| `KBS_RESOURCE_STORAGE_MAX_BUFFER_SIZE` | Maximum secret buffer size in bytes. |
+| `KBS_RESOURCE_STORAGE_ERROR_BUFFER_SIZE` | Error buffer size in bytes. |
+
+Aliyun variables use the `KBS_RESOURCE_STORAGE_ALIYUN_` prefix for backend
+fields such as `ENDPOINT`, `CERT_PEM`, `CLIENT_KEY`, `KMS_INSTANCE_ID`,
+`PASSWORD`, `ACCESS_KEY_ID`, `ACCESS_KEY_SECRET`, `REGION_ID`, and
+`INSECURE_SKIP_TLS_VERIFY`. The existing `ALIYUN_KMS_ACCESS_KEY_ID`,
+`ALIYUN_KMS_ACCESS_KEY_SECRET`, and `ALIYUN_KMS_REGION_ID` variables are still
+supported as AccessKey fallback credentials when those fields are omitted.
+
 ### Local File System Backend
 
 With the local file system backend default implementation, each resource

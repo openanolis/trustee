@@ -8,7 +8,18 @@ use derivative::Derivative;
 use kms::{plugins::aliyun::AliyunKmsClient, Annotations, Getter};
 use log::info;
 use serde::Deserialize;
-use std::env;
+use std::{env, fmt::Display, str::FromStr};
+
+const ENV_ALIYUN_CLIENT_KEY: &str = "KBS_RESOURCE_STORAGE_ALIYUN_CLIENT_KEY";
+const ENV_ALIYUN_KMS_INSTANCE_ID: &str = "KBS_RESOURCE_STORAGE_ALIYUN_KMS_INSTANCE_ID";
+const ENV_ALIYUN_PASSWORD: &str = "KBS_RESOURCE_STORAGE_ALIYUN_PASSWORD";
+const ENV_ALIYUN_CERT_PEM: &str = "KBS_RESOURCE_STORAGE_ALIYUN_CERT_PEM";
+const ENV_ALIYUN_ACCESS_KEY_ID: &str = "KBS_RESOURCE_STORAGE_ALIYUN_ACCESS_KEY_ID";
+const ENV_ALIYUN_ACCESS_KEY_SECRET: &str = "KBS_RESOURCE_STORAGE_ALIYUN_ACCESS_KEY_SECRET";
+const ENV_ALIYUN_REGION_ID: &str = "KBS_RESOURCE_STORAGE_ALIYUN_REGION_ID";
+const ENV_ALIYUN_ENDPOINT: &str = "KBS_RESOURCE_STORAGE_ALIYUN_ENDPOINT";
+const ENV_ALIYUN_INSECURE_SKIP_TLS_VERIFY: &str =
+    "KBS_RESOURCE_STORAGE_ALIYUN_INSECURE_SKIP_TLS_VERIFY";
 
 #[derive(Derivative, Deserialize, Clone, PartialEq)]
 #[derivative(Debug)]
@@ -27,6 +38,87 @@ pub struct AliyunKmsBackendConfig {
     endpoint: Option<String>,
     #[serde(default)]
     insecure_skip_tls_verify: bool,
+}
+
+impl Default for AliyunKmsBackendConfig {
+    fn default() -> Self {
+        Self {
+            client_key: None,
+            kms_instance_id: None,
+            password: None,
+            cert_pem: None,
+            access_key_id: None,
+            access_key_secret: None,
+            region_id: None,
+            endpoint: None,
+            insecure_skip_tls_verify: false,
+        }
+    }
+}
+
+impl AliyunKmsBackendConfig {
+    pub(crate) fn env_overrides_present() -> bool {
+        [
+            ENV_ALIYUN_CLIENT_KEY,
+            ENV_ALIYUN_KMS_INSTANCE_ID,
+            ENV_ALIYUN_PASSWORD,
+            ENV_ALIYUN_CERT_PEM,
+            ENV_ALIYUN_ACCESS_KEY_ID,
+            ENV_ALIYUN_ACCESS_KEY_SECRET,
+            ENV_ALIYUN_REGION_ID,
+            ENV_ALIYUN_ENDPOINT,
+            ENV_ALIYUN_INSECURE_SKIP_TLS_VERIFY,
+        ]
+        .into_iter()
+        .any(|name| env::var_os(name).is_some())
+    }
+
+    pub(crate) fn apply_env_overrides(&mut self) -> Result<()> {
+        set_optional_string_from_env(&mut self.client_key, ENV_ALIYUN_CLIENT_KEY)?;
+        set_optional_string_from_env(&mut self.kms_instance_id, ENV_ALIYUN_KMS_INSTANCE_ID)?;
+        set_optional_string_from_env(&mut self.password, ENV_ALIYUN_PASSWORD)?;
+        set_optional_string_from_env(&mut self.cert_pem, ENV_ALIYUN_CERT_PEM)?;
+        set_optional_string_from_env(&mut self.access_key_id, ENV_ALIYUN_ACCESS_KEY_ID)?;
+        set_optional_string_from_env(&mut self.access_key_secret, ENV_ALIYUN_ACCESS_KEY_SECRET)?;
+        set_optional_string_from_env(&mut self.region_id, ENV_ALIYUN_REGION_ID)?;
+        set_optional_string_from_env(&mut self.endpoint, ENV_ALIYUN_ENDPOINT)?;
+
+        if let Some(insecure_skip_tls_verify) = env_parse(ENV_ALIYUN_INSECURE_SKIP_TLS_VERIFY)? {
+            self.insecure_skip_tls_verify = insecure_skip_tls_verify;
+        }
+
+        Ok(())
+    }
+}
+
+fn set_optional_string_from_env(target: &mut Option<String>, name: &str) -> Result<()> {
+    if let Some(value) = env_string(name)? {
+        *target = Some(value);
+    }
+
+    Ok(())
+}
+
+fn env_string(name: &str) -> Result<Option<String>> {
+    match env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(err) => Err(anyhow!("read environment variable {name}: {err}")),
+    }
+}
+
+fn env_parse<T>(name: &str) -> Result<Option<T>>
+where
+    T: FromStr,
+    T::Err: Display,
+{
+    env_string(name)?
+        .map(|value| {
+            value
+                .parse::<T>()
+                .map_err(|err| anyhow!("parse environment variable {name}: {err}"))
+        })
+        .transpose()
 }
 
 pub struct AliyunKmsBackend {
