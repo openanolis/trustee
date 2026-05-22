@@ -238,7 +238,9 @@ func (d *Database) migrateAAInstanceHeartbeatIndexMySQL() error {
 		logrus.Info("Cleaned up duplicate instance_id records in aa_instance_heartbeats")
 	}
 
-	if err := d.DB.Exec("CREATE UNIQUE INDEX idx_aa_heartbeat_instance_id ON aa_instance_heartbeats(instance_id)").Error; err != nil {
+	// Use a 191-char prefix to stay under MySQL InnoDB's 767-byte index key
+	// limit when instance_id is VARCHAR(255) utf8mb4 (4 bytes/char → 1020 bytes).
+	if err := d.DB.Exec("CREATE UNIQUE INDEX idx_aa_heartbeat_instance_id ON aa_instance_heartbeats(instance_id(191))").Error; err != nil {
 		return fmt.Errorf("failed to create unique index on instance_id: %w", err)
 	}
 
