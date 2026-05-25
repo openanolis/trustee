@@ -10,11 +10,8 @@ use eventlog_rs::{BiosEventlog, Eventlog};
 use log::{debug, info};
 use openssl::bn::{BigNum, BigNumContext};
 use openssl::ec::{EcGroup, EcKey, EcPoint};
-use openssl::ecdsa::EcdsaSig;
-use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
 use openssl::pkey::PKey;
-use openssl::sign::Verifier as OpenSslVerifier;
 use openssl::x509::X509;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -94,7 +91,7 @@ fn create_sm2_pkey(ak_pubkey: &HygonSm2PublicKey) -> Result<PKey<openssl::pkey::
     Ok(PKey::from_ec_key(ec_key)?)
 }
 
-fn signature_to_der(sig_b64: &str) -> Result<Vec<u8>> {
+fn extract_sm2_signature_components(sig_b64: &str) -> Result<(BigNum, BigNum)> {
     let sig_bytes = base64::engine::general_purpose::STANDARD.decode(sig_b64)?;
     let signature = Signature::unmarshall(&sig_bytes)?;
     let Signature::Sm2(sm2_sig) = signature else {
@@ -103,8 +100,7 @@ fn signature_to_der(sig_b64: &str) -> Result<Vec<u8>> {
 
     let r = BigNum::from_slice(sm2_sig.signature_r().value())?;
     let s = BigNum::from_slice(sm2_sig.signature_s().value())?;
-    let sig = EcdsaSig::from_private_components(r, s)?;
-    Ok(sig.to_der()?)
+    Ok((r, s))
 }
 
 async fn verify_registrar_binding(evidence: &HygonTpmEvidence, uuid: &str) -> Result<()> {
@@ -420,17 +416,52 @@ fn parse_measurements_from_event(
 
 impl HygonTpmQuote {
     fn verify_signature(&self, ak_pubkey: &HygonSm2PublicKey) -> Result<()> {
-        let pkey = create_sm2_pkey(ak_pubkey)?;
-        let signature_der = signature_to_der(&self.attest_sig)?;
+        let (sig_r, sig_s) = extract_sm2_signature_components(&self.attest_sig)?;
         let attest_body = base64::engine::general_purpose::STANDARD.decode(&self.attest_body)?;
 
-        // Reuse OpenSSL's current SM2-capable verification path that works with
-        // the crate version in this workspace. If real hardware shows a different
-        // distinguishing-ID requirement, we can narrow it on-device without
-        // changing the evidence schema or policy surface.
-        let mut verifier = OpenSslVerifier::new(MessageDigest::sm3(), &pkey)?;
-        verifier.update(&attest_body)?;
-        if !verifier.verify(&signature_der)? {
+        // TPM2 SM2 quotes sign SM3(attest_body) directly per the TPM2 spec —
+        // there is no GB/T 32918 ZA pre-processing. OpenSSL's EVP_DigestVerify
+        // path either applies ZA (digest mismatch) or, on a plain EC PKey,
+        // dispatches to ECDSA verify (wrong algorithm). Run the SM2 verify
+        // equation (GB/T 32918.2 §7.1) directly against e = SM3(attest_body).
+        let mut hasher = Sm3::new();
+        hasher.update(&attest_body);
+        let e_bytes = hasher.finalize();
+        let e = BigNum::from_slice(&e_bytes)?;
+
+        let nid = Nid::from_raw(openssl_sys::NID_sm2);
+        let group = EcGroup::from_curve_name(nid)?;
+        let mut ctx = BigNumContext::new()?;
+        let mut order = BigNum::new()?;
+        group.order(&mut order, &mut ctx)?;
+
+        let one = BigNum::from_u32(1)?;
+        if sig_r < one || sig_r >= order || sig_s < one || sig_s >= order {
+            bail!("Verify Hygon TPM quote signature failed");
+        }
+
+        let mut t = BigNum::new()?;
+        t.mod_add(&sig_r, &sig_s, &order, &mut ctx)?;
+        if t.num_bits() == 0 {
+            bail!("Verify Hygon TPM quote signature failed");
+        }
+
+        let bx = BigNum::from_hex_str(&ak_pubkey.x)?;
+        let by = BigNum::from_hex_str(&ak_pubkey.y)?;
+        let mut q = EcPoint::new(&group)?;
+        q.set_affine_coordinates_gfp(&group, &bx, &by, &mut ctx)?;
+
+        let mut p = EcPoint::new(&group)?;
+        p.mul_full(&group, &sig_s, &q, &t, &mut ctx)?;
+
+        let mut x1 = BigNum::new()?;
+        let mut y1 = BigNum::new()?;
+        p.affine_coordinates_gfp(&group, &mut x1, &mut y1, &mut ctx)?;
+
+        let mut r_check = BigNum::new()?;
+        r_check.mod_add(&e, &x1, &order, &mut ctx)?;
+
+        if r_check != sig_r {
             bail!("Verify Hygon TPM quote signature failed");
         }
 
