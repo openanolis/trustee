@@ -210,13 +210,44 @@ This is also called "Repository" in old versions. The properties to be configure
 
 | Property | Type   | Description                                                                   | Required | Default   |
 |----------|--------|-------------------------------------------------------------------------------|----------|-----------|
-| `type`   | String | The resource repository type. Valid values: `LocalFs`, `Aliyun`, `ExternalKms` | Yes      | `LocalFs` |
+| `type`   | String | The resource repository type. Valid values: `LocalFs`, `EncryptedLocalFs`, `Aliyun`, `ExternalKms` | Yes      | `LocalFs` |
 
 **`LocalFs` Properties**
 
 | Property   | Type   | Description                     | Required | Default                                             |
 |------------|--------|---------------------------------|----------|-----------------------------------------------------|
 | `dir_path` | String | Path to a repository directory. | No       | `/opt/confidential-containers/kbs/repository`       |
+
+**`EncryptedLocalFs` Properties**
+
+The `EncryptedLocalFs` backend stores resources on the local filesystem as
+RSA + AES-256-GCM encrypted envelopes and transparently decrypts them on read.
+It is guarded by the Cargo feature `encrypted-local-fs`. See
+[Resource Storage Backend](./resource_storage_backend.md#encrypted-local-file-system-backend)
+for the envelope format, and
+[Encrypted Local FS Key Rotation](./encrypted_local_fs_key_rotation.md) for the
+rotation procedure.
+
+| Property            | Type           | Description                                                                                                                                  | Required | Default                                             |
+|---------------------|----------------|----------------------------------------------------------------------------------------------------------------------------------------------|----------|-----------------------------------------------------|
+| `dir_path`          | String         | Path to a repository directory.                                                                                                              | No       | `/opt/confidential-containers/kbs/repository`       |
+| `private_key_path`  | String         | Primary RSA private key (PEM, PKCS#8 or PKCS#1). Tried first when decrypting, and used as the target when re-wrapping resources.             | No\*     | None                                                |
+| `private_key_dir`   | String         | Directory of additional RSA private keys (`*.pem`), retained so resources encrypted with previous keys still decrypt after a rotation.       | No\*     | None                                                |
+| `private_key_paths` | Array\<String> | Additional RSA private keys given as explicit paths (alternative to `private_key_dir`). Tried after the primary and the directory keys.       | No\*     | `[]`                                                |
+
+\* At least one key must be provided through `private_key_path`,
+`private_key_dir`, or `private_key_paths`, otherwise KBS fails to start.
+
+The decryption key ring can be rotated at runtime without a restart through two
+admin-authenticated endpoints:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/kbs/v0/resource/reload` | POST | Re-read the configured keys (primary file, `private_key_dir`, `private_key_paths`) and swap the key ring atomically. Returns `{ "reloaded_keys": <n> }`. |
+| `/kbs/v0/resource/rewrap` | POST | Re-wrap every stored resource's CEK onto the current primary key, so a rotated-out key can be retired. Returns `{ "total", "rewrapped", "skipped", "failed" }`. |
+
+See [EncryptedLocalFs Key Rotation](./encrypted_local_fs_key_rotation.md) for the
+full procedure.
 
 **`Aliyun` Properties**
 

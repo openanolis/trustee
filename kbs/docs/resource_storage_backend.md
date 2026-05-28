@@ -24,9 +24,12 @@ as well, and the default value is `/opt/confidential-containers/kbs/repository`.
 ### Encrypted Local File System Backend
 
 The encrypted local backend (`EncryptedLocalFs`) keeps resources on the local
-filesystem. Reads attempt to decrypt with a configured RSA private key; if the
+filesystem. Reads attempt to decrypt with the configured RSA private key ring
+(one or more keys); the first key able to decrypt a resource is used. If the
 payload is not in the expected encrypted format, it is returned as-is
-(plaintext passthrough).
+(plaintext passthrough). If the payload *is* an encrypted envelope but none of
+the configured keys can decrypt it, the read fails (the ciphertext is never
+returned as plaintext).
 
 **Payload format (JSON, Base64 fields)**
 ```
@@ -62,6 +65,43 @@ type = "EncryptedLocalFs"
 dir_path = "/opt/confidential-containers/kbs/repository"
 private_key_path = "/etc/kbs/resource-private.pem"
 ```
+
+**Key rotation**
+
+Because the CEK is wrapped with an RSA public key, decryption requires the
+matching private key. `EncryptedLocalFs` is built so a key can be rotated with
+**no downtime, no manual file migration, and no config edits**, driven entirely
+through the admin API:
+
+- **Key ring.** KBS holds multiple decryption keys. `private_key_path` is the
+  *primary* key (tried first, and the target of re-wrapping). `private_key_dir`
+  is a directory of additional `*.pem` keys, and `private_key_paths` lists extra
+  keys by path. On read each key is tried in turn, so resources encrypted with
+  an old key keep working while a new key is in use.
+- **Hot reload.** `POST /kbs/v0/resource/reload` (admin authenticated) re-reads
+  the primary key file, re-scans `private_key_dir`, and re-reads
+  `private_key_paths`, swapping the key ring atomically without a restart.
+- **Server-side re-wrap.** `POST /kbs/v0/resource/rewrap` (admin authenticated)
+  walks every stored resource and re-wraps its CEK to the **primary** key's
+  public key (derived from the primary private key). Only the `enc_key`/`alg`
+  envelope fields change; the AES-256-GCM ciphertext is untouched. Resources
+  already on the primary key, and plaintext resources, are skipped. The response
+  is a JSON report `{ "total", "rewrapped", "skipped", "failed" }`.
+
+```
+[[plugins]]
+name = "resource"
+type = "EncryptedLocalFs"
+dir_path = "/opt/confidential-containers/kbs/repository"
+private_key_path = "/etc/kbs/resource-keys/primary.pem"   # primary key (rewrap target, tried first)
+private_key_dir  = "/etc/kbs/resource-keys/archive"       # retired keys kept for decryption
+```
+
+At least one key must be configured (via any of the three options). For the full
+step-by-step rotation procedure, see
+[EncryptedLocalFs Key Rotation](./encrypted_local_fs_key_rotation.md).
+`kbs/sdk/python/reencrypt_resource.py` remains available for out-of-band
+migration when the repository is not writable by KBS.
 
 ### Aliyun KMS
 
