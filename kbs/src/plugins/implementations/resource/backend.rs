@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use anyhow::{bail, Context, Error, Result};
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 #[cfg(feature = "encrypted-local-fs")]
@@ -29,6 +29,34 @@ pub trait StorageBackend: Send + Sync {
 
     /// List secret resources from repository
     async fn list_secret_resources(&self) -> Result<Vec<ResourceDesc>>;
+
+    /// Reload key material from the backend's configured source without a
+    /// restart. Returns the number of keys now active. Backends that do not
+    /// manage keys return an error.
+    async fn reload_keys(&self) -> Result<usize> {
+        bail!("this storage backend does not support key reload")
+    }
+
+    /// Re-wrap all encrypted resources onto the backend's current primary key,
+    /// so that a rotated-out key can be retired. Backends that do not encrypt
+    /// resources return an error.
+    async fn rewrap_resources(&self) -> Result<RewrapReport> {
+        bail!("this storage backend does not support resource re-wrapping")
+    }
+}
+
+/// Outcome of a re-wrap (key rotation migration) pass over the repository.
+#[derive(Debug, Default, Serialize)]
+pub struct RewrapReport {
+    /// Total number of resources scanned.
+    pub total: usize,
+    /// Resources re-wrapped onto the primary key.
+    pub rewrapped: usize,
+    /// Resources left untouched (plaintext, or already on the primary key).
+    pub skipped: usize,
+    /// Resources that could not be re-wrapped (e.g. no configured key decrypts
+    /// them).
+    pub failed: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -158,6 +186,14 @@ impl ResourceStorage {
 
     pub(crate) async fn list_secret_resources(&self) -> Result<Vec<ResourceDesc>> {
         self.backend.list_secret_resources().await
+    }
+
+    pub(crate) async fn reload_keys(&self) -> Result<usize> {
+        self.backend.reload_keys().await
+    }
+
+    pub(crate) async fn rewrap_resources(&self) -> Result<RewrapReport> {
+        self.backend.rewrap_resources().await
     }
 }
 
