@@ -33,6 +33,18 @@ impl ClientPlugin for ResourceStorage {
             .strip_prefix('/')
             .context("accessed path is illegal, should start with `/`")?;
         match method.as_str() {
+            // Reserved single-segment maintenance paths (admin authenticated, as
+            // all POSTs to this plugin are). They cannot collide with a resource
+            // URI, which always has three segments.
+            "POST" if resource_desc == "reload" => {
+                let count = self.reload_keys().await?;
+                serde_json::to_vec(&serde_json::json!({ "reloaded_keys": count }))
+                    .context("serialize reload response")
+            }
+            "POST" if resource_desc == "rewrap" => {
+                let report = self.rewrap_resources().await?;
+                serde_json::to_vec(&report).context("serialize rewrap report")
+            }
             "POST" => {
                 let resource_description = ResourceDesc::try_from(resource_desc)?;
                 self.set_secret_resource(resource_description, body).await?;
