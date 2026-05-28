@@ -228,23 +228,32 @@ for the envelope format, and
 [Encrypted Local FS Key Rotation](./encrypted_local_fs_key_rotation.md) for the
 rotation procedure.
 
+By default KBS manages the keys itself (no key configuration needed): it
+generates a key pair into `key_dir` on first start and rotates keys via the
+`rotate` API. Alternatively, bring your own keys with `private_key_path` /
+`private_key_dir` / `private_key_paths`.
+
 | Property            | Type           | Description                                                                                                                                  | Required | Default                                             |
 |---------------------|----------------|----------------------------------------------------------------------------------------------------------------------------------------------|----------|-----------------------------------------------------|
 | `dir_path`          | String         | Path to a repository directory.                                                                                                              | No       | `/opt/confidential-containers/kbs/repository`       |
-| `private_key_path`  | String         | Primary RSA private key (PEM, PKCS#8 or PKCS#1). Tried first when decrypting, and used as the target when re-wrapping resources.             | No\*     | None                                                |
-| `private_key_dir`   | String         | Directory of additional RSA private keys (`*.pem`), retained so resources encrypted with previous keys still decrypt after a rotation.       | No\*     | None                                                |
-| `private_key_paths` | Array\<String> | Additional RSA private keys given as explicit paths (alternative to `private_key_dir`). Tried after the primary and the directory keys.       | No\*     | `[]`                                                |
+| `key_dir`           | String         | KBS-managed key store directory. KBS generates and rotates RSA keys here itself. Active when set, or when no other key is configured.        | No       | `/opt/confidential-containers/kbs/resource-keys` (when managed) |
+| `private_key_path`  | String         | Bring-your-own primary RSA private key (PEM, PKCS#8 or PKCS#1). Primary / re-wrap target when no managed key store is in effect.             | No\*     | None                                                |
+| `private_key_dir`   | String         | Bring-your-own directory of additional RSA private keys (`*.pem`), retained for decryption so previously encrypted resources still decrypt.   | No\*     | None                                                |
+| `private_key_paths` | Array\<String> | Additional bring-your-own RSA private keys given as explicit paths.                                                                          | No\*     | `[]`                                                |
 
-\* At least one key must be provided through `private_key_path`,
-`private_key_dir`, or `private_key_paths`, otherwise KBS fails to start.
+\* If none of `key_dir` / `private_key_path` / `private_key_dir` /
+`private_key_paths` is set, KBS runs in managed mode at the default `key_dir`
+and generates a key pair on first start.
 
-The decryption key ring can be rotated at runtime without a restart through two
-admin-authenticated endpoints:
+Keys can be rotated at runtime, without a restart, through admin-authenticated
+endpoints:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/kbs/v0/resource/reload` | POST | Re-read the configured keys (primary file, `private_key_dir`, `private_key_paths`) and swap the key ring atomically. Returns `{ "reloaded_keys": <n> }`. |
-| `/kbs/v0/resource/rewrap` | POST | Re-wrap every stored resource's CEK onto the current primary key, so a rotated-out key can be retired. Returns `{ "total", "rewrapped", "skipped", "failed" }`. |
+| `/kbs/v0/resource/rotate` | POST | **Managed keys, one-shot.** Generate a new key pair, re-wrap all resources onto it, and retire the old key. Returns `{ "public_key", "rewrapped", "skipped", "failed", "retired_keys" }`. |
+| `/kbs/v0/resource/pubkey` | GET  | Return the current primary public key (PEM) for clients to encrypt with. |
+| `/kbs/v0/resource/reload` | POST | Re-read the configured keys and swap the key ring atomically. Returns `{ "reloaded_keys": <n> }`. |
+| `/kbs/v0/resource/rewrap` | POST | Re-wrap every resource's CEK onto the current primary key (no new key generated). Returns `{ "total", "rewrapped", "skipped", "failed" }`. |
 
 See [EncryptedLocalFs Key Rotation](./encrypted_local_fs_key_rotation.md) for the
 full procedure.
