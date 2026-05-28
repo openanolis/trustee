@@ -56,49 +56,66 @@ returned as plaintext).
 This backend is guarded by the Cargo feature `encrypted-local-fs`. Enable it
 when building KBS to use this backend.
 
-Config example:
+**Key management: KBS-managed (default) or bring-your-own**
+
+By default KBS manages the RSA keys itself, so operators never have to generate
+keys or edit config to rotate them:
+
+- On first start KBS generates an RSA key pair into the managed key store
+  (`key_dir`, default `/opt/confidential-containers/kbs/resource-keys`).
+- Clients fetch the current public key from `GET /kbs/v0/resource/pubkey` and
+  encrypt resources with it.
+- A single `POST /kbs/v0/resource/rotate` performs the entire rotation
+  server-side (see below).
 
 ```
 [[plugins]]
 name = "resource"
 type = "EncryptedLocalFs"
 dir_path = "/opt/confidential-containers/kbs/repository"
-private_key_path = "/etc/kbs/resource-private.pem"
+# key_dir defaults to /opt/confidential-containers/kbs/resource-keys; set it to override.
 ```
 
-**Key rotation**
+Alternatively, bring your own keys: set `private_key_path` (primary / re-wrap
+target), and optionally `private_key_dir` / `private_key_paths` for additional
+decryption keys. Bring-your-own keys can also coexist with a managed `key_dir`
+as decrypt-only sources (useful when migrating to managed keys).
+
+```
+[[plugins]]
+name = "resource"
+type = "EncryptedLocalFs"
+dir_path = "/opt/confidential-containers/kbs/repository"
+private_key_path = "/etc/kbs/resource-keys/primary.pem"
+private_key_dir  = "/etc/kbs/resource-keys/archive"
+```
+
+**Key rotation (admin API)**
 
 Because the CEK is wrapped with an RSA public key, decryption requires the
-matching private key. `EncryptedLocalFs` is built so a key can be rotated with
-**no downtime, no manual file migration, and no config edits**, driven entirely
-through the admin API:
+matching private key. KBS holds a *ring* of decryption keys (the newest managed
+key, or the bring-your-own primary, is tried first and is the re-wrap target),
+so resources encrypted with an old key keep working while a new key is adopted.
+Rotation runs with **no downtime, no manual file migration, and no config
+edits**, through admin-authenticated endpoints:
 
-- **Key ring.** KBS holds multiple decryption keys. `private_key_path` is the
-  *primary* key (tried first, and the target of re-wrapping). `private_key_dir`
-  is a directory of additional `*.pem` keys, and `private_key_paths` lists extra
-  keys by path. On read each key is tried in turn, so resources encrypted with
-  an old key keep working while a new key is in use.
-- **Hot reload.** `POST /kbs/v0/resource/reload` (admin authenticated) re-reads
-  the primary key file, re-scans `private_key_dir`, and re-reads
-  `private_key_paths`, swapping the key ring atomically without a restart.
-- **Server-side re-wrap.** `POST /kbs/v0/resource/rewrap` (admin authenticated)
-  walks every stored resource and re-wraps its CEK to the **primary** key's
-  public key (derived from the primary private key). Only the `enc_key`/`alg`
-  envelope fields change; the AES-256-GCM ciphertext is untouched. Resources
-  already on the primary key, and plaintext resources, are skipped. The response
-  is a JSON report `{ "total", "rewrapped", "skipped", "failed" }`.
+- **One-shot rotate (managed keys).** `POST /kbs/v0/resource/rotate` generates a
+  new key pair, re-wraps every resource onto it, and retires the old key — all
+  server-side in one call. Returns `{ "public_key", "rewrapped", "skipped",
+  "failed", "retired_keys" }`. If any resource fails to re-wrap, the old key is
+  *kept* (not retired) so it stays decryptable. After rotation, read the new key
+  from `GET /kbs/v0/resource/pubkey`.
+- **Get public key.** `GET /kbs/v0/resource/pubkey` returns the current primary
+  public key (PEM), for clients to encrypt with.
+- **Hot reload.** `POST /kbs/v0/resource/reload` re-reads the configured keys
+  (`key_dir`, `private_key_path`, `private_key_dir`, `private_key_paths`) and
+  swaps the ring atomically without a restart.
+- **Server-side re-wrap.** `POST /kbs/v0/resource/rewrap` re-wraps every resource
+  onto the current primary key without generating a new one. Only the
+  `enc_key`/`alg` envelope fields change; the AES-256-GCM ciphertext is
+  untouched. Useful for bring-your-own-key rotations.
 
-```
-[[plugins]]
-name = "resource"
-type = "EncryptedLocalFs"
-dir_path = "/opt/confidential-containers/kbs/repository"
-private_key_path = "/etc/kbs/resource-keys/primary.pem"   # primary key (rewrap target, tried first)
-private_key_dir  = "/etc/kbs/resource-keys/archive"       # retired keys kept for decryption
-```
-
-At least one key must be configured (via any of the three options). For the full
-step-by-step rotation procedure, see
+For the full step-by-step procedures, see
 [EncryptedLocalFs Key Rotation](./encrypted_local_fs_key_rotation.md).
 `kbs/sdk/python/reencrypt_resource.py` remains available for out-of-band
 migration when the repository is not writable by KBS.
