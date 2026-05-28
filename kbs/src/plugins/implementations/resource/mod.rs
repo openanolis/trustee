@@ -45,10 +45,22 @@ impl ClientPlugin for ResourceStorage {
                 let report = self.rewrap_resources().await?;
                 serde_json::to_vec(&report).context("serialize rewrap report")
             }
+            // One-shot key rotation: generate a new key, re-wrap all resources,
+            // retire the old keys, and return the new public key.
+            "POST" if resource_desc == "rotate" => {
+                let report = self.rotate_keys().await?;
+                serde_json::to_vec(&report).context("serialize rotate report")
+            }
             "POST" => {
                 let resource_description = ResourceDesc::try_from(resource_desc)?;
                 self.set_secret_resource(resource_description, body).await?;
                 Ok(vec![])
+            }
+            // Return the current primary public key (PEM) for clients to encrypt
+            // with. Admin authenticated (see `validate_auth`).
+            "GET" if resource_desc == "pubkey" => {
+                let pem = self.current_public_key_pem().await?;
+                Ok(pem.into_bytes())
             }
             "GET" => {
                 // Check if this is a list request based on path pattern
@@ -77,10 +89,15 @@ impl ClientPlugin for ResourceStorage {
         &self,
         _body: &[u8],
         _query: &str,
-        _path: &str,
+        path: &str,
         method: &Method,
     ) -> Result<bool> {
+        // Mutating operations and the admin-only public-key read require admin
+        // auth. Resource reads (other GETs) are gated by attestation instead.
         if method.as_str() == "POST" || method.as_str() == "DELETE" {
+            return Ok(true);
+        }
+        if method.as_str() == "GET" && path == "/pubkey" {
             return Ok(true);
         }
 

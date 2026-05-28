@@ -43,6 +43,19 @@ pub trait StorageBackend: Send + Sync {
     async fn rewrap_resources(&self) -> Result<RewrapReport> {
         bail!("this storage backend does not support resource re-wrapping")
     }
+
+    /// Return the backend's current primary public key, PEM-encoded, for clients
+    /// that encrypt resources. Backends that do not manage keys return an error.
+    async fn current_public_key_pem(&self) -> Result<String> {
+        bail!("this storage backend does not expose a public key")
+    }
+
+    /// Rotate keys in one shot: generate a new key pair, re-wrap all resources
+    /// onto it, and retire the old keys. Backends that do not self-manage keys
+    /// return an error.
+    async fn rotate_keys(&self) -> Result<RotateReport> {
+        bail!("this storage backend does not support key rotation")
+    }
 }
 
 /// Outcome of a re-wrap (key rotation migration) pass over the repository.
@@ -57,6 +70,22 @@ pub struct RewrapReport {
     /// Resources that could not be re-wrapped (e.g. no configured key decrypts
     /// them).
     pub failed: usize,
+}
+
+/// Outcome of a one-shot `rotate` operation.
+#[derive(Debug, Default, Serialize)]
+pub struct RotateReport {
+    /// The new primary public key (PEM), ready for clients to encrypt with.
+    pub public_key: String,
+    /// Resources re-wrapped onto the new key.
+    pub rewrapped: usize,
+    /// Resources left untouched (plaintext, or already on the new key).
+    pub skipped: usize,
+    /// Resources that could not be re-wrapped; when non-zero the old keys are
+    /// kept (not retired) so those resources stay decryptable.
+    pub failed: usize,
+    /// Number of old managed keys retired after a clean migration.
+    pub retired_keys: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -194,6 +223,14 @@ impl ResourceStorage {
 
     pub(crate) async fn rewrap_resources(&self) -> Result<RewrapReport> {
         self.backend.rewrap_resources().await
+    }
+
+    pub(crate) async fn current_public_key_pem(&self) -> Result<String> {
+        self.backend.current_public_key_pem().await
+    }
+
+    pub(crate) async fn rotate_keys(&self) -> Result<RotateReport> {
+        self.backend.rotate_keys().await
     }
 }
 

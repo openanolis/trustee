@@ -4,7 +4,7 @@
 
 use super::{
     local_fs::{LocalFs, LocalFsRepoDesc},
-    ResourceDesc, RewrapReport, StorageBackend,
+    ResourceDesc, RewrapReport, RotateReport, StorageBackend,
 };
 use aes_gcm::{
     aead::{generic_array::GenericArray, AeadInPlace, KeyInit},
@@ -12,6 +12,7 @@ use aes_gcm::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use rsa::pkcs8::{EncodePublicKey, LineEnding};
 use rsa::sha2::Sha256;
 use rsa::{
     pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey, Oaep, Pkcs1v15Encrypt, RsaPrivateKey,
@@ -20,14 +21,26 @@ use rsa::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const ALG_RSA1_5: &str = "RSA1_5";
 const ALG_RSA_OAEP_256: &str = "RSA-OAEP-256";
 const AES_GCM_KEY_LEN: usize = 32;
 const AES_GCM_TAG_LEN: usize = 16;
 const AES_GCM_NONCE_LEN: usize = 12;
+
+/// Bit size of RSA key pairs generated and managed by KBS itself.
+const RSA_KEY_BITS: u32 = 3072;
+/// Default directory for the KBS-managed key store, used when the backend is
+/// enabled without any key configuration at all.
+const DEFAULT_MANAGED_KEY_DIR: &str = "/opt/confidential-containers/kbs/resource-keys";
+/// Filename prefix for KBS-managed keys: `mkey-<unix_nanos>.pem`. The numeric
+/// suffix orders generations, so the newest file is the current primary key.
+const MANAGED_KEY_PREFIX: &str = "mkey-";
+const MANAGED_KEY_EXT: &str = "pem";
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 struct Envelope {
@@ -47,20 +60,25 @@ struct Envelope {
 pub struct EncryptedLocalFsRepoDesc {
     #[serde(default)]
     pub dir_path: String,
-    /// Primary (current) RSA private key. Tried first when decrypting, and used
-    /// as the target key when re-wrapping resources. Its file is read fresh on
-    /// every key reload, so rotating the primary key is just a matter of
-    /// replacing this file and reloading.
+    /// Directory of the KBS-managed key store. When set (or when no key is
+    /// configured at all, in which case a default location is used), KBS owns
+    /// the RSA key pairs here: it generates one on first start, picks the newest
+    /// as the primary, and rotates them via the `rotate` API. Operators never
+    /// have to generate keys or edit config to rotate.
+    #[serde(default)]
+    pub key_dir: String,
+    /// Bring-your-own primary RSA private key. Used as the primary (re-wrap
+    /// target) only when no managed key store is in effect. Tried first when
+    /// decrypting in that case.
     #[serde(default)]
     pub private_key_path: String,
-    /// A directory of additional RSA private keys (`*.pem`). All keys found here
-    /// are kept available for decryption, so resources encrypted with a previous
-    /// key keep working during a rotation. Dropping a retired key into this
-    /// directory (and reloading) needs no config change or restart.
+    /// Bring-your-own directory of additional RSA private keys (`*.pem`), kept
+    /// available for decryption so resources encrypted with a previous key keep
+    /// working. Also serves as a decrypt-only source when migrating to a managed
+    /// key store.
     #[serde(default)]
     pub private_key_dir: String,
-    /// Additional RSA private keys given as explicit paths. Equivalent to
-    /// `private_key_dir` but for keys that live outside a single directory.
+    /// Additional bring-your-own RSA private keys given as explicit paths.
     #[serde(default)]
     pub private_key_paths: Vec<String>,
 }
@@ -68,9 +86,20 @@ pub struct EncryptedLocalFsRepoDesc {
 /// The set of places keys are loaded from. Held so the key ring can be rebuilt
 /// on a hot reload without re-reading the whole KBS config.
 struct KeySources {
+    /// KBS-managed key store directory. Empty in bring-your-own-key mode.
+    key_dir: String,
+    /// Bring-your-own primary key path. Empty in managed mode.
     primary_path: String,
-    dir: String,
+    /// Bring-your-own additional key directory.
+    byok_dir: String,
+    /// Bring-your-own additional key paths.
     extra_paths: Vec<String>,
+}
+
+impl KeySources {
+    fn managed(&self) -> bool {
+        !self.key_dir.is_empty()
+    }
 }
 
 /// A loaded, immutable snapshot of the decryption keys. Swapped atomically on
@@ -147,15 +176,78 @@ impl StorageBackend for EncryptedLocalFs {
         }
         Ok(report)
     }
+
+    async fn current_public_key_pem(&self) -> Result<String> {
+        let ring = self.ring_snapshot();
+        let public = ring
+            .primary_public
+            .clone()
+            .ok_or_else(|| anyhow!("no primary key available to export a public key"))?;
+        public
+            .to_public_key_pem(LineEnding::LF)
+            .context("encode primary public key as PEM")
+    }
+
+    async fn rotate_keys(&self) -> Result<RotateReport> {
+        if !self.sources.managed() {
+            bail!("key rotation requires a KBS-managed key store; set `key_dir` (or enable the backend with no bring-your-own key)");
+        }
+
+        // 1. Generate a new key pair; being the newest, it becomes the primary.
+        let new_key = Self::generate_managed_key(&self.sources.key_dir)?;
+        // 2. Reload so the new key is primary while old keys stay for decryption.
+        self.reload_keys().await?;
+        // 3. Re-wrap every resource onto the new primary key.
+        let rewrap = self.rewrap_resources().await?;
+        // 4. Retire the old managed keys, but only if everything migrated; if any
+        //    resource failed, keep the old keys so it stays decryptable.
+        let mut retired = 0;
+        if rewrap.failed == 0 {
+            retired = Self::retire_managed_keys_except(&self.sources.key_dir, &new_key)?;
+            self.reload_keys().await?;
+        }
+        let public_key = self.current_public_key_pem().await?;
+
+        Ok(RotateReport {
+            public_key,
+            rewrapped: rewrap.rewrapped,
+            skipped: rewrap.skipped,
+            failed: rewrap.failed,
+            retired_keys: retired,
+        })
+    }
 }
 
 impl EncryptedLocalFs {
     pub fn new(desc: &EncryptedLocalFsRepoDesc) -> Result<Self> {
+        let byok_empty = desc.private_key_path.is_empty()
+            && desc.private_key_dir.is_empty()
+            && desc.private_key_paths.is_empty();
+
+        // Managed mode is active when `key_dir` is set, or when no key is
+        // configured at all (then KBS manages keys at the default location).
+        let key_dir = if !desc.key_dir.is_empty() {
+            desc.key_dir.clone()
+        } else if byok_empty {
+            DEFAULT_MANAGED_KEY_DIR.to_string()
+        } else {
+            String::new()
+        };
+
         let sources = KeySources {
+            key_dir,
             primary_path: desc.private_key_path.clone(),
-            dir: desc.private_key_dir.clone(),
+            byok_dir: desc.private_key_dir.clone(),
             extra_paths: desc.private_key_paths.clone(),
         };
+
+        // In managed mode, generate the initial key pair on first start.
+        if sources.managed() {
+            Self::ensure_key_dir(&sources.key_dir)?;
+            if Self::scan_managed_keys(&sources.key_dir)?.is_empty() {
+                Self::generate_managed_key(&sources.key_dir)?;
+            }
+        }
 
         let ring = Self::load_ring(&sources)?;
 
@@ -174,8 +266,9 @@ impl EncryptedLocalFs {
     }
 
     /// Build the key ring from the configured sources. The primary key is first
-    /// (so it is tried first and is the re-wrap target), followed by the keys
-    /// from `private_key_dir` and `private_key_paths`. Duplicate files are
+    /// (tried first and the re-wrap target): the newest managed key in managed
+    /// mode, otherwise the bring-your-own `private_key_path`. Remaining managed
+    /// and bring-your-own keys follow, for decryption only. Duplicate files are
     /// loaded once.
     fn load_ring(sources: &KeySources) -> Result<KeyRing> {
         let mut ordered_paths: Vec<String> = Vec::new();
@@ -190,9 +283,21 @@ impl EncryptedLocalFs {
             }
         };
 
+        // Managed keys first, newest (current primary) at the front.
+        let managed = if sources.managed() {
+            Self::scan_managed_keys(&sources.key_dir)?
+        } else {
+            Vec::new()
+        };
+        let has_managed = !managed.is_empty();
+        for path in &managed {
+            push(path, &mut ordered_paths);
+        }
+
+        // Bring-your-own keys (primary, then dir, then explicit paths).
         push(&sources.primary_path, &mut ordered_paths);
-        if !sources.dir.is_empty() {
-            for path in Self::scan_key_dir(&sources.dir)? {
+        if !sources.byok_dir.is_empty() {
+            for path in Self::scan_pem_dir(&sources.byok_dir)? {
                 push(&path, &mut ordered_paths);
             }
         }
@@ -202,7 +307,7 @@ impl EncryptedLocalFs {
 
         if ordered_paths.is_empty() {
             bail!(
-                "at least one of `private_key_path`, `private_key_dir`, or `private_key_paths` is required for encrypted local fs backend"
+                "no keys available: set `key_dir` for KBS-managed keys, or a `private_key_path` / `private_key_dir` / `private_key_paths`"
             );
         }
 
@@ -211,12 +316,13 @@ impl EncryptedLocalFs {
             .map(|p| Self::load_private_key(p))
             .collect::<Result<Vec<_>>>()?;
 
-        // The primary public key (re-wrap target) is the public part of the
-        // primary private key, which is `keys[0]` iff a primary path is set.
-        let primary_public = if sources.primary_path.is_empty() {
-            None
-        } else {
+        // The primary public key (re-wrap / rotate target) is the public part of
+        // `keys[0]`, which is the newest managed key, or the bring-your-own
+        // primary. It is `None` only when neither exists (decrypt-only keys).
+        let primary_public = if has_managed || !sources.primary_path.is_empty() {
             Some(keys[0].to_public_key())
+        } else {
+            None
         };
 
         Ok(KeyRing {
@@ -225,21 +331,96 @@ impl EncryptedLocalFs {
         })
     }
 
-    /// Return the `*.pem` files in a key directory, sorted for a deterministic
-    /// load order.
-    fn scan_key_dir(dir: &str) -> Result<Vec<String>> {
+    /// Return the `*.pem` files in a directory, name-sorted for determinism.
+    fn scan_pem_dir(dir: &str) -> Result<Vec<String>> {
         let mut paths = Vec::new();
         let entries = fs::read_dir(dir).with_context(|| format!("read private key dir `{dir}`"))?;
         for entry in entries {
             let path = entry
                 .with_context(|| format!("read entry in `{dir}`"))?
                 .path();
-            if path.extension().and_then(|e| e.to_str()) == Some("pem") && path.is_file() {
+            if path.extension().and_then(|e| e.to_str()) == Some(MANAGED_KEY_EXT) && path.is_file()
+            {
                 paths.push(path.to_string_lossy().into_owned());
             }
         }
         paths.sort();
         Ok(paths)
+    }
+
+    /// Managed key files (`mkey-<nanos>.pem`) in the store, sorted newest-first
+    /// by the embedded generation timestamp.
+    fn scan_managed_keys(dir: &str) -> Result<Vec<String>> {
+        let mut keys: Vec<(u128, String)> = Vec::new();
+        let entries = fs::read_dir(dir).with_context(|| format!("read managed key dir `{dir}`"))?;
+        for entry in entries {
+            let path = entry
+                .with_context(|| format!("read entry in `{dir}`"))?
+                .path();
+            if !path.is_file() {
+                continue;
+            }
+            if let Some(nanos) = Self::managed_key_generation(&path) {
+                keys.push((nanos, path.to_string_lossy().into_owned()));
+            }
+        }
+        // Newest first.
+        keys.sort_by(|a, b| b.0.cmp(&a.0));
+        Ok(keys.into_iter().map(|(_, p)| p).collect())
+    }
+
+    /// Parse the generation timestamp out of a managed key filename, or `None`
+    /// if the file is not a managed key.
+    fn managed_key_generation(path: &Path) -> Option<u128> {
+        let name = path.file_name()?.to_str()?;
+        let rest = name.strip_prefix(MANAGED_KEY_PREFIX)?;
+        let stem = rest.strip_suffix(&format!(".{MANAGED_KEY_EXT}"))?;
+        stem.parse::<u128>().ok()
+    }
+
+    /// Create the managed key directory (private, `0700`) if it does not exist.
+    fn ensure_key_dir(dir: &str) -> Result<()> {
+        if !Path::new(dir).exists() {
+            fs::create_dir_all(dir).with_context(|| format!("create managed key dir `{dir}`"))?;
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+                .with_context(|| format!("set permissions on `{dir}`"))?;
+        }
+        Ok(())
+    }
+
+    /// Generate a fresh RSA key pair and persist it (private, `0600`) into the
+    /// managed key directory. Returns the new key's path.
+    fn generate_managed_key(dir: &str) -> Result<PathBuf> {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock before unix epoch")?
+            .as_nanos();
+        let path = Path::new(dir).join(format!("{MANAGED_KEY_PREFIX}{nanos}.{MANAGED_KEY_EXT}"));
+
+        // openssl generates RSA keys natively (fast); the PEM is then loadable by
+        // the `rsa` crate for decryption.
+        let rsa = openssl::rsa::Rsa::generate(RSA_KEY_BITS).context("generate RSA key pair")?;
+        let pem = rsa
+            .private_key_to_pem()
+            .context("encode RSA private key PEM")?;
+        fs::write(&path, pem).with_context(|| format!("write managed key `{path:?}`"))?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("set permissions on `{path:?}`"))?;
+        Ok(path)
+    }
+
+    /// Delete every managed key except `keep`. Returns the number removed.
+    fn retire_managed_keys_except(dir: &str, keep: &Path) -> Result<usize> {
+        let keep = fs::canonicalize(keep).unwrap_or_else(|_| keep.to_path_buf());
+        let mut removed = 0;
+        for path in Self::scan_managed_keys(dir)? {
+            let canonical = fs::canonicalize(&path).unwrap_or_else(|_| PathBuf::from(&path));
+            if canonical != keep {
+                fs::remove_file(&path).with_context(|| format!("remove retired key `{path}`"))?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
     }
 
     fn ring_snapshot(&self) -> Arc<KeyRing> {
@@ -441,6 +622,7 @@ mod tests {
     use base64::Engine;
     use openssl::rsa::Rsa;
     use rand::Rng;
+    use rsa::pkcs8::DecodePublicKey;
     use rsa::sha2::Sha256;
     use rsa::{BigUint, Oaep, Pkcs1v15Encrypt, RsaPublicKey};
     use tempfile::tempdir;
@@ -475,11 +657,7 @@ mod tests {
         .expect("create encrypted local fs backend")
     }
 
-    fn encrypt_envelope(
-        rsa: &Rsa<openssl::pkey::Private>,
-        alg: &str,
-        plaintext: &[u8],
-    ) -> Envelope {
+    fn encrypt_with_pub(rsa_pub: &RsaPublicKey, alg: &str, plaintext: &[u8]) -> Envelope {
         let mut rng = rand::thread_rng();
         let cek = Aes256Gcm::generate_key(&mut rng);
         let iv: [u8; 12] = rng.gen();
@@ -491,19 +669,13 @@ mod tests {
             .encrypt_in_place_detached(nonce, b"", &mut payload)
             .expect("encrypt");
 
-        let n = BigUint::from_bytes_be(rsa.n().to_vec().as_slice());
-        let e = BigUint::from_bytes_be(rsa.e().to_vec().as_slice());
-        let rsa_pub = RsaPublicKey::new(n, e).expect("build rsa public key");
         let encrypted_key = match alg {
             ALG_RSA1_5 => rsa_pub
                 .encrypt(&mut rng, Pkcs1v15Encrypt, cek.as_slice())
                 .expect("rsa1_5 encrypt cek"),
-            ALG_RSA_OAEP_256 => {
-                let padding = Oaep::new::<Sha256>();
-                rsa_pub
-                    .encrypt(&mut rng, padding, cek.as_slice())
-                    .expect("rsa-oaep encrypt cek")
-            }
+            ALG_RSA_OAEP_256 => rsa_pub
+                .encrypt(&mut rng, Oaep::new::<Sha256>(), cek.as_slice())
+                .expect("rsa-oaep encrypt cek"),
             _ => unreachable!(),
         };
 
@@ -514,6 +686,27 @@ mod tests {
             ciphertext: STANDARD.encode(payload),
             tag: STANDARD.encode(tag),
         }
+    }
+
+    fn encrypt_envelope(
+        rsa: &Rsa<openssl::pkey::Private>,
+        alg: &str,
+        plaintext: &[u8],
+    ) -> Envelope {
+        let n = BigUint::from_bytes_be(rsa.n().to_vec().as_slice());
+        let e = BigUint::from_bytes_be(rsa.e().to_vec().as_slice());
+        let rsa_pub = RsaPublicKey::new(n, e).expect("build rsa public key");
+        encrypt_with_pub(&rsa_pub, alg, plaintext)
+    }
+
+    /// Encrypt a resource for whatever public key the backend currently exposes.
+    async fn encrypt_for_backend(backend: &EncryptedLocalFs, plaintext: &[u8]) -> Envelope {
+        let pem = backend
+            .current_public_key_pem()
+            .await
+            .expect("backend public key");
+        let pubkey = RsaPublicKey::from_public_key_pem(&pem).expect("parse pubkey pem");
+        encrypt_with_pub(&pubkey, ALG_RSA_OAEP_256, plaintext)
     }
 
     #[tokio::test]
@@ -682,18 +875,105 @@ mod tests {
         assert_eq!(data, TEST_DATA);
     }
 
-    #[test]
-    fn rejects_empty_key_configuration() {
-        let tmp_dir = tempdir().unwrap();
-        let err = EncryptedLocalFs::new(&EncryptedLocalFsRepoDesc {
+    fn build_managed_backend(tmp_dir: &tempfile::TempDir) -> EncryptedLocalFs {
+        EncryptedLocalFs::new(&EncryptedLocalFsRepoDesc {
             dir_path: tmp_dir.path().to_string_lossy().into(),
-            private_key_path: String::new(),
-            private_key_paths: vec![],
+            key_dir: tmp_dir.path().join("keys").to_string_lossy().into(),
             ..Default::default()
         })
-        .err()
-        .expect("a backend with no keys must fail to initialize");
-        assert!(err.to_string().contains("private_key"));
+        .expect("create managed backend")
+    }
+
+    fn managed_key_count(key_dir: &std::path::Path) -> usize {
+        std::fs::read_dir(key_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("pem"))
+            .count()
+    }
+
+    // With a managed key store and no operator-provided key, KBS generates its
+    // own key pair on start, exposes the public key, and round-trips resources.
+    #[tokio::test]
+    async fn managed_mode_auto_generates_key() {
+        let tmp_dir = tempdir().unwrap();
+        let backend = build_managed_backend(&tmp_dir);
+
+        let pem = backend.current_public_key_pem().await.expect("pubkey");
+        assert!(pem.contains("BEGIN PUBLIC KEY"));
+        assert_eq!(managed_key_count(&tmp_dir.path().join("keys")), 1);
+
+        let desc = resource_desc("managed");
+        let env = encrypt_for_backend(&backend, TEST_DATA).await;
+        backend
+            .write_secret_resource(desc.clone(), &serde_json::to_vec(&env).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            backend.read_secret_resource(desc).await.expect("decrypt"),
+            TEST_DATA
+        );
+    }
+
+    // One-shot rotate: generate a new key, re-wrap resources onto it, retire the
+    // old key. The resource stays readable, the public key changes, and a freshly
+    // loaded backend (only the new key on disk) can still decrypt it.
+    #[tokio::test]
+    async fn rotate_generates_rewraps_and_retires() {
+        let tmp_dir = tempdir().unwrap();
+        let key_dir = tmp_dir.path().join("keys");
+        let backend = build_managed_backend(&tmp_dir);
+
+        let desc = resource_desc("secret");
+        let env = encrypt_for_backend(&backend, TEST_DATA).await;
+        backend
+            .write_secret_resource(desc.clone(), &serde_json::to_vec(&env).unwrap())
+            .await
+            .unwrap();
+        let pubkey_before = backend.current_public_key_pem().await.unwrap();
+
+        let report = backend.rotate_keys().await.expect("rotate");
+        assert_eq!(report.failed, 0);
+        assert_eq!(report.rewrapped, 1);
+        assert_eq!(report.retired_keys, 1, "the previous key is retired");
+        assert!(report.public_key.contains("BEGIN PUBLIC KEY"));
+
+        let pubkey_after = backend.current_public_key_pem().await.unwrap();
+        assert_ne!(pubkey_before, pubkey_after, "rotation changes the key");
+        assert_eq!(report.public_key, pubkey_after);
+        assert_eq!(managed_key_count(&key_dir), 1, "old key retired");
+
+        assert_eq!(
+            backend
+                .read_secret_resource(desc.clone())
+                .await
+                .expect("after rotate"),
+            TEST_DATA
+        );
+
+        let reopened = build_managed_backend(&tmp_dir);
+        assert_eq!(
+            reopened
+                .read_secret_resource(desc)
+                .await
+                .expect("reopened decrypt"),
+            TEST_DATA
+        );
+    }
+
+    // Rotation is only meaningful with a managed key store; bring-your-own mode
+    // must reject it.
+    #[tokio::test]
+    async fn rotate_requires_managed_mode() {
+        let tmp_dir = tempdir().unwrap();
+        let rsa = Rsa::generate(2048).unwrap();
+        let backend = build_backend(&tmp_dir, &rsa);
+
+        let err = backend
+            .rotate_keys()
+            .await
+            .expect_err("bring-your-own mode cannot rotate");
+        assert!(err.to_string().contains("managed"));
     }
 
     // A backend can pick up keys from `private_key_dir`, and `reload_keys`
