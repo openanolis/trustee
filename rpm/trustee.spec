@@ -4,7 +4,7 @@
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.8.4
+Version:        1.8.5
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -148,6 +148,15 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Mon Jun 01 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.5-1
+- KBS: allow resource plugin configuration override via environment variables
+- KBS: self-manage EncryptedLocalFs keys with one-shot rotation API
+- KBS: support key rotation for EncryptedLocalFs backend
+- KBS/SDK: add reencrypt_resource.py for out-of-band key rotation
+- Verifier: fix Hygon TPM SM2 quote signature verification
+- Gateway: use 191-char prefix index on aa_instance_heartbeats.instance_id
+- Docs: document EncryptedLocalFs key rotation and managed-key rotation
+
 * Mon May 18 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.4-1
 - KBS: support private cloud Aliyun KMS endpoints
 - AS: add signer transparency support
