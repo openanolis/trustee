@@ -171,7 +171,9 @@ impl EncryptedDb {
         runtime.block_on(Self::init_async(config))
     }
 
-    async fn init_async(config: &EncryptedDbBackendConfig) -> Result<Self> {
+    /// Async constructor used by integration tests. Production code should
+    /// use [`EncryptedDb::new`] which builds a small bridge runtime.
+    pub async fn init_async(config: &EncryptedDbBackendConfig) -> Result<Self> {
         let pool = DbPool::connect(&config.database).await?;
         migrate_schema(&pool).await?;
         // Seed defaults *without* the master key so the salt + KDF params
@@ -686,7 +688,7 @@ impl EncryptedDb {
                 Ok(e) => e,
                 Err(_) => continue, // plaintext or non-envelope row, no key needed
             };
-            if let Ok(_) = decrypt_envelope_with_ring(
+            if decrypt_envelope_with_ring(
                 &env,
                 &ring
                     .keys
@@ -694,16 +696,18 @@ impl EncryptedDb {
                     .filter(|k| !candidates_set.contains(&k.generation))
                     .map(|k| k.private_key.clone())
                     .collect::<Vec<_>>(),
-            ) {
+            )
+            .is_ok()
+            {
                 continue;
             }
             // None of the kept keys decrypts — find which candidate does.
             for k in &ring.keys {
-                if candidates_set.contains(&k.generation) {
-                    if decrypt_envelope_with_ring(&env, &[k.private_key.clone()]).is_ok() {
-                        still_needed.insert(k.generation);
-                        break;
-                    }
+                if candidates_set.contains(&k.generation)
+                    && decrypt_envelope_with_ring(&env, &[k.private_key.clone()]).is_ok()
+                {
+                    still_needed.insert(k.generation);
+                    break;
                 }
             }
         }
@@ -768,14 +772,14 @@ mod tests {
     /// Encrypt plaintext under a public key + RSA-OAEP-256, returning the
     /// envelope JSON bytes a real client would POST.
     fn encrypt_resource_for_test(public_pem: &str, plaintext: &[u8]) -> Vec<u8> {
-        use aes_gcm::aead::{generic_array::GenericArray, AeadInPlace, KeyInit};
+        use aes_gcm::aead::{AeadInPlace, KeyInit};
         use aes_gcm::{Aes256Gcm, Nonce};
         use base64::engine::general_purpose::STANDARD;
         use base64::Engine;
         use rand::RngCore;
         use rsa::pkcs8::DecodePublicKey;
         use rsa::sha2::Sha256;
-        use rsa::{Oaep, RsaPublicKey};
+        use rsa::Oaep;
 
         let pub_key = RsaPublicKey::from_public_key_pem(public_pem).unwrap();
         let mut cek = [0u8; 32];
@@ -796,7 +800,7 @@ mod tests {
             "enc_key": STANDARD.encode(enc_key),
             "iv": STANDARD.encode(iv),
             "ciphertext": STANDARD.encode(buf),
-            "tag": STANDARD.encode(GenericArray::from(tag).as_slice()),
+            "tag": STANDARD.encode(tag.as_slice()),
         });
         serde_json::to_vec(&env).unwrap()
     }

@@ -210,7 +210,7 @@ This is also called "Repository" in old versions. The properties to be configure
 
 | Property | Type   | Description                                                                   | Required | Default   |
 |----------|--------|-------------------------------------------------------------------------------|----------|-----------|
-| `type`   | String | The resource repository type. Valid values: `LocalFs`, `EncryptedLocalFs`, `Aliyun`, `ExternalKms` | Yes      | `LocalFs` |
+| `type`   | String | The resource repository type. Valid values: `LocalFs`, `EncryptedLocalFs`, `EncryptedDb`, `Aliyun`, `ExternalKms` | Yes      | `LocalFs` |
 
 Resource plugin configuration can also be overridden with environment
 variables. Environment variables are applied after the configuration file is
@@ -220,7 +220,7 @@ set to create one from environment variables.
 
 | Environment Variable | Description |
 |----------------------|-------------|
-| `KBS_RESOURCE_STORAGE_TYPE` | Replaces or creates the resource backend type. Supported values: `LocalFs`, `EncryptedLocalFs`, `Aliyun`, `ExternalKms`. |
+| `KBS_RESOURCE_STORAGE_TYPE` | Replaces or creates the resource backend type. Supported values: `LocalFs`, `EncryptedLocalFs`, `EncryptedDb`, `Aliyun`, `ExternalKms`. (For `EncryptedDb`, the database connection settings still need to come from the config file — they cannot be supplied through environment variables.) |
 | `KBS_RESOURCE_STORAGE_DIR_PATH` | Overrides `dir_path` for `LocalFs` and `EncryptedLocalFs`. |
 | `KBS_RESOURCE_STORAGE_PRIVATE_KEY_PATH` | Overrides `private_key_path` for `EncryptedLocalFs`. |
 | `KBS_RESOURCE_STORAGE_LIBRARY_PATH` | Overrides `library_path` for `ExternalKms`. |
@@ -297,6 +297,57 @@ endpoints:
 
 See [EncryptedLocalFs Key Rotation](./encrypted_local_fs_key_rotation.md) for the
 full procedure.
+
+**`EncryptedDb` Properties**
+
+The `EncryptedDb` backend stores both wrap keys and resource envelopes in a
+shared SQL database (MySQL or SQLite) so that multiple KBS replicas can share
+one consistent set of managed keys. Wrap private keys are encrypted at rest
+under a deployment-level master secret derived from a passphrase via Argon2id.
+It is guarded by the Cargo feature `encrypted-db`. See
+[EncryptedDb Resource Backend](./resource_storage_backend_encrypted_db.md) for
+the design and
+[EncryptedDb Key Rotation](./encrypted_db_key_rotation.md) for the operational
+procedures (rotation, purge, multi-replica considerations).
+
+| Property                | Type   | Description                                                                                                                                | Required | Default                                |
+|-------------------------|--------|--------------------------------------------------------------------------------------------------------------------------------------------|----------|----------------------------------------|
+| `master_secret_path`    | String | Path to the file holding the master passphrase (typically a Kubernetes Secret mounted as a tmpfs file).                                    | No       | `/run/trustee/master.passphrase`       |
+| `bump_poll_interval_ms` | Number | Throttle for the cheap `SELECT bump` poll that detects another replica's rotation. Smaller values mean faster propagation, more DB traffic. | No       | `5000`                                 |
+
+The database connection settings are nested under `[plugins.database]`:
+
+| Property                  | Type   | Description                                                                                                                                                                            | Required                | Default |
+|---------------------------|--------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------|---------|
+| `type`                    | String | `"mysql"` or `"sqlite"`.                                                                                                                                                              | Yes                     | —       |
+| `dsn`                     | String | SQLx MySQL DSN (`mysql://user:pass@host:port/db?...`).                                                                                                                                | Yes for `mysql`         | —       |
+| `path`                    | String | SQLite file path. `":memory:"` is allowed for ephemeral testing only.                                                                                                                  | Yes for `sqlite`        | —       |
+| `max_open_conns`          | Number | Pool maximum connections.                                                                                                                                                              | No                      | `0` (unbounded) |
+| `max_idle_conns`          | Number | Pool warm-pool floor (minimum idle connections).                                                                                                                                       | No                      | `0`     |
+| `conn_max_lifetime`       | String | Humantime-style duration (`"1h"`, `"30m"`).                                                                                                                                            | No                      | `""` (driver default) |
+| `retired_key_purge_after` | String | Grace period a retired key is kept in the database before being physically deleted. `"0"` disables purging. Minimum non-zero value is `"1h"`.                                          | No                      | `"30d"` |
+
+Example:
+
+```toml
+[[plugins]]
+name = "resource"
+type = "EncryptedDb"
+master_secret_path = "/run/trustee/master.passphrase"
+bump_poll_interval_ms = 5000
+
+  [plugins.database]
+  type = "mysql"
+  dsn  = "mysql://kbs:****@db-host:3306/trustee_kbs?ssl-mode=PREFERRED"
+  max_open_conns = 20
+  max_idle_conns = 5
+  conn_max_lifetime = "1h"
+  retired_key_purge_after = "30d"
+```
+
+The same `/kbs/v0/resource/rotate`, `/pubkey`, `/reload`, `/rewrap` admin API
+applies (see the table for `EncryptedLocalFs` above). The rotate response on
+`EncryptedDb` includes an additional `purged_keys` field.
 
 **`Aliyun` Properties**
 
