@@ -16,6 +16,7 @@
 mod db;
 mod key_store;
 mod master_secret;
+mod resource_store;
 mod schema;
 
 use anyhow::{bail, Result};
