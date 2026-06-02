@@ -170,10 +170,7 @@ async fn end_to_end_two_replicas() {
         rotate.rewrapped
     );
     assert!(rotate.public_key.contains("BEGIN PUBLIC KEY"));
-    assert!(
-        rotate.retired_keys >= 1,
-        "old generation should be retired"
-    );
+    assert!(rotate.retired_keys >= 1, "old generation should be retired");
     let p2 = rotate.public_key.clone();
 
     // 5. A picks up the new pubkey within poll_interval. We wait a beat
@@ -214,13 +211,10 @@ async fn end_to_end_two_replicas() {
 
     // 9. Wrong passphrase ⇒ canary refuses to start.
     let wrong = write_passphrase(b"WRONG-passphrase");
-    let err = EncryptedDb::init_async(&cfg(
-        &dsn,
-        &wrong.path().to_string_lossy(),
-    ))
-    .await
-    .err()
-    .expect("wrong passphrase must fail");
+    let err = EncryptedDb::init_async(&cfg(&dsn, &wrong.path().to_string_lossy()))
+        .await
+        .err()
+        .expect("wrong passphrase must fail");
     let msg = format!("{err:#}");
     assert!(
         msg.contains("canary") || msg.contains("authentication"),
