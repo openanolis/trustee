@@ -32,18 +32,19 @@ use serde::Deserialize;
 use super::{ResourceDesc, RewrapReport, RotateReport, StorageBackend};
 
 use crypto::{decrypt_envelope_with_ring, rewrap_envelope, Envelope};
-use db::DbPool;
+use db::{parse_simple_duration, DbPool};
 use key_store::{
-    advance_primary_generation, generate_rsa_key_pair, insert_new_generation, load_all_keys,
-    mark_older_retired, next_generation, read_primary_generation,
-    read_primary_generation_and_bump, set_primary_generation_initial, Generation, LoadedKey,
+    advance_primary_generation, delete_key_row, generate_rsa_key_pair, insert_new_generation,
+    list_retired_older_than, load_all_keys, mark_older_retired, next_generation,
+    read_primary_generation, read_primary_generation_and_bump, set_primary_generation_initial,
+    Generation, LoadedKey,
 };
 use master_secret::{
     derive_master_key, verify_canary, FileMasterSecretProvider, MasterKey,
 };
 use resource_store::{
-    delete_resource, fetch_batch_older_than, list_resources, read_envelope, update_envelope,
-    upsert_envelope,
+    delete_resource, fetch_all, fetch_batch_older_than, list_resources, read_envelope,
+    update_envelope, upsert_envelope,
 };
 use schema::{ensure_meta_defaults, migrate_schema, read_argon2_params, read_canary, read_salt};
 
@@ -129,6 +130,34 @@ pub struct EncryptedDb {
     /// scheduling two rotates back-to-back. The DB row lock is the
     /// authoritative cross-replica mutex.
     rotation_in_progress: AtomicU64,
+    /// Grace period before a retired key is physically deleted. `None`
+    /// disables purging entirely.
+    purge_after: Option<Duration>,
+}
+
+/// Lower bound for `retired_key_purge_after`: 1 hour. Refuses smaller
+/// non-zero values to avoid orphaning resources written with a stale
+/// public key during a rotation race.
+const PURGE_AFTER_MIN: Duration = Duration::from_secs(3600);
+
+fn parse_purge_after(s: &str) -> Result<Option<Duration>> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        // Treat empty config as default (handled by serde default upstream).
+        return Ok(Some(Duration::from_secs(30 * 86_400)));
+    }
+    let d = parse_simple_duration(trimmed)
+        .with_context(|| format!("parse retired_key_purge_after `{trimmed}`"))?;
+    if d.is_zero() {
+        return Ok(None);
+    }
+    if d < PURGE_AFTER_MIN {
+        bail!(
+            "retired_key_purge_after `{trimmed}` is below the 1h minimum; \
+             use a longer grace period or `0` to disable purging"
+        );
+    }
+    Ok(Some(d))
 }
 
 impl EncryptedDb {
@@ -202,6 +231,7 @@ impl EncryptedDb {
             .unwrap_or(0);
 
         let poll_interval = Duration::from_millis(config.bump_poll_interval_ms.max(100));
+        let purge_after = parse_purge_after(&config.database.retired_key_purge_after)?;
 
         Ok(Self {
             pool,
@@ -211,6 +241,7 @@ impl EncryptedDb {
             last_poll_ms: AtomicI64::new(unix_ms_now()),
             poll_interval,
             rotation_in_progress: AtomicU64::new(0),
+            purge_after,
         })
     }
 
@@ -559,13 +590,140 @@ impl EncryptedDb {
             .to_public_key_pem(LineEnding::LF)
             .context("encode new public key")?;
 
+        // Purge sweep: physically delete retired keys whose grace period
+        // has expired. Done after a successful rotation so a fresh primary
+        // is in place for any straggler rewraps.
+        let purged = self
+            .run_purge_sweep(&new_pub)
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!("EncryptedDb: purge sweep failed (non-fatal): {e:#}");
+                0
+            });
+
         Ok(RotateReport {
             public_key,
             rewrapped: report.rewrapped,
             skipped: report.skipped,
             failed: report.failed,
             retired_keys: retired as usize,
+            purged_keys: purged,
         })
+    }
+
+    /// Delete any retired keys whose `retired_at` is older than
+    /// `purge_after`. Before deletion, scan every resource and rewrap any
+    /// envelope still wrapped under the candidate key. If any resource
+    /// would still depend on it after that pass we skip the delete (and
+    /// log a warning) — better to leak a row than to permanently orphan a
+    /// resource.
+    async fn run_purge_sweep(&self, primary_public: &RsaPublicKey) -> Result<usize> {
+        let Some(grace) = self.purge_after else {
+            return Ok(0);
+        };
+        let candidates = list_retired_older_than(&self.pool, grace).await?;
+        if candidates.is_empty() {
+            return Ok(0);
+        }
+        let ring = self.ring_snapshot();
+        let primary_generation = ring
+            .primary_generation
+            .ok_or_else(|| anyhow!("purge: no primary generation"))?;
+        let decrypt_keys: Vec<RsaPrivateKey> =
+            ring.keys.iter().map(|k| k.private_key.clone()).collect();
+
+        // Single straggler-rewrap pass over every resource. Cheap because
+        // we only re-encrypt rows whose envelope cannot be decrypted by
+        // the primary.
+        let all = fetch_all(&self.pool).await?;
+        for row in all {
+            let env_bytes = row.envelope.as_bytes();
+            // Skip rows already at the primary by trial-decrypting with
+            // the primary key alone. This avoids a needless rewrap on
+            // rows tagged with an old generation but already wrapped
+            // under the new public key (rare, but possible).
+            let primary_only_keys: Vec<RsaPrivateKey> = ring
+                .keys
+                .iter()
+                .filter(|k| Some(k.generation) == ring.primary_generation && !k.retired)
+                .map(|k| k.private_key.clone())
+                .collect();
+            if let Ok(env) = serde_json::from_slice::<crypto::Envelope>(env_bytes) {
+                if !primary_only_keys.is_empty()
+                    && decrypt_envelope_with_ring(&env, &primary_only_keys).is_ok()
+                {
+                    continue;
+                }
+            }
+            // Otherwise try the full ring; if any old key decrypts, rewrap.
+            if let Ok(Some(new_env)) =
+                rewrap_envelope(env_bytes, &decrypt_keys, primary_public)
+            {
+                let desc = ResourceDesc {
+                    repository_name: row.repository_name,
+                    resource_type: row.resource_type,
+                    resource_tag: row.resource_tag,
+                };
+                if let Err(e) =
+                    update_envelope(&self.pool, &desc, &new_env, primary_generation).await
+                {
+                    log::warn!("purge: straggler rewrap of `{desc}` failed: {e:#}");
+                }
+            }
+        }
+
+        // After the straggler sweep, no resource should still depend on
+        // any candidate. Verify by re-checking — if a row is now in a
+        // state we cannot rewrap to the primary, leave the candidate key
+        // in place rather than orphan the resource.
+        let final_pass = fetch_all(&self.pool).await?;
+        let candidates_set: std::collections::HashSet<Generation> =
+            candidates.iter().copied().collect();
+        let mut still_needed: std::collections::HashSet<Generation> =
+            std::collections::HashSet::new();
+        for row in &final_pass {
+            let env: crypto::Envelope = match serde_json::from_slice(row.envelope.as_bytes()) {
+                Ok(e) => e,
+                Err(_) => continue, // plaintext or non-envelope row, no key needed
+            };
+            if let Ok(_) = decrypt_envelope_with_ring(
+                &env,
+                &ring
+                    .keys
+                    .iter()
+                    .filter(|k| !candidates_set.contains(&k.generation))
+                    .map(|k| k.private_key.clone())
+                    .collect::<Vec<_>>(),
+            ) {
+                continue;
+            }
+            // None of the kept keys decrypts — find which candidate does.
+            for k in &ring.keys {
+                if candidates_set.contains(&k.generation) {
+                    if decrypt_envelope_with_ring(&env, &[k.private_key.clone()]).is_ok() {
+                        still_needed.insert(k.generation);
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut purged = 0usize;
+        for gen in candidates {
+            if still_needed.contains(&gen) {
+                log::warn!(
+                    "EncryptedDb: skipping purge of generation {gen} — at least one resource still depends on it"
+                );
+                continue;
+            }
+            delete_key_row(&self.pool, gen).await?;
+            purged += 1;
+            log::info!("EncryptedDb: purged retired wrap key generation {gen}");
+        }
+        if purged > 0 {
+            self.reload_ring_now().await?;
+        }
+        Ok(purged)
     }
 }
 
@@ -727,6 +885,113 @@ mod tests {
         // The pubkey returned should be the new one.
         let p2 = backend.current_public_key_pem().await.unwrap();
         assert_ne!(p1, p2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn purge_after_grace_deletes_retired_key() {
+        // Use a file-backed SQLite so we can reach in and back-date
+        // retired_at to simulate the grace period elapsing.
+        let mut f = NamedTempFile::new().unwrap();
+        write!(f, "purge-test").unwrap();
+        let dbdir = tempfile::tempdir().unwrap();
+        let dbpath = dbdir.path().join("kbs.db");
+        let cfg = EncryptedDbBackendConfig {
+            master_secret_path: f.path().to_string_lossy().into_owned(),
+            bump_poll_interval_ms: 100,
+            database: DatabaseConfig {
+                kind: "sqlite".into(),
+                path: dbpath.to_string_lossy().into_owned(),
+                retired_key_purge_after: "1h".into(),
+                ..Default::default()
+            },
+        };
+
+        let backend = EncryptedDb::init_async(&cfg).await.unwrap();
+        let p1 = backend.current_public_key_pem().await.unwrap();
+        let env_old = encrypt_resource_for_test(&p1, b"old");
+        backend
+            .write_secret_resource(desc("repo", "secret", "x"), &env_old)
+            .await
+            .unwrap();
+
+        // First rotate retires the bootstrap key but the grace period has
+        // not elapsed yet, so nothing should be purged.
+        let r1 = backend.rotate_keys().await.unwrap();
+        assert_eq!(r1.failed, 0);
+        assert!(r1.retired_keys >= 1);
+        assert_eq!(r1.purged_keys, 0, "grace not elapsed yet");
+
+        // Back-date every retired_at into the distant past.
+        let DbPool::Sqlite(p) = &backend.pool else {
+            unreachable!()
+        };
+        sqlx::query(
+            "UPDATE kbs_managed_keys SET retired_at = '2020-01-01 00:00:00.000000' WHERE retired_at IS NOT NULL",
+        )
+        .execute(p)
+        .await
+        .unwrap();
+
+        // Second rotate should now purge.
+        let r2 = backend.rotate_keys().await.unwrap();
+        assert_eq!(r2.failed, 0);
+        assert!(r2.purged_keys >= 1, "expected purge after back-dating");
+
+        // Resource still readable under the latest key.
+        let plain = backend
+            .read_secret_resource(desc("repo", "secret", "x"))
+            .await
+            .unwrap();
+        assert_eq!(plain, b"old");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn purge_disabled_when_grace_zero() {
+        let mut f = NamedTempFile::new().unwrap();
+        write!(f, "no-purge").unwrap();
+        let dbdir = tempfile::tempdir().unwrap();
+        let dbpath = dbdir.path().join("kbs.db");
+        let cfg = EncryptedDbBackendConfig {
+            master_secret_path: f.path().to_string_lossy().into_owned(),
+            bump_poll_interval_ms: 100,
+            database: DatabaseConfig {
+                kind: "sqlite".into(),
+                path: dbpath.to_string_lossy().into_owned(),
+                retired_key_purge_after: "0".into(),
+                ..Default::default()
+            },
+        };
+
+        let backend = EncryptedDb::init_async(&cfg).await.unwrap();
+        backend.rotate_keys().await.unwrap();
+
+        // Even with retired_at way in the past, purge must not run.
+        let DbPool::Sqlite(p) = &backend.pool else {
+            unreachable!()
+        };
+        sqlx::query(
+            "UPDATE kbs_managed_keys SET retired_at = '2020-01-01 00:00:00.000000' WHERE retired_at IS NOT NULL",
+        )
+        .execute(p)
+        .await
+        .unwrap();
+        let r = backend.rotate_keys().await.unwrap();
+        assert_eq!(r.purged_keys, 0, "purge_after = 0 disables purging");
+    }
+
+    #[test]
+    fn parse_purge_after_rejects_below_minimum() {
+        assert!(parse_purge_after("30s").is_err());
+        assert!(parse_purge_after("59m").is_err());
+        assert!(parse_purge_after("0").unwrap().is_none());
+        assert_eq!(
+            parse_purge_after("1h").unwrap(),
+            Some(Duration::from_secs(3600))
+        );
+        assert_eq!(
+            parse_purge_after("30d").unwrap(),
+            Some(Duration::from_secs(30 * 86_400))
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

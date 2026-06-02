@@ -101,6 +101,12 @@ pub struct RotateReport {
     pub failed: usize,
     /// Number of old managed keys retired after a clean migration.
     pub retired_keys: usize,
+    /// Number of retired keys physically purged from persistent storage
+    /// after their grace period (`retired_key_purge_after`) expired. Always
+    /// 0 for backends that do not implement deferred purging
+    /// (`EncryptedLocalFs` deletes immediately on retire).
+    #[serde(default)]
+    pub purged_keys: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]

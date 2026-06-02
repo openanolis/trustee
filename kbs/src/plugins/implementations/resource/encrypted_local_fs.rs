@@ -214,6 +214,7 @@ impl StorageBackend for EncryptedLocalFs {
             skipped: rewrap.skipped,
             failed: rewrap.failed,
             retired_keys: retired,
+            purged_keys: 0,
         })
     }
 }

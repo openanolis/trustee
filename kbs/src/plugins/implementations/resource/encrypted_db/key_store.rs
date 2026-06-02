@@ -181,6 +181,75 @@ fn pkcs8_decode_zeroizing(pem: &Zeroizing<Vec<u8>>) -> Result<RsaPrivateKey> {
     RsaPrivateKey::from_pkcs8_pem(pem_str).map_err(|e| anyhow!("decode pkcs8: {e}"))
 }
 
+/// Return the generations of every key that has been retired for at least
+/// `min_age`. Used by the purge sweep at the end of `/rotate`.
+pub async fn list_retired_older_than(
+    pool: &DbPool,
+    min_age: std::time::Duration,
+) -> Result<Vec<Generation>> {
+    let cutoff_iso = current_iso_minus(min_age)?;
+    let rows: Vec<(Generation,)> = match pool {
+        DbPool::MySql(p) => sqlx::query_as(
+            "SELECT generation FROM kbs_managed_keys
+             WHERE retired_at IS NOT NULL AND retired_at < ?",
+        )
+        .bind(cutoff_iso)
+        .fetch_all(p)
+        .await
+        .context("list retired keys (mysql)")?,
+        DbPool::Sqlite(p) => sqlx::query_as(
+            "SELECT generation FROM kbs_managed_keys
+             WHERE retired_at IS NOT NULL AND retired_at < ?",
+        )
+        .bind(cutoff_iso)
+        .fetch_all(p)
+        .await
+        .context("list retired keys (sqlite)")?,
+    };
+    Ok(rows.into_iter().map(|(g,)| g).collect())
+}
+
+/// Physically delete a retired key. The caller must have first verified
+/// (via a fresh rewrap pass) that no resource is wrapped with this
+/// generation; otherwise readers can be permanently broken.
+pub async fn delete_key_row(pool: &DbPool, generation: Generation) -> Result<()> {
+    match pool {
+        DbPool::MySql(p) => {
+            sqlx::query(
+                "DELETE FROM kbs_managed_keys
+                 WHERE generation = ? AND retired_at IS NOT NULL",
+            )
+            .bind(generation)
+            .execute(p)
+            .await
+            .context("delete retired key (mysql)")?;
+        }
+        DbPool::Sqlite(p) => {
+            sqlx::query(
+                "DELETE FROM kbs_managed_keys
+                 WHERE generation = ? AND retired_at IS NOT NULL",
+            )
+            .bind(generation)
+            .execute(p)
+            .await
+            .context("delete retired key (sqlite)")?;
+        }
+    }
+    Ok(())
+}
+
+fn current_iso_minus(d: std::time::Duration) -> Result<String> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock before unix epoch")?;
+    let cutoff = now.checked_sub(d).unwrap_or(std::time::Duration::ZERO);
+    let secs = cutoff.as_secs() as i64;
+    let micros = cutoff.subsec_micros();
+    let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(secs, micros * 1_000)
+        .ok_or_else(|| anyhow!("convert system time to chrono"))?;
+    Ok(datetime.format("%Y-%m-%d %H:%M:%S%.6f").to_string())
+}
+
 /// Mark every generation older than `cutoff` as retired (idempotent).
 /// Returns the number of rows newly marked.
 pub async fn mark_older_retired(pool: &DbPool, cutoff: Generation) -> Result<u64> {
