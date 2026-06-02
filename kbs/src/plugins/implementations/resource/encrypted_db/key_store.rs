@@ -120,60 +120,40 @@ pub async fn insert_new_generation(
 /// the master key. Returned newest-first so callers can pick the primary as
 /// the first non-retired entry.
 pub async fn load_all_keys(pool: &DbPool, master_key: &MasterKey) -> Result<Vec<LoadedKey>> {
+    // (generation, public_key_pem, enc_private_key, iv, tag, retired_flag)
+    type KeyRow = (i64, String, Vec<u8>, Vec<u8>, Vec<u8>, i64);
+    const SQL: &str = "SELECT generation, public_key_pem, enc_private_key, iv, tag,
+                              CASE WHEN retired_at IS NULL THEN 0 ELSE 1 END
+                       FROM kbs_managed_keys
+                       ORDER BY generation DESC";
     let rows: Vec<KeyRow> = match pool {
-        DbPool::MySql(p) => sqlx::query_as::<_, KeyRow>(
-            "SELECT generation, public_key_pem, enc_private_key, iv, tag,
-                    CASE WHEN retired_at IS NULL THEN 0 ELSE 1 END AS retired
-             FROM kbs_managed_keys
-             ORDER BY generation DESC",
-        )
-        .fetch_all(p)
-        .await
-        .context("load wrap keys (mysql)")?,
-        DbPool::Sqlite(p) => sqlx::query_as::<_, KeyRow>(
-            "SELECT generation, public_key_pem, enc_private_key, iv, tag,
-                    CASE WHEN retired_at IS NULL THEN 0 ELSE 1 END AS retired
-             FROM kbs_managed_keys
-             ORDER BY generation DESC",
-        )
-        .fetch_all(p)
-        .await
-        .context("load wrap keys (sqlite)")?,
+        DbPool::MySql(p) => sqlx::query_as(SQL)
+            .fetch_all(p)
+            .await
+            .context("load wrap keys (mysql)")?,
+        DbPool::Sqlite(p) => sqlx::query_as(SQL)
+            .fetch_all(p)
+            .await
+            .context("load wrap keys (sqlite)")?,
     };
 
     let mut out = Vec::with_capacity(rows.len());
-    for row in rows {
-        let aad = aad_for_generation(row.generation);
-        let private_pem = aes_gcm_decrypt(
-            master_key,
-            &row.iv,
-            &row.tag,
-            &row.enc_private_key,
-            &aad,
-        )
-        .with_context(|| format!("decrypt private key for generation {}", row.generation))?;
+    for (generation, public_key_pem, enc_private_key, iv, tag, retired_flag) in rows {
+        let aad = aad_for_generation(generation);
+        let private_pem = aes_gcm_decrypt(master_key, &iv, &tag, &enc_private_key, &aad)
+            .with_context(|| format!("decrypt private key for generation {generation}"))?;
         let private_key = pkcs8_decode_zeroizing(&private_pem)
-            .with_context(|| format!("parse private key for generation {}", row.generation))?;
-        let public_key = RsaPublicKey::from_public_key_pem(&row.public_key_pem)
-            .map_err(|e| anyhow!("parse public key for generation {}: {e}", row.generation))?;
+            .with_context(|| format!("parse private key for generation {generation}"))?;
+        let public_key = RsaPublicKey::from_public_key_pem(&public_key_pem)
+            .map_err(|e| anyhow!("parse public key for generation {generation}: {e}"))?;
         out.push(LoadedKey {
-            generation: row.generation,
+            generation,
             public_key,
             private_key,
-            retired: row.retired != 0,
+            retired: retired_flag != 0,
         });
     }
     Ok(out)
-}
-
-#[derive(sqlx::FromRow)]
-struct KeyRow {
-    generation: i64,
-    public_key_pem: String,
-    enc_private_key: Vec<u8>,
-    iv: Vec<u8>,
-    tag: Vec<u8>,
-    retired: i64,
 }
 
 fn pkcs8_decode_zeroizing(pem: &Zeroizing<Vec<u8>>) -> Result<RsaPrivateKey> {
