@@ -13,7 +13,10 @@
 //! See `kbs/docs/resource_storage_backend_encrypted_db.md` for the user-facing
 //! documentation.
 
+mod db;
+mod key_store;
 mod master_secret;
+mod schema;
 
 use anyhow::{bail, Result};
 use serde::Deserialize;

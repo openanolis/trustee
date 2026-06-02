@@ -13,7 +13,7 @@ default = ["coco-as-builtin", "coco-as-grpc"]
 encrypted-local-fs = []
 
 # Enable encrypted DB-backed resource backend (multi-replica wrap-key sharing)
-encrypted-db = ["sqlx", "argon2", "zeroize"]
+encrypted-db = ["sqlx", "argon2", "zeroize", "chrono"]
 
 # Support a backend attestation service for KBS
 as = []
@@ -53,6 +53,7 @@ anyhow.workspace = true
 argon2 = { workspace = true, optional = true }
 async-trait.workspace = true
 base64.workspace = true
+chrono = { workspace = true, optional = true }
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 config.workspace = true

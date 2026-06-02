@@ -3413,6 +3413,7 @@ dependencies = [
  "attestation-service",
  "base64 0.21.7",
  "cfg-if",
+ "chrono",
  "clap",
  "concat-kdf",
  "config",
