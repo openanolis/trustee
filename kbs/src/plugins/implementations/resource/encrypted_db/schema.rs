@@ -175,24 +175,9 @@ fn first_line(s: &str) -> &str {
 pub async fn ensure_meta_defaults(pool: &DbPool, master_key: Option<&MasterKey>) -> Result<()> {
     insert_meta_if_absent(pool, meta::SCHEMA_VERSION, &SCHEMA_VERSION.to_string()).await?;
     insert_meta_if_absent(pool, meta::KDF_ALGO, "argon2id").await?;
-    insert_meta_if_absent(
-        pool,
-        meta::KDF_M_COST,
-        &DEFAULT_ARGON2_M_COST.to_string(),
-    )
-    .await?;
-    insert_meta_if_absent(
-        pool,
-        meta::KDF_T_COST,
-        &DEFAULT_ARGON2_T_COST.to_string(),
-    )
-    .await?;
-    insert_meta_if_absent(
-        pool,
-        meta::KDF_P_COST,
-        &DEFAULT_ARGON2_P_COST.to_string(),
-    )
-    .await?;
+    insert_meta_if_absent(pool, meta::KDF_M_COST, &DEFAULT_ARGON2_M_COST.to_string()).await?;
+    insert_meta_if_absent(pool, meta::KDF_T_COST, &DEFAULT_ARGON2_T_COST.to_string()).await?;
+    insert_meta_if_absent(pool, meta::KDF_P_COST, &DEFAULT_ARGON2_P_COST.to_string()).await?;
 
     if read_meta_string(pool, meta::KDF_SALT).await?.is_none() {
         let salt = generate_salt();
@@ -202,7 +187,10 @@ pub async fn ensure_meta_defaults(pool: &DbPool, master_key: Option<&MasterKey>)
     }
 
     if let Some(key) = master_key {
-        if read_meta_string(pool, meta::CANARY_CIPHERTEXT).await?.is_none() {
+        if read_meta_string(pool, meta::CANARY_CIPHERTEXT)
+            .await?
+            .is_none()
+        {
             let (nonce, tag, ct) = encrypt_canary(key)?;
             insert_meta_if_absent(pool, meta::CANARY_NONCE, &STANDARD.encode(&nonce)).await?;
             insert_meta_if_absent(pool, meta::CANARY_TAG, &STANDARD.encode(&tag)).await?;

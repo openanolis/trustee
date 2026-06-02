@@ -40,7 +40,10 @@ impl DbPool {
                 }
                 if !config.conn_max_lifetime.is_empty() {
                     let dur = parse_simple_duration(&config.conn_max_lifetime).map_err(|e| {
-                        anyhow!("parse conn_max_lifetime `{}`: {e}", config.conn_max_lifetime)
+                        anyhow!(
+                            "parse conn_max_lifetime `{}`: {e}",
+                            config.conn_max_lifetime
+                        )
                     })?;
                     opts = opts.max_lifetime(Some(dur));
                 }
@@ -120,11 +123,26 @@ mod tests {
 
     #[test]
     fn parse_units() {
-        assert_eq!(parse_simple_duration("30s").unwrap(), Duration::from_secs(30));
-        assert_eq!(parse_simple_duration("5m").unwrap(), Duration::from_secs(300));
-        assert_eq!(parse_simple_duration("1h").unwrap(), Duration::from_secs(3_600));
-        assert_eq!(parse_simple_duration("30d").unwrap(), Duration::from_secs(30 * 86_400));
-        assert_eq!(parse_simple_duration("2w").unwrap(), Duration::from_secs(14 * 86_400));
+        assert_eq!(
+            parse_simple_duration("30s").unwrap(),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            parse_simple_duration("5m").unwrap(),
+            Duration::from_secs(300)
+        );
+        assert_eq!(
+            parse_simple_duration("1h").unwrap(),
+            Duration::from_secs(3_600)
+        );
+        assert_eq!(
+            parse_simple_duration("30d").unwrap(),
+            Duration::from_secs(30 * 86_400)
+        );
+        assert_eq!(
+            parse_simple_duration("2w").unwrap(),
+            Duration::from_secs(14 * 86_400)
+        );
     }
 
     #[test]

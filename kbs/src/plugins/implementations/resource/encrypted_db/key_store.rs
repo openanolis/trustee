@@ -298,10 +298,7 @@ pub async fn read_primary_generation_and_bump(pool: &DbPool) -> Result<Option<(G
 }
 
 /// Insert the very first `primary_generation` row. Idempotent.
-pub async fn set_primary_generation_initial(
-    pool: &DbPool,
-    generation: Generation,
-) -> Result<()> {
+pub async fn set_primary_generation_initial(pool: &DbPool, generation: Generation) -> Result<()> {
     insert_meta_if_absent(pool, meta::PRIMARY_GENERATION, &generation.to_string()).await
 }
 
@@ -396,7 +393,10 @@ mod tests {
         assert_eq!(keys[0].generation, gen1);
         assert!(!keys[0].retired);
         assert_eq!(
-            keys[0].public_key.to_public_key_pem(LineEnding::LF).unwrap(),
+            keys[0]
+                .public_key
+                .to_public_key_pem(LineEnding::LF)
+                .unwrap(),
             pub1.to_public_key_pem(LineEnding::LF).unwrap()
         );
     }
@@ -407,7 +407,9 @@ mod tests {
         let master = fast_key();
         let priv1 = generate_rsa_key_pair().unwrap();
         let gen1 = 12345i64;
-        insert_new_generation(&pool, &master, gen1, &priv1).await.unwrap();
+        insert_new_generation(&pool, &master, gen1, &priv1)
+            .await
+            .unwrap();
         let priv2 = generate_rsa_key_pair().unwrap();
         let err = insert_new_generation(&pool, &master, gen1, &priv2)
             .await
@@ -430,12 +432,18 @@ mod tests {
         let priv2 = generate_rsa_key_pair().unwrap();
         let gen1 = 100i64;
         let gen2 = 200i64;
-        insert_new_generation(&pool, &master, gen1, &priv1).await.unwrap();
-        insert_new_generation(&pool, &master, gen2, &priv2).await.unwrap();
+        insert_new_generation(&pool, &master, gen1, &priv1)
+            .await
+            .unwrap();
+        insert_new_generation(&pool, &master, gen2, &priv2)
+            .await
+            .unwrap();
 
         // Manually swap the encrypted bytes between rows and confirm that
         // load_all_keys rejects the result (AAD mismatch).
-        let DbPool::Sqlite(p) = &pool else { unreachable!() };
+        let DbPool::Sqlite(p) = &pool else {
+            unreachable!()
+        };
         let row1: (Vec<u8>, Vec<u8>, Vec<u8>) = sqlx::query_as(
             "SELECT enc_private_key, iv, tag FROM kbs_managed_keys WHERE generation = ?",
         )
@@ -443,9 +451,16 @@ mod tests {
         .fetch_one(p)
         .await
         .unwrap();
-        sqlx::query("UPDATE kbs_managed_keys SET enc_private_key = ?, iv = ?, tag = ? WHERE generation = ?")
-            .bind(&row1.0).bind(&row1.1).bind(&row1.2).bind(gen2)
-            .execute(p).await.unwrap();
+        sqlx::query(
+            "UPDATE kbs_managed_keys SET enc_private_key = ?, iv = ?, tag = ? WHERE generation = ?",
+        )
+        .bind(&row1.0)
+        .bind(&row1.1)
+        .bind(&row1.2)
+        .bind(gen2)
+        .execute(p)
+        .await
+        .unwrap();
 
         let err = match load_all_keys(&pool, &master).await {
             Ok(_) => panic!("AAD mismatch: load should have failed"),
@@ -460,7 +475,9 @@ mod tests {
         let master_a = fast_key();
         let master_b: MasterKey = Zeroizing::new([0xAA; MASTER_KEY_LEN]);
         let priv1 = generate_rsa_key_pair().unwrap();
-        insert_new_generation(&pool, &master_a, 1, &priv1).await.unwrap();
+        insert_new_generation(&pool, &master_a, 1, &priv1)
+            .await
+            .unwrap();
         let err = match load_all_keys(&pool, &master_b).await {
             Ok(_) => panic!("wrong master key: load should have failed"),
             Err(e) => e,
@@ -477,11 +494,15 @@ mod tests {
 
         let priv1 = generate_rsa_key_pair().unwrap();
         let gen1 = 100i64;
-        insert_new_generation(&pool, &master, gen1, &priv1).await.unwrap();
+        insert_new_generation(&pool, &master, gen1, &priv1)
+            .await
+            .unwrap();
         set_primary_generation_initial(&pool, gen1).await.unwrap();
 
         // Idempotent: seeding twice does not change the value.
-        set_primary_generation_initial(&pool, gen1 + 999).await.unwrap();
+        set_primary_generation_initial(&pool, gen1 + 999)
+            .await
+            .unwrap();
         let (cur, bump_before) = read_primary_generation_and_bump(&pool)
             .await
             .unwrap()
@@ -491,7 +512,9 @@ mod tests {
         // Advance bumps both pointer and counter.
         let priv2 = generate_rsa_key_pair().unwrap();
         let gen2 = 200i64;
-        insert_new_generation(&pool, &master, gen2, &priv2).await.unwrap();
+        insert_new_generation(&pool, &master, gen2, &priv2)
+            .await
+            .unwrap();
         advance_primary_generation(&pool, gen2).await.unwrap();
 
         let (cur, bump_after) = read_primary_generation_and_bump(&pool)
@@ -508,8 +531,12 @@ mod tests {
         let master = fast_key();
         let priv1 = generate_rsa_key_pair().unwrap();
         let priv2 = generate_rsa_key_pair().unwrap();
-        insert_new_generation(&pool, &master, 100, &priv1).await.unwrap();
-        insert_new_generation(&pool, &master, 200, &priv2).await.unwrap();
+        insert_new_generation(&pool, &master, 100, &priv1)
+            .await
+            .unwrap();
+        insert_new_generation(&pool, &master, 200, &priv2)
+            .await
+            .unwrap();
 
         let n = mark_older_retired(&pool, 200).await.unwrap();
         assert_eq!(n, 1);

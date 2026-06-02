@@ -39,9 +39,7 @@ use key_store::{
     read_primary_generation, read_primary_generation_and_bump, set_primary_generation_initial,
     Generation, LoadedKey,
 };
-use master_secret::{
-    derive_master_key, verify_canary, FileMasterSecretProvider, MasterKey,
-};
+use master_secret::{derive_master_key, verify_canary, FileMasterSecretProvider, MasterKey};
 use resource_store::{
     delete_resource, fetch_all, fetch_batch_older_than, list_resources, read_envelope,
     update_envelope, upsert_envelope,
@@ -207,7 +205,9 @@ impl EncryptedDb {
             match insert_new_generation(&pool, &master_key, generation, &private_key).await {
                 Ok(_) => {
                     set_primary_generation_initial(&pool, generation).await?;
-                    log::info!("EncryptedDb: bootstrapped initial wrap key generation {generation}");
+                    log::info!(
+                        "EncryptedDb: bootstrapped initial wrap key generation {generation}"
+                    );
                 }
                 Err(e) => {
                     let s = format!("{e:#}");
@@ -216,9 +216,7 @@ impl EncryptedDb {
                         || s.contains("PRIMARY")
                         || s.contains("constraint")
                     {
-                        log::info!(
-                            "EncryptedDb: lost bootstrap race, using peer's wrap key"
-                        );
+                        log::info!("EncryptedDb: lost bootstrap race, using peer's wrap key");
                     } else {
                         return Err(e);
                     }
@@ -290,9 +288,7 @@ impl EncryptedDb {
         };
         let prev = self.last_bump.load(Ordering::Relaxed);
         if cur_bump > prev {
-            log::info!(
-                "EncryptedDb: bump advanced ({prev} -> {cur_bump}); reloading key ring"
-            );
+            log::info!("EncryptedDb: bump advanced ({prev} -> {cur_bump}); reloading key ring");
             self.reload_ring_now().await?;
             self.last_bump.store(cur_bump, Ordering::Relaxed);
         }
@@ -410,8 +406,7 @@ impl StorageBackend for EncryptedDb {
         // Fetch in batches to keep memory bounded for large tables.
         const BATCH: i64 = 200;
         loop {
-            let batch =
-                fetch_batch_older_than(&self.pool, primary_generation, BATCH).await?;
+            let batch = fetch_batch_older_than(&self.pool, primary_generation, BATCH).await?;
             if batch.is_empty() {
                 break;
             }
@@ -487,12 +482,10 @@ impl EncryptedDb {
         match &self.pool {
             DbPool::MySql(p) => {
                 let mut tx = p.begin().await.context("begin rotate tx (mysql)")?;
-                sqlx::query(
-                    "SELECT bump FROM kbs_meta WHERE k = 'primary_generation' FOR UPDATE",
-                )
-                .fetch_optional(&mut *tx)
-                .await
-                .context("acquire rotate row lock")?;
+                sqlx::query("SELECT bump FROM kbs_meta WHERE k = 'primary_generation' FOR UPDATE")
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .context("acquire rotate row lock")?;
                 tx.commit().await.context("commit rotate row lock")?;
                 // We deliberately commit immediately: holding the lock for
                 // the entire rotate would block other replicas' GET
@@ -545,8 +538,7 @@ impl EncryptedDb {
                 };
                 match rewrap_envelope(row.envelope.as_bytes(), &decrypt_keys, &new_pub) {
                     Ok(Some(new_env)) => {
-                        if let Err(e) =
-                            update_envelope(&self.pool, &desc, &new_env, new_gen).await
+                        if let Err(e) = update_envelope(&self.pool, &desc, &new_env, new_gen).await
                         {
                             report.failed += 1;
                             log::warn!("rotate: write back rewrapped `{desc}` failed: {e:#}");
@@ -575,8 +567,7 @@ impl EncryptedDb {
             retired = mark_older_retired(&self.pool, new_gen).await?;
             advance_primary_generation(&self.pool, new_gen).await?;
             self.reload_ring_now().await?;
-            self.last_bump
-                .store(pre_bump + 1, Ordering::Relaxed);
+            self.last_bump.store(pre_bump + 1, Ordering::Relaxed);
             log::info!(
                 "EncryptedDb: rotated to generation {new_gen} (rewrapped={}, skipped={}, retired_keys={})",
                 report.rewrapped, report.skipped, retired
@@ -595,13 +586,10 @@ impl EncryptedDb {
         // Purge sweep: physically delete retired keys whose grace period
         // has expired. Done after a successful rotation so a fresh primary
         // is in place for any straggler rewraps.
-        let purged = self
-            .run_purge_sweep(&new_pub)
-            .await
-            .unwrap_or_else(|e| {
-                log::warn!("EncryptedDb: purge sweep failed (non-fatal): {e:#}");
-                0
-            });
+        let purged = self.run_purge_sweep(&new_pub).await.unwrap_or_else(|e| {
+            log::warn!("EncryptedDb: purge sweep failed (non-fatal): {e:#}");
+            0
+        });
 
         Ok(RotateReport {
             public_key,
@@ -658,9 +646,7 @@ impl EncryptedDb {
                 }
             }
             // Otherwise try the full ring; if any old key decrypts, rewrap.
-            if let Ok(Some(new_env)) =
-                rewrap_envelope(env_bytes, &decrypt_keys, primary_public)
-            {
+            if let Ok(Some(new_env)) = rewrap_envelope(env_bytes, &decrypt_keys, primary_public) {
                 let desc = ResourceDesc {
                     repository_name: row.repository_name,
                     resource_type: row.resource_type,
@@ -876,7 +862,10 @@ mod tests {
 
         let report = backend.rotate_keys().await.unwrap();
         assert_eq!(report.failed, 0);
-        assert_eq!(report.rewrapped, 1, "single old envelope should be rewrapped");
+        assert_eq!(
+            report.rewrapped, 1,
+            "single old envelope should be rewrapped"
+        );
         assert!(report.public_key.contains("BEGIN PUBLIC KEY"));
 
         // After rotation the resource should still decrypt under the new ring.

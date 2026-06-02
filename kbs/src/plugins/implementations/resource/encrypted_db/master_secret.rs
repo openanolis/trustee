@@ -176,7 +176,10 @@ pub fn aes_gcm_decrypt(
     aad: &[u8],
 ) -> Result<Zeroizing<Vec<u8>>> {
     if nonce.len() != NONCE_LEN {
-        bail!("aes-gcm nonce must be {NONCE_LEN} bytes, got {}", nonce.len());
+        bail!(
+            "aes-gcm nonce must be {NONCE_LEN} bytes, got {}",
+            nonce.len()
+        );
     }
     if tag.len() != TAG_LEN {
         bail!("aes-gcm tag must be {TAG_LEN} bytes, got {}", tag.len());

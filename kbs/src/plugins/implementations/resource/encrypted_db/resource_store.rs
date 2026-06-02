@@ -268,8 +268,8 @@ pub async fn update_envelope(
     envelope: &[u8],
     generation: Generation,
 ) -> Result<()> {
-    let envelope_str = std::str::from_utf8(envelope)
-        .context("re-wrapped envelope is not valid UTF-8 JSON")?;
+    let envelope_str =
+        std::str::from_utf8(envelope).context("re-wrapped envelope is not valid UTF-8 JSON")?;
     let now = current_iso_timestamp()?;
     match pool {
         DbPool::MySql(p) => {
@@ -345,7 +345,9 @@ mod tests {
     async fn upsert_then_read() {
         let pool = fresh_pool().await;
         let d = desc("repo", "secret", "r1");
-        upsert_envelope(&pool, &d, b"{\"alg\":\"X\"}", 100).await.unwrap();
+        upsert_envelope(&pool, &d, b"{\"alg\":\"X\"}", 100)
+            .await
+            .unwrap();
         let got = read_envelope(&pool, &d).await.unwrap();
         assert_eq!(got.as_deref(), Some(b"{\"alg\":\"X\"}".as_slice()));
     }
@@ -395,11 +397,20 @@ mod tests {
         let lst = list_resources(&pool).await.unwrap();
         let tags: Vec<String> = lst
             .iter()
-            .map(|d| format!("{}/{}/{}", d.repository_name, d.resource_type, d.resource_tag))
+            .map(|d| {
+                format!(
+                    "{}/{}/{}",
+                    d.repository_name, d.resource_type, d.resource_tag
+                )
+            })
             .collect();
         assert_eq!(
             tags,
-            vec!["repo/key/a".to_string(), "repo/secret/a".into(), "repo/secret/b".into()]
+            vec![
+                "repo/key/a".to_string(),
+                "repo/secret/a".into(),
+                "repo/secret/b".into()
+            ]
         );
     }
 
