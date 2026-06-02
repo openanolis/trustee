@@ -4,7 +4,7 @@
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.8.5
+Version:        1.8.6
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -148,6 +148,12 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Tue Jun 02 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.6-1
+- KBS: add EncryptedDb resource backend for multi-replica deployments
+  (shared MySQL/SQLite-backed wrap-key store + envelope storage,
+  AES-256-GCM at-rest under an Argon2id-derived master key, atomic
+  rotation, deferred key purge with configurable grace period)
+
 * Mon Jun 01 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.5-1
 - KBS: allow resource plugin configuration override via environment variables
 - KBS: self-manage EncryptedLocalFs keys with one-shot rotation API
