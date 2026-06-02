@@ -23,20 +23,7 @@ pub enum DbPool {
     Sqlite(sqlx::SqlitePool),
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum DbKind {
-    MySql,
-    Sqlite,
-}
-
 impl DbPool {
-    pub fn kind(&self) -> DbKind {
-        match self {
-            DbPool::MySql(_) => DbKind::MySql,
-            DbPool::Sqlite(_) => DbKind::Sqlite,
-        }
-    }
-
     pub async fn connect(config: &DatabaseConfig) -> Result<Self> {
         match config.kind.to_ascii_lowercase().as_str() {
             "mysql" => {

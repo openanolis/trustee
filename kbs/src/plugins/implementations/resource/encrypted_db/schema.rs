@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS kbs_resources (
     repository_name  VARCHAR(255)    NOT NULL,
     resource_type    VARCHAR(255)    NOT NULL,
     resource_tag     VARCHAR(255)    NOT NULL,
-    envelope         JSON            NOT NULL,
+    envelope         MEDIUMTEXT      NOT NULL,
     generation       BIGINT          NOT NULL,
     updated_at       DATETIME(6)     NOT NULL,
     PRIMARY KEY (repository_name, resource_type, resource_tag),

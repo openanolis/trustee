@@ -150,6 +150,43 @@ For the full step-by-step procedures, see
 `kbs/sdk/python/reencrypt_resource.py` remains available for out-of-band
 migration when the repository is not writable by KBS.
 
+### Encrypted Database Backend
+
+`EncryptedDb` is the multi-replica successor to `EncryptedLocalFs`. Both
+**wrap keys** and **resource envelopes** live in a shared SQL database
+(MySQL or SQLite) so all KBS replicas see one consistent set of managed
+keys and resources. Wrap private keys are encrypted at rest under a
+deployment-level *master secret* (typically a Kubernetes Secret mounted
+as a tmpfs file at `/run/trustee/master.passphrase`), so a database-only
+compromise — including stolen backups, replication snapshots, or DBA
+read access — yields ciphertext only.
+
+Wire format and the `pubkey` / `rotate` / `reload` / `rewrap` admin API
+are byte-for-byte the same as `EncryptedLocalFs`; existing client tooling
+(e.g. `kbs/sdk/python/encrypt_resource.py`) keeps working unchanged.
+
+```
+[[plugins]]
+name = "resource"
+type = "EncryptedDb"
+master_secret_path = "/run/trustee/master.passphrase"   # default
+bump_poll_interval_ms = 5000                            # default
+
+  [plugins.database]
+  type = "mysql"                                        # or "sqlite"
+  dsn = "mysql://kbs:<password>@db-host:3306/trustee_kbs?ssl-mode=PREFERRED"
+  max_open_conns = 20
+  max_idle_conns = 5
+  conn_max_lifetime = "1h"
+  retired_key_purge_after = "30d"                       # "0" = disabled
+```
+
+This backend is guarded by the Cargo feature `encrypted-db`. Enable it
+when building KBS to use it. For full deployment, rotation, and purge
+semantics see
+[EncryptedDb Resource Backend](./resource_storage_backend_encrypted_db.md)
+and [EncryptedDb Key Rotation](./encrypted_db_key_rotation.md).
+
 ### Aliyun KMS
 
 [Alibaba Cloud KMS](https://www.alibabacloud.com/en/product/kms?_p_lc=1)(a.k.a Aliyun KMS)
