@@ -169,7 +169,7 @@ impl Default for RepositoryConfig {
 
 impl RepositoryConfig {
     pub(crate) fn env_overrides_present() -> bool {
-        let present = [
+        let core_present = [
             ENV_RESOURCE_STORAGE_TYPE,
             ENV_RESOURCE_STORAGE_DIR_PATH,
             ENV_RESOURCE_STORAGE_LIBRARY_PATH,
@@ -180,13 +180,21 @@ impl RepositoryConfig {
         .into_iter()
         .any(|name| env::var_os(name).is_some());
 
+        if core_present {
+            return true;
+        }
+
         #[cfg(feature = "encrypted-local-fs")]
-        let present = present || env::var_os(ENV_RESOURCE_STORAGE_PRIVATE_KEY_PATH).is_some();
+        if env::var_os(ENV_RESOURCE_STORAGE_PRIVATE_KEY_PATH).is_some() {
+            return true;
+        }
 
         #[cfg(feature = "aliyun")]
-        let present = present || super::aliyun_kms::AliyunKmsBackendConfig::env_overrides_present();
+        if super::aliyun_kms::AliyunKmsBackendConfig::env_overrides_present() {
+            return true;
+        }
 
-        present
+        false
     }
 
     pub(crate) fn from_env_overrides() -> Result<Self> {
@@ -213,8 +221,7 @@ impl RepositoryConfig {
         let normalized = backend_type
             .trim()
             .to_ascii_lowercase()
-            .replace('_', "")
-            .replace('-', "");
+            .replace(['_', '-'], "");
 
         match normalized.as_str() {
             "localfs" => Ok(Self::LocalFs(local_fs::LocalFsRepoDesc::default())),
