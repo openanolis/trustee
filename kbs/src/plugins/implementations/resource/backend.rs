@@ -153,6 +153,10 @@ pub enum RepositoryConfig {
     #[serde(alias = "encrypted_local_fs", alias = "encrypted-local-fs")]
     EncryptedLocalFs(encrypted_local_fs::EncryptedLocalFsRepoDesc),
 
+    #[cfg(feature = "encrypted-db")]
+    #[serde(alias = "encrypted_db", alias = "encrypted-db")]
+    EncryptedDb(super::encrypted_db::EncryptedDbBackendConfig),
+
     #[cfg(feature = "aliyun")]
     #[serde(alias = "aliyun")]
     Aliyun(super::aliyun_kms::AliyunKmsBackendConfig),
@@ -256,6 +260,22 @@ impl RepositoryConfig {
             "externalkms" => Ok(Self::ExternalKms(
                 super::external_kms::ExternalKmsBackendConfig::default(),
             )),
+            "encrypteddb" => {
+                #[cfg(feature = "encrypted-db")]
+                {
+                    bail!(
+                        "{ENV_RESOURCE_STORAGE_TYPE}=EncryptedDb cannot be configured purely from \
+                         environment variables; provide a config file with the [plugins.database] \
+                         table"
+                    )
+                }
+                #[cfg(not(feature = "encrypted-db"))]
+                {
+                    bail!(
+                        "{ENV_RESOURCE_STORAGE_TYPE}=EncryptedDb requires the encrypted-db feature"
+                    )
+                }
+            }
             _ => bail!("unsupported {ENV_RESOURCE_STORAGE_TYPE} value `{backend_type}`"),
         }
     }
@@ -275,6 +295,11 @@ impl RepositoryConfig {
                 if let Some(private_key_path) = env_string(ENV_RESOURCE_STORAGE_PRIVATE_KEY_PATH)? {
                     desc.private_key_path = private_key_path;
                 }
+            }
+            #[cfg(feature = "encrypted-db")]
+            Self::EncryptedDb(_) => {
+                // Sensitive fields (DSN, master_secret_path) are intentionally
+                // not overridable through environment variables.
             }
             #[cfg(feature = "aliyun")]
             Self::Aliyun(config) => {
@@ -346,6 +371,14 @@ impl TryFrom<RepositoryConfig> for ResourceStorage {
             RepositoryConfig::EncryptedLocalFs(desc) => {
                 let backend = encrypted_local_fs::EncryptedLocalFs::new(&desc)
                     .context("Failed to initialize encrypted local Resource Storage")?;
+                Ok(Self {
+                    backend: Arc::new(backend),
+                })
+            }
+            #[cfg(feature = "encrypted-db")]
+            RepositoryConfig::EncryptedDb(config) => {
+                let backend = super::encrypted_db::EncryptedDb::new(&config)
+                    .context("Failed to initialize encrypted DB Resource Storage")?;
                 Ok(Self {
                     backend: Arc::new(backend),
                 })
