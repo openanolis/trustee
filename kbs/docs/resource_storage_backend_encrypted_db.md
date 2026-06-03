@@ -101,8 +101,14 @@ Field reference:
 | `database.conn_max_lifetime` | no | `"1h"`, `"30m"`, etc. (humantime-style). Maps to `PoolOptions::max_lifetime`. |
 | `database.retired_key_purge_after` | no (default `"30d"`) | Grace period a retired key remains in the DB for late-arriving reads before being physically deleted. `"0"` disables purging. The minimum non-zero value is `"1h"`. |
 
-> Sensitive fields (DSN, master secret path) are intentionally **not**
-> overridable through the `KBS_RESOURCE_STORAGE_*` environment variables.
+All `EncryptedDb` fields can be overridden with `KBS_RESOURCE_STORAGE_*`
+environment variables — see the
+[Resource Configuration](./config.md#resource-configuration) section of the
+top-level config reference for the full list. The most common pattern in
+Kubernetes deployments is to leave the config file with placeholder values
+and pull `KBS_RESOURCE_STORAGE_DB_DSN` from a `Secret` via
+`secretKeyRef`, so the DSN (and the database password it embeds) never lives
+on disk inside the pod.
 
 ## Master secret
 

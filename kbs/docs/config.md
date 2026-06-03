@@ -220,13 +220,27 @@ set to create one from environment variables.
 
 | Environment Variable | Description |
 |----------------------|-------------|
-| `KBS_RESOURCE_STORAGE_TYPE` | Replaces or creates the resource backend type. Supported values: `LocalFs`, `EncryptedLocalFs`, `EncryptedDb`, `Aliyun`, `ExternalKms`. (For `EncryptedDb`, the database connection settings still need to come from the config file — they cannot be supplied through environment variables.) |
+| `KBS_RESOURCE_STORAGE_TYPE` | Replaces or creates the resource backend type. Supported values: `LocalFs`, `EncryptedLocalFs`, `EncryptedDb`, `Aliyun`, `ExternalKms`. |
 | `KBS_RESOURCE_STORAGE_DIR_PATH` | Overrides `dir_path` for `LocalFs` and `EncryptedLocalFs`. |
 | `KBS_RESOURCE_STORAGE_PRIVATE_KEY_PATH` | Overrides `private_key_path` for `EncryptedLocalFs`. |
 | `KBS_RESOURCE_STORAGE_LIBRARY_PATH` | Overrides `library_path` for `ExternalKms`. |
 | `KBS_RESOURCE_STORAGE_INITIAL_BUFFER_SIZE` | Overrides `initial_buffer_size` for `ExternalKms`. |
 | `KBS_RESOURCE_STORAGE_MAX_BUFFER_SIZE` | Overrides `max_buffer_size` for `ExternalKms`. |
 | `KBS_RESOURCE_STORAGE_ERROR_BUFFER_SIZE` | Overrides `error_buffer_size` for `ExternalKms`. |
+
+`EncryptedDb` backend fields can be overridden with the following variables:
+
+| Environment Variable | Description |
+|----------------------|-------------|
+| `KBS_RESOURCE_STORAGE_MASTER_SECRET_PATH` | Overrides `master_secret_path`. |
+| `KBS_RESOURCE_STORAGE_BUMP_POLL_INTERVAL_MS` | Overrides `bump_poll_interval_ms`. |
+| `KBS_RESOURCE_STORAGE_DB_TYPE` | Overrides `database.type` (`mysql` or `sqlite`). |
+| `KBS_RESOURCE_STORAGE_DB_DSN` | Overrides `database.dsn`. Recommended for cloud deployments where the DSN (and the password it embeds) is provided through a secret-manager-backed env var rather than baked into the config file. |
+| `KBS_RESOURCE_STORAGE_DB_PATH` | Overrides `database.path` (SQLite). |
+| `KBS_RESOURCE_STORAGE_DB_MAX_OPEN_CONNS` | Overrides `database.max_open_conns`. |
+| `KBS_RESOURCE_STORAGE_DB_MAX_IDLE_CONNS` | Overrides `database.max_idle_conns`. |
+| `KBS_RESOURCE_STORAGE_DB_CONN_MAX_LIFETIME` | Overrides `database.conn_max_lifetime`. |
+| `KBS_RESOURCE_STORAGE_RETIRED_KEY_PURGE_AFTER` | Overrides `database.retired_key_purge_after`. |
 
 Aliyun backend fields can be overridden with the following variables:
 
