@@ -181,6 +181,15 @@ mod tests {
         "KBS_RESOURCE_STORAGE_INITIAL_BUFFER_SIZE",
         "KBS_RESOURCE_STORAGE_MAX_BUFFER_SIZE",
         "KBS_RESOURCE_STORAGE_ERROR_BUFFER_SIZE",
+        "KBS_RESOURCE_STORAGE_MASTER_SECRET_PATH",
+        "KBS_RESOURCE_STORAGE_BUMP_POLL_INTERVAL_MS",
+        "KBS_RESOURCE_STORAGE_DB_TYPE",
+        "KBS_RESOURCE_STORAGE_DB_DSN",
+        "KBS_RESOURCE_STORAGE_DB_PATH",
+        "KBS_RESOURCE_STORAGE_DB_MAX_OPEN_CONNS",
+        "KBS_RESOURCE_STORAGE_DB_MAX_IDLE_CONNS",
+        "KBS_RESOURCE_STORAGE_DB_CONN_MAX_LIFETIME",
+        "KBS_RESOURCE_STORAGE_RETIRED_KEY_PURGE_AFTER",
         "KBS_RESOURCE_STORAGE_ALIYUN_CLIENT_KEY",
         "KBS_RESOURCE_STORAGE_ALIYUN_KMS_INSTANCE_ID",
         "KBS_RESOURCE_STORAGE_ALIYUN_PASSWORD",
@@ -524,5 +533,95 @@ mod tests {
         assert!(err
             .to_string()
             .contains("KBS_RESOURCE_STORAGE_TYPE is required"));
+    }
+
+    #[cfg(feature = "encrypted-db")]
+    #[test]
+    #[serial]
+    fn resource_storage_env_overrides_existing_encrypted_db() {
+        use crate::plugins::implementations::resource::encrypted_db::{
+            DatabaseConfig, EncryptedDbBackendConfig,
+        };
+
+        let _env = EnvGuard::clear();
+        env::set_var(
+            "KBS_RESOURCE_STORAGE_DB_DSN",
+            "mysql://kbs:env-pass@db.env:3306/trustee_kbs",
+        );
+        env::set_var(
+            "KBS_RESOURCE_STORAGE_MASTER_SECRET_PATH",
+            "/env/master.passphrase",
+        );
+        env::set_var("KBS_RESOURCE_STORAGE_BUMP_POLL_INTERVAL_MS", "1234");
+        env::set_var("KBS_RESOURCE_STORAGE_DB_MAX_OPEN_CONNS", "42");
+        env::set_var("KBS_RESOURCE_STORAGE_DB_CONN_MAX_LIFETIME", "30m");
+        env::set_var("KBS_RESOURCE_STORAGE_RETIRED_KEY_PURGE_AFTER", "7d");
+
+        let config = KbsConfig::try_from(Path::new(
+            "test_data/configs/coco-as-grpc-encrypted-db.toml",
+        ))
+        .unwrap();
+
+        assert_eq!(
+            config.plugins[0],
+            PluginsConfig::ResourceStorage(RepositoryConfig::EncryptedDb(
+                EncryptedDbBackendConfig {
+                    master_secret_path: "/env/master.passphrase".into(),
+                    bump_poll_interval_ms: 1234,
+                    database: DatabaseConfig {
+                        kind: "mysql".into(),
+                        dsn: "mysql://kbs:env-pass@db.env:3306/trustee_kbs".into(),
+                        path: "".into(),
+                        max_open_conns: 42,
+                        max_idle_conns: 5,
+                        conn_max_lifetime: "30m".into(),
+                        retired_key_purge_after: "7d".into(),
+                    },
+                }
+            ))
+        );
+    }
+
+    #[cfg(feature = "encrypted-db")]
+    #[test]
+    #[serial]
+    fn resource_storage_env_adds_encrypted_db_plugin() {
+        use crate::plugins::implementations::resource::encrypted_db::{
+            DatabaseConfig, EncryptedDbBackendConfig,
+        };
+
+        let _env = EnvGuard::clear();
+        env::set_var("KBS_RESOURCE_STORAGE_TYPE", "EncryptedDb");
+        env::set_var("KBS_RESOURCE_STORAGE_DB_TYPE", "mysql");
+        env::set_var(
+            "KBS_RESOURCE_STORAGE_DB_DSN",
+            "mysql://kbs:env-pass@db.env:3306/trustee_kbs",
+        );
+        env::set_var(
+            "KBS_RESOURCE_STORAGE_MASTER_SECRET_PATH",
+            "/env/master.passphrase",
+        );
+
+        let config =
+            KbsConfig::try_from(Path::new("test_data/configs/coco-as-grpc-3.toml")).unwrap();
+
+        assert_eq!(
+            config.plugins,
+            vec![PluginsConfig::ResourceStorage(
+                RepositoryConfig::EncryptedDb(EncryptedDbBackendConfig {
+                    master_secret_path: "/env/master.passphrase".into(),
+                    bump_poll_interval_ms: 0,
+                    database: DatabaseConfig {
+                        kind: "mysql".into(),
+                        dsn: "mysql://kbs:env-pass@db.env:3306/trustee_kbs".into(),
+                        path: "".into(),
+                        max_open_conns: 0,
+                        max_idle_conns: 0,
+                        conn_max_lifetime: "".into(),
+                        retired_key_purge_after: "".into(),
+                    },
+                })
+            )]
+        );
     }
 }

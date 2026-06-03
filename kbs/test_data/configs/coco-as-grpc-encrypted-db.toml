@@ -1,0 +1,32 @@
+[attestation_token]
+trusted_certs_paths = ["/etc/ca"]
+
+[attestation_service]
+type = "coco_as_grpc"
+as_addr = "http://127.0.0.1:50001"
+pool_size = 100
+timeout = 600
+
+[http_server]
+sockets = ["0.0.0.0:8080"]
+insecure_http = true
+
+[admin]
+insecure_api = true
+
+[policy_engine]
+policy_path = "/etc/kbs-policy.rego"
+
+[[plugins]]
+name = "resource"
+type = "EncryptedDb"
+master_secret_path = "/etc/file/master.passphrase"
+bump_poll_interval_ms = 5000
+
+  [plugins.database]
+  type = "mysql"
+  dsn = "mysql://kbs:file-pass@db.file:3306/trustee_kbs"
+  max_open_conns = 20
+  max_idle_conns = 5
+  conn_max_lifetime = "1h"
+  retired_key_purge_after = "30d"

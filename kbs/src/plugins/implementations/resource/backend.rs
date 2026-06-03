@@ -30,6 +30,27 @@ const ENV_RESOURCE_STORAGE_INITIAL_BUFFER_SIZE: &str = "KBS_RESOURCE_STORAGE_INI
 const ENV_RESOURCE_STORAGE_MAX_BUFFER_SIZE: &str = "KBS_RESOURCE_STORAGE_MAX_BUFFER_SIZE";
 const ENV_RESOURCE_STORAGE_ERROR_BUFFER_SIZE: &str = "KBS_RESOURCE_STORAGE_ERROR_BUFFER_SIZE";
 
+#[cfg(feature = "encrypted-db")]
+const ENV_RESOURCE_STORAGE_MASTER_SECRET_PATH: &str = "KBS_RESOURCE_STORAGE_MASTER_SECRET_PATH";
+#[cfg(feature = "encrypted-db")]
+const ENV_RESOURCE_STORAGE_BUMP_POLL_INTERVAL_MS: &str =
+    "KBS_RESOURCE_STORAGE_BUMP_POLL_INTERVAL_MS";
+#[cfg(feature = "encrypted-db")]
+const ENV_RESOURCE_STORAGE_DB_TYPE: &str = "KBS_RESOURCE_STORAGE_DB_TYPE";
+#[cfg(feature = "encrypted-db")]
+const ENV_RESOURCE_STORAGE_DB_DSN: &str = "KBS_RESOURCE_STORAGE_DB_DSN";
+#[cfg(feature = "encrypted-db")]
+const ENV_RESOURCE_STORAGE_DB_PATH: &str = "KBS_RESOURCE_STORAGE_DB_PATH";
+#[cfg(feature = "encrypted-db")]
+const ENV_RESOURCE_STORAGE_DB_MAX_OPEN_CONNS: &str = "KBS_RESOURCE_STORAGE_DB_MAX_OPEN_CONNS";
+#[cfg(feature = "encrypted-db")]
+const ENV_RESOURCE_STORAGE_DB_MAX_IDLE_CONNS: &str = "KBS_RESOURCE_STORAGE_DB_MAX_IDLE_CONNS";
+#[cfg(feature = "encrypted-db")]
+const ENV_RESOURCE_STORAGE_DB_CONN_MAX_LIFETIME: &str = "KBS_RESOURCE_STORAGE_DB_CONN_MAX_LIFETIME";
+#[cfg(feature = "encrypted-db")]
+const ENV_RESOURCE_STORAGE_RETIRED_KEY_PURGE_AFTER: &str =
+    "KBS_RESOURCE_STORAGE_RETIRED_KEY_PURGE_AFTER";
+
 /// Interface of a `Repository`.
 #[async_trait::async_trait]
 pub trait StorageBackend: Send + Sync {
@@ -199,6 +220,27 @@ impl RepositoryConfig {
             return true;
         }
 
+        #[cfg(feature = "encrypted-db")]
+        {
+            let encrypted_db_present = [
+                ENV_RESOURCE_STORAGE_MASTER_SECRET_PATH,
+                ENV_RESOURCE_STORAGE_BUMP_POLL_INTERVAL_MS,
+                ENV_RESOURCE_STORAGE_DB_TYPE,
+                ENV_RESOURCE_STORAGE_DB_DSN,
+                ENV_RESOURCE_STORAGE_DB_PATH,
+                ENV_RESOURCE_STORAGE_DB_MAX_OPEN_CONNS,
+                ENV_RESOURCE_STORAGE_DB_MAX_IDLE_CONNS,
+                ENV_RESOURCE_STORAGE_DB_CONN_MAX_LIFETIME,
+                ENV_RESOURCE_STORAGE_RETIRED_KEY_PURGE_AFTER,
+            ]
+            .into_iter()
+            .any(|name| env::var_os(name).is_some());
+
+            if encrypted_db_present {
+                return true;
+            }
+        }
+
         #[cfg(feature = "aliyun")]
         if super::aliyun_kms::AliyunKmsBackendConfig::env_overrides_present() {
             return true;
@@ -269,11 +311,9 @@ impl RepositoryConfig {
             "encrypteddb" => {
                 #[cfg(feature = "encrypted-db")]
                 {
-                    bail!(
-                        "{ENV_RESOURCE_STORAGE_TYPE}=EncryptedDb cannot be configured purely from \
-                         environment variables; provide a config file with the [plugins.database] \
-                         table"
-                    )
+                    Ok(Self::EncryptedDb(
+                        super::encrypted_db::EncryptedDbBackendConfig::default(),
+                    ))
                 }
                 #[cfg(not(feature = "encrypted-db"))]
                 {
@@ -303,9 +343,42 @@ impl RepositoryConfig {
                 }
             }
             #[cfg(feature = "encrypted-db")]
-            Self::EncryptedDb(_) => {
-                // Sensitive fields (DSN, master_secret_path) are intentionally
-                // not overridable through environment variables.
+            Self::EncryptedDb(config) => {
+                if let Some(master_secret_path) =
+                    env_string(ENV_RESOURCE_STORAGE_MASTER_SECRET_PATH)?
+                {
+                    config.master_secret_path = master_secret_path;
+                }
+                if let Some(bump_poll_interval_ms) =
+                    env_parse(ENV_RESOURCE_STORAGE_BUMP_POLL_INTERVAL_MS)?
+                {
+                    config.bump_poll_interval_ms = bump_poll_interval_ms;
+                }
+                if let Some(db_type) = env_string(ENV_RESOURCE_STORAGE_DB_TYPE)? {
+                    config.database.kind = db_type;
+                }
+                if let Some(db_dsn) = env_string(ENV_RESOURCE_STORAGE_DB_DSN)? {
+                    config.database.dsn = db_dsn;
+                }
+                if let Some(db_path) = env_string(ENV_RESOURCE_STORAGE_DB_PATH)? {
+                    config.database.path = db_path;
+                }
+                if let Some(max_open_conns) = env_parse(ENV_RESOURCE_STORAGE_DB_MAX_OPEN_CONNS)? {
+                    config.database.max_open_conns = max_open_conns;
+                }
+                if let Some(max_idle_conns) = env_parse(ENV_RESOURCE_STORAGE_DB_MAX_IDLE_CONNS)? {
+                    config.database.max_idle_conns = max_idle_conns;
+                }
+                if let Some(conn_max_lifetime) =
+                    env_string(ENV_RESOURCE_STORAGE_DB_CONN_MAX_LIFETIME)?
+                {
+                    config.database.conn_max_lifetime = conn_max_lifetime;
+                }
+                if let Some(retired_key_purge_after) =
+                    env_string(ENV_RESOURCE_STORAGE_RETIRED_KEY_PURGE_AFTER)?
+                {
+                    config.database.retired_key_purge_after = retired_key_purge_after;
+                }
             }
             #[cfg(feature = "aliyun")]
             Self::Aliyun(config) => {
