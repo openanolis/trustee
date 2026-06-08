@@ -13,7 +13,7 @@ default = ["coco-as-builtin", "coco-as-grpc"]
 encrypted-local-fs = []
 
 # Enable encrypted DB-backed resource backend (multi-replica wrap-key sharing)
-encrypted-db = ["sqlx", "argon2", "zeroize", "chrono"]
+encrypted-db = ["sqlx", "argon2", "chrono"]
 
 # Support a backend attestation service for KBS
 as = []
@@ -47,7 +47,11 @@ tpm-pca = []
 actix = "0.13.5"
 actix-web = { workspace = true, features = ["openssl"] }
 actix-web-httpauth.workspace = true
-aes-gcm = "0.10.1"
+aes-gcm = { version = "0.10.1", features = ["zeroize"] }
+# Direct deps to activate their `zeroize` feature: `aes-gcm`'s own `zeroize`
+# feature does not propagate down to `aes` or `polyval`. Do not remove.
+aes = { version = "0.8", features = ["zeroize"] }
+polyval = { version = "0.6", features = ["zeroize"] }
 aes-kw = "0.2.1"
 anyhow.workspace = true
 argon2 = { workspace = true, optional = true }
@@ -93,7 +97,7 @@ derivative = "2.2.0"
 rustls-pki-types = "1.14.0"
 rustls-webpki = { version = "0.103.9", features = ["ring"] }
 x509-cert = "0.2.5"
-zeroize = { workspace = true, optional = true }
+zeroize.workspace = true
 
 [target.'cfg(not(any(target_arch = "s390x", target_arch = "aarch64")))'.dependencies]
 attestation-service = { path = "../attestation-service", default-features = false, features = [

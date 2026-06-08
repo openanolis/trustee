@@ -19,6 +19,7 @@ use p256::{
 use rand::{rngs::OsRng, Rng};
 use rsa::{sha2::Sha256, BigUint, Oaep, Pkcs1v15Encrypt, RsaPublicKey};
 use serde_json::{json, Map};
+use zeroize::Zeroizing;
 
 /// RSA PKCS#1 v1.5
 const RSA1_5_ALGORITHM: &str = "RSA1_5";
@@ -49,7 +50,7 @@ fn rsa_1v15(k_mod: String, k_exp: String, mut payload_data: Vec<u8>) -> Result<R
     warn!("Get JWE request using deprecated kcs#1 v1.5 encryption, which has potential security issues.");
     let mut rng = rand::thread_rng();
 
-    let aes_sym_key = Aes256Gcm::generate_key(&mut OsRng);
+    let aes_sym_key = Zeroizing::new(Aes256Gcm::generate_key(&mut OsRng));
     let mut cipher = Aes256Gcm::new(&aes_sym_key);
     let iv = rng.gen::<[u8; 12]>();
     let nonce = Nonce::from_slice(&iv);
@@ -94,7 +95,7 @@ fn rsa_1v15(k_mod: String, k_exp: String, mut payload_data: Vec<u8>) -> Result<R
 fn rsa_oaep256(k_mod: String, k_exp: String, mut payload_data: Vec<u8>) -> Result<Response> {
     let mut rng = rand::thread_rng();
 
-    let aes_sym_key = Aes256Gcm::generate_key(&mut OsRng);
+    let aes_sym_key = Zeroizing::new(Aes256Gcm::generate_key(&mut OsRng));
     let mut cipher = Aes256Gcm::new(&aes_sym_key);
     let iv = rng.gen::<[u8; 12]>();
     let nonce = Nonce::from_slice(&iv);
@@ -141,7 +142,7 @@ fn ecdh_es_a256kw_p256(x: String, y: String, mut payload_data: Vec<u8>) -> Resul
     let mut rng = rand::thread_rng();
 
     // 1. Generate a random CEK
-    let cek = Aes256Gcm::generate_key(&mut rng);
+    let cek = Zeroizing::new(Aes256Gcm::generate_key(&mut rng));
 
     // 2. Wrap the CEK and generate ProtectedHeader
     let x: [u8; 32] = URL_SAFE_NO_PAD
@@ -163,32 +164,29 @@ fn ecdh_es_a256kw_p256(x: String, y: String, mut payload_data: Vec<u8>) -> Resul
         .into_option()
         .ok_or(anyhow!("invalid TEE public key"))?;
     let encrypter_secret = EphemeralSecret::random(&mut rng);
-    let z = encrypter_secret
-        .diffie_hellman(&public_key)
-        .raw_secret_bytes()
-        .to_vec();
+    let z = Zeroizing::new(
+        encrypter_secret
+            .diffie_hellman(&public_key)
+            .raw_secret_bytes()
+            .to_vec(),
+    );
     let mut key_derivation_materials = Vec::new();
     key_derivation_materials.extend_from_slice(&(ECDH_ES_A256KW.len() as u32).to_be_bytes());
     key_derivation_materials.extend_from_slice(ECDH_ES_A256KW.as_bytes());
     key_derivation_materials.extend_from_slice(&(0_u32).to_be_bytes());
     key_derivation_materials.extend_from_slice(&(0_u32).to_be_bytes());
     key_derivation_materials.extend_from_slice(&AES_GCM_256_KEY_BITS.to_be_bytes());
-    let mut wrapping_key = vec![0; 32];
+    let mut wrapping_key = Zeroizing::new(vec![0u8; 32]);
     concat_kdf::derive_key_into::<rsa::sha2::Sha256>(
         &z,
         &key_derivation_materials,
         &mut wrapping_key,
     )
     .map_err(|e| anyhow!("failed to do concat KDF: {e:?}"))?;
-    let wrapping_key: [u8; 32] = wrapping_key
-        .try_into()
-        .map_err(|_| anyhow!("invalid bytes length of AES wrapping key"))?;
-    let wrapping_key: KekAes256 = Kek::new(&GenericArray::from(wrapping_key));
+    let wrapping_kek: KekAes256 = Kek::new(GenericArray::from_slice(&wrapping_key));
     let mut encrypted_key = vec![0; 40];
-    encrypted_key.resize(40, 0);
-    let cek = cek.to_vec();
-    wrapping_key
-        .wrap(&cek, &mut encrypted_key)
+    wrapping_kek
+        .wrap(cek.as_slice(), &mut encrypted_key)
         .map_err(|e| anyhow!("failed to do AES wrapping: {e:?}"))?;
 
     let point = EncodedPoint::from(encrypter_secret.public_key());
@@ -217,7 +215,7 @@ fn ecdh_es_a256kw_p256(x: String, y: String, mut payload_data: Vec<u8>) -> Resul
     };
 
     // 3. Encrypt content with CEK
-    let mut cek_cipher = Aes256Gcm::new(GenericArray::from_slice(&cek));
+    let mut cek_cipher = Aes256Gcm::new(&cek);
 
     let iv = rand::thread_rng().gen::<[u8; 12]>();
     let nonce = Nonce::from_slice(&iv);
