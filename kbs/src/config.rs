@@ -9,6 +9,7 @@ use crate::token::AttestationTokenVerifierConfig;
 use anyhow::anyhow;
 use clap::Parser;
 use config::{Config, File};
+use const_format::concatcp;
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -75,6 +76,53 @@ pub struct KbsConfig {
     pub plugins: Vec<PluginsConfig>,
 }
 
+/// The commit ref of the config documentation in the openanolis/trustee repository.
+const DOC_COMMIT_REF: &str = "6cae09a2";
+
+const CONFIG_DOC: &str = concatcp!(
+    "https://github.com/openanolis/trustee/blob/",
+    DOC_COMMIT_REF,
+    "/kbs/docs/config.md"
+);
+
+/// Best-effort mapping from a config error string to the relevant section anchor
+/// in the KBS configuration documentation.
+fn config_section_hint(err: &str) -> Option<&'static str> {
+    if err.contains("admin") {
+        return Some(concatcp!(CONFIG_DOC, "#admin-api-configuration"));
+    }
+    if err.contains("attestation_service") {
+        return Some(concatcp!(CONFIG_DOC, "#attestation-configuration"));
+    }
+    if err.contains("attestation_token") {
+        return Some(concatcp!(CONFIG_DOC, "#attestation-token-configuration"));
+    }
+    if err.contains("http_server") {
+        return Some(concatcp!(CONFIG_DOC, "#http-server-configuration"));
+    }
+    if err.contains("policy_engine") {
+        return Some(concatcp!(CONFIG_DOC, "#policy-engine-configuration"));
+    }
+    if err.contains("plugins") {
+        return Some(concatcp!(CONFIG_DOC, "#plugins-configuration"));
+    }
+    None
+}
+
+fn format_config_load_error(config_path: &Path, err: impl std::fmt::Display) -> anyhow::Error {
+    let err_str = err.to_string();
+    let mut message = format!(
+        "failed to load configuration file {}: {err_str}",
+        config_path.display()
+    );
+    if let Some(doc) = config_section_hint(&err_str) {
+        message.push_str("\nSee ");
+        message.push_str(doc);
+        message.push('.');
+    }
+    anyhow!(message)
+}
+
 impl KbsConfig {
     fn apply_resource_plugin_env_overrides(&mut self) -> anyhow::Result<()> {
         if !RepositoryConfig::env_overrides_present() {
@@ -115,11 +163,12 @@ impl TryFrom<&Path> for KbsConfig {
             )?
             .set_default("attestation_service.policy_ids", Vec::<&str>::new())?
             .add_source(File::with_name(config_path.to_str().unwrap()))
-            .build()?;
+            .build()
+            .map_err(|e| format_config_load_error(config_path, e))?;
 
         let mut kbs_config: Self = c
             .try_deserialize()
-            .map_err(|e| anyhow!("invalid config: {}", e.to_string()))?;
+            .map_err(|e| format_config_load_error(config_path, e))?;
         kbs_config.apply_resource_plugin_env_overrides()?;
         Ok(kbs_config)
     }
