@@ -30,6 +30,8 @@ environment:
       version: "238-1.an23"
     - name: "libtdx-attest-devel"
       version: "1.22-1.an23"
+    - name: "libtdx-verify-devel"
+      version: "1.22-6.an23"
     - name: "openssl-devel"
       version: "3.0.12-15.an23"
     - name: "protobuf-devel"
@@ -60,9 +62,6 @@ phases:
       - mkdir -p /home/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
       - tar -xzf "/home/build-artifacts-v${VERSION}.tar.gz" -C /home/rpmbuild/SOURCES/
       - tar -xzf /home/rpmbuild/SOURCES/trustee-${VERSION}.tar.gz -C /home/rpmbuild/SPECS --strip-components=2 trustee-${VERSION}/rpm/trustee.spec
-      - mkdir -p /home/rpms
-      - tar -xzf /home/rpmbuild/SOURCES/trustee-${VERSION}.tar.gz -C /home/rpms --strip-components=3 trustee-${VERSION}/rpm/deps/
-      - dnf install -y /home/rpms/*.rpm
   build:
     commands:
       - rpmbuild --define "_topdir /home/rpmbuild" -ba /home/rpmbuild/SPECS/trustee.spec
