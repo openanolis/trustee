@@ -1,4 +1,4 @@
-%define alinux_release 1
+%define alinux_release 2
 %global config_dir /etc/trustee
 %global debug_package %{nil}
 %global __brp_mangle_shebangs %{nil}
@@ -19,9 +19,9 @@ Source3:  go-vendor.tar.gz
 Source4:  frontend_node_modules.tar.gz
 Source5:  challenge-ra-policy.rego
 
-Requires: openssl tzdata sqlite-libs
+Requires: openssl tzdata sqlite-libs libtdx-verify
 
-BuildRequires:  cargo clang perl protobuf-devel git libtdx-attest-devel libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel libsgx-dcap-quote-verify-devel libsgx-dcap-quote-verify libsgx-headers
+BuildRequires:  cargo clang perl protobuf-devel git libtdx-attest-devel libtdx-verify-devel libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel
 BuildRequires:  ca-certificates gcc golang
 
 %description
@@ -133,9 +133,6 @@ fi
 %{_prefix}/lib/systemd/system/rvps.service
 %{_prefix}/lib/systemd/system/trustee-gateway.service
 %{_prefix}/lib/systemd/system/trustee.service
-/usr/include/sgx_*
-/usr/lib64/lib*
-/etc/sgx*
 
 %files -n trustee-frontend
 /usr/share/nginx/html/trustee/*
@@ -148,6 +145,13 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Mon Jun 08 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.6-2
+- RPM: depend on libtdx-verify(-devel) from the distro repository instead of
+  shipping libsgx-dcap-quote-verify / libsgx-headers .so and headers inside
+  the trustee package. The Alinux3 alinux3-plus repo and Anolis 23 EPAO repo
+  both publish libtdx-verify now, so the self-contained intel-deps tree and
+  the bundled libsgx-* .al8 RPMs under rpm/deps/ are no longer needed.
+
 * Tue Jun 02 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.6-1
 - KBS: add EncryptedDb resource backend for multi-replica deployments
   (shared MySQL/SQLite-backed wrap-key store + envelope storage,

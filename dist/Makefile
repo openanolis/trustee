@@ -91,12 +91,6 @@ install:
 	install -m 755 ../target/release/rvps-tool $(BUILDROOT)$(PREFIX)/bin/rvps-tool
 	install -m 755 ../target/release/attestation-challenge-client $(BUILDROOT)$(PREFIX)/bin/attestation-challenge-client
 	install -m 755 ../trustee-gateway/gateway $(BUILDROOT)$(PREFIX)/bin/trustee-gateway
-	
-	install -d -p $(BUILDROOT)$(PREFIX)/include
-	install -d -p $(BUILDROOT)$(PREFIX)/lib64
-	cp intel-deps/include/sgx_* $(BUILDROOT)$(PREFIX)/include/
-	cp intel-deps/lib64/lib* $(BUILDROOT)$(PREFIX)/lib64/
-	cp intel-deps/etc/sgx_* $(BUILDROOT)/etc/
 
 # 安装前端目标
 install-frontend:

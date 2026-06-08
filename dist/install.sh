@@ -59,8 +59,3 @@ install -m 755 ../target/release/grpc-as ${BUILDROOT}${PREFIX}/bin/grpc-as
 install -m 755 ../target/release/rvps ${BUILDROOT}${PREFIX}/bin/rvps
 install -m 755 ../target/release/kbs-client ${BUILDROOT}${PREFIX}/bin/kbs-client
 install -m 755 ../target/release/rvps-tool ${BUILDROOT}${PREFIX}/bin/rvps-tool
-install -d -p ${BUILDROOT}${PREFIX}/include
-install -d -p ${BUILDROOT}${PREFIX}/lib64
-cp intel-deps/include/sgx_* ${BUILDROOT}${PREFIX}/include/
-cp intel-deps/lib64/lib* ${BUILDROOT}${PREFIX}/lib64/
-cp intel-deps/etc/sgx_* ${BUILDROOT}/etc/
