@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, path::Path, sync::Arc};
 
-use actix_web::{web, App, HttpServer};
+use actix_cors::Cors;
+use actix_web::{http::header, web, App, HttpServer};
 use anyhow::Result;
 use attestation_service::{config::Config, config::ConfigError, AttestationService, ServiceError};
 use clap::{arg, command, Parser};
@@ -41,6 +42,12 @@ pub struct Cli {
     /// private key are provided then HTTPS will be enabled.
     #[arg(short = 'k', long)]
     pub https_prikey: Option<String>,
+
+    /// Allowed origin for CORS access (e.g., "http://localhost:3000").
+    /// Can be specified multiple times or comma-separated. When empty
+    /// (the default), no CORS origins are allowed.
+    #[arg(short = 'r', long = "allowed_origin", value_delimiter = ',', num_args = 1..)]
+    pub allowed_origin: Vec<String>,
 }
 
 #[derive(EnumString, AsRefStr)]
@@ -87,6 +94,36 @@ pub enum RestfulError {
     Certificate(#[from] anyhow::Error),
 }
 
+fn configure_cors(allowed_origin: &[String]) -> Cors {
+    let mut cors = Cors::default()
+        .allowed_methods(vec!["POST", "GET", "OPTIONS"])
+        .allowed_headers(vec![header::CONTENT_TYPE, header::AUTHORIZATION])
+        .max_age(86400);
+
+    // Parse origin
+    if !allowed_origin.is_empty() {
+        let origins: Vec<String> = allowed_origin
+            .iter()
+            .flat_map(|s| s.split(','))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        for ori in &origins {
+            if ori.starts_with("http://") || ori.starts_with("https://") {
+                log::info!("Allowed CORS origin: {ori:?}");
+                cors = cors.allowed_origin(ori.as_str());
+            } else {
+                log::error!(
+                    "Invalid CORS origin format: '{ori}'. Must start with http:// or https://"
+                );
+            }
+        }
+    };
+
+    cors
+}
+
 #[actix_web::main]
 async fn main() -> Result<(), RestfulError> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
@@ -106,9 +143,12 @@ async fn main() -> Result<(), RestfulError> {
 
     let attestation_service = AttestationService::new(config).await?;
 
+    let allowed_origin = cli.allowed_origin.clone();
+
     let attestation_service = web::Data::new(Arc::new(RwLock::new(attestation_service)));
     let server = HttpServer::new(move || {
         App::new()
+            .wrap(configure_cors(&allowed_origin))
             .service(web::resource(WebApi::Attestation.as_ref()).route(web::post().to(attestation)))
             .service(
                 web::resource(WebApi::Policy.as_ref())
