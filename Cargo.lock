@@ -3421,6 +3421,7 @@ dependencies = [
  "clap",
  "concat-kdf",
  "config",
+ "const_format",
  "cryptoki",
  "derivative",
  "env_logger 0.10.2",
