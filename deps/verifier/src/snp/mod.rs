@@ -17,6 +17,7 @@ use openssl::{
 use serde_json::json;
 use sev::firmware::guest::AttestationReport;
 use sev::firmware::host::{CertTableEntry, CertType};
+#[cfg(test)]
 use std::sync::OnceLock;
 use x509_parser::prelude::*;
 
@@ -31,12 +32,180 @@ const UCODE_SPL_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .3704 .1 .3 .8);
 const SNP_SPL_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .3704 .1 .3 .3);
 const TEE_SPL_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .3704 .1 .3 .2);
 const LOADER_SPL_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .3704 .1 .3 .1);
+const FMC_SPL_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .3704 .1 .3 .9);
 
-#[derive(Debug)]
-pub struct Snp {
-    vendor_certs: VendorCertificates,
+// AMD Key Distribution Service, used to fetch the VCEK on-demand when the
+// attester did not embed a cert chain in the evidence (e.g. the host does not
+// provision the VCEK cert table in the extended report).
+const KDS_CERT_SITE: &str = "https://kdsintf.amd.com";
+const KDS_VCEK: &str = "/vcek/v1";
+
+// Supported report versions. v2 has no CPUID fields (legacy, assumed Milan);
+// v3..=5 carry CPUID family/model so the processor generation can be derived.
+const REPORT_VERSION_MIN: u32 = 2;
+const REPORT_VERSION_MAX: u32 = 5;
+
+// Offsets inside the 1184-byte ATTESTATION_REPORT (stable across v2..=5).
+const OFF_REPORTED_TCB: usize = 0x180;
+const OFF_CPUID_FAM: usize = 0x188;
+const OFF_CPUID_MOD: usize = 0x189;
+
+/// AMD EPYC processor generations whose AMD root keys we trust.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProcessorGeneration {
+    Milan,
+    Genoa,
+    Turin,
 }
 
+impl std::fmt::Display for ProcessorGeneration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            ProcessorGeneration::Milan => "Milan",
+            ProcessorGeneration::Genoa => "Genoa",
+            ProcessorGeneration::Turin => "Turin",
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl ProcessorGeneration {
+    fn pem(&self) -> &'static [u8] {
+        match self {
+            ProcessorGeneration::Milan => include_bytes!("milan_ask_ark_asvk.pem"),
+            ProcessorGeneration::Genoa => include_bytes!("genoa_ask_ark_asvk.pem"),
+            ProcessorGeneration::Turin => include_bytes!("turin_ask_ark_asvk.pem"),
+        }
+    }
+}
+
+/// reported_tcb SPLs read straight from the raw report bytes. The byte order of
+/// TCB_VERSION changed on Turin (a FMC byte was prepended), so the `sev` 4.x
+/// `report.reported_tcb` fields are wrong on Turin; we read the raw bytes with a
+/// generation-aware layout instead.
+struct ReportedTcb {
+    fmc: Option<u8>,
+    bootloader: u8,
+    tee: u8,
+    snp: u8,
+    microcode: u8,
+}
+
+fn read_reported_tcb(raw: &[u8], gen: ProcessorGeneration) -> Result<ReportedTcb> {
+    let t = raw
+        .get(OFF_REPORTED_TCB..OFF_REPORTED_TCB + 8)
+        .context("report too short for REPORTED_TCB")?;
+    Ok(match gen {
+        // Turin: [fmc, bootloader, tee, snp, _, _, _, microcode]
+        ProcessorGeneration::Turin => ReportedTcb {
+            fmc: Some(t[0]),
+            bootloader: t[1],
+            tee: t[2],
+            snp: t[3],
+            microcode: t[7],
+        },
+        // Milan/Genoa: [bootloader, tee, _, _, _, _, snp, microcode]
+        _ => ReportedTcb {
+            fmc: None,
+            bootloader: t[0],
+            tee: t[1],
+            snp: t[6],
+            microcode: t[7],
+        },
+    })
+}
+
+/// Derive the processor generation from the CPUID family/model bytes (report
+/// v3+). v2 reports have no CPUID data and are treated as Milan for backwards
+/// compatibility.
+fn get_processor_generation(raw: &[u8], version: u32) -> Result<ProcessorGeneration> {
+    if version < 3 {
+        return Ok(ProcessorGeneration::Milan);
+    }
+    let cpu_fam = *raw
+        .get(OFF_CPUID_FAM)
+        .context("report too short for CPUID")?;
+    let cpu_mod = *raw
+        .get(OFF_CPUID_MOD)
+        .context("report too short for CPUID")?;
+    match cpu_fam {
+        0x19 => match cpu_mod {
+            0x0..=0xF => Ok(ProcessorGeneration::Milan),
+            0x10..=0x1F | 0xA0..=0xAF => Ok(ProcessorGeneration::Genoa),
+            _ => bail!("Unsupported SNP processor model {cpu_mod:#x} for family 0x19"),
+        },
+        0x1A => match cpu_mod {
+            0x0..=0x11 => Ok(ProcessorGeneration::Turin),
+            _ => bail!("Unsupported SNP processor model {cpu_mod:#x} for family 0x1A"),
+        },
+        _ => bail!("Unsupported SNP processor family {cpu_fam:#x}"),
+    }
+}
+
+fn load_cert_chain_for(gen: ProcessorGeneration) -> Result<VendorCertificates> {
+    let certs = X509::stack_from_pem(gen.pem())?;
+    if certs.len() != 3 {
+        bail!("Malformed {gen} ASK/ARK/ASVK");
+    }
+    Ok(VendorCertificates {
+        ask: certs[0].clone(),
+        ark: certs[1].clone(),
+        asvk: certs[2].clone(),
+    })
+}
+
+/// Fetch the VCEK (DER) from the AMD KDS for the given report and generation.
+async fn fetch_vcek_from_kds(
+    raw: &[u8],
+    gen: ProcessorGeneration,
+    chip_id: &[u8],
+) -> Result<Vec<u8>> {
+    if chip_id.iter().all(|b| *b == 0) {
+        bail!("Hardware ID is all-zero; cannot request VCEK from KDS (MASK_CHIP_ID set?)");
+    }
+    let tcb = read_reported_tcb(raw, gen)?;
+    // Turin uses an 8-byte hwID in the KDS URL; earlier generations use 64 bytes.
+    let hw_id = match gen {
+        ProcessorGeneration::Turin => hex::encode(&chip_id[0..8]),
+        _ => hex::encode(chip_id),
+    };
+    let url = match gen {
+        ProcessorGeneration::Turin => {
+            let fmc = tcb.fmc.context("Turin report missing FMC TCB value")?;
+            format!(
+                "{KDS_CERT_SITE}{KDS_VCEK}/{gen}/{hw_id}?fmcSPL={:02}&blSPL={:02}&teeSPL={:02}&snpSPL={:02}&ucodeSPL={:02}",
+                fmc, tcb.bootloader, tcb.tee, tcb.snp, tcb.microcode
+            )
+        }
+        _ => format!(
+            "{KDS_CERT_SITE}{KDS_VCEK}/{gen}/{hw_id}?blSPL={:02}&teeSPL={:02}&snpSPL={:02}&ucodeSPL={:02}",
+            tcb.bootloader, tcb.tee, tcb.snp, tcb.microcode
+        ),
+    };
+    debug!("Fetching VCEK from KDS: {url}");
+    let client = reqwest::Client::builder()
+        .build()
+        .context("Failed to build KDS HTTP client")?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .context("Failed to send VCEK request to KDS")?;
+    if !resp.status().is_success() {
+        bail!("KDS returned status {} for {url}", resp.status());
+    }
+    let der = resp
+        .bytes()
+        .await
+        .context("Failed to read VCEK body from KDS")?
+        .to_vec();
+    Ok(der)
+}
+
+#[derive(Debug, Default)]
+pub struct Snp {}
+
+#[cfg(test)]
 pub(crate) fn load_milan_cert_chain() -> &'static Result<VendorCertificates> {
     static MILAN_CERT_CHAIN: OnceLock<Result<VendorCertificates>> = OnceLock::new();
     MILAN_CERT_CHAIN.get_or_init(|| {
@@ -56,11 +225,7 @@ pub(crate) fn load_milan_cert_chain() -> &'static Result<VendorCertificates> {
 
 impl Snp {
     pub fn new() -> Result<Self> {
-        let Result::Ok(vendor_certs) = load_milan_cert_chain() else {
-            bail!("Failed to load Milan cert chain");
-        };
-        let vendor_certs = vendor_certs.clone();
-        Ok(Self { vendor_certs })
+        Ok(Self {})
     }
 }
 
@@ -84,15 +249,32 @@ impl Verifier for Snp {
             cert_chain,
         } = serde_json::from_value(evidence).context("Deserialize Quote failed.")?;
 
-        let Some(cert_chain) = cert_chain else {
-            bail!("Cert chain is unset");
+        // Faithful raw bytes of the report; sev 4.x round-trips v2..=5 reports
+        // byte-for-byte, so we use these for offset-based parsing of fields the
+        // 4.x struct does not expose correctly (CPUID, Turin TCB layout).
+        let raw = bincode::serialize(&report).context("Failed to serialize report")?;
+
+        if report.version < REPORT_VERSION_MIN || report.version > REPORT_VERSION_MAX {
+            return Err(anyhow!(
+                "Unexpected report version {} (supported {REPORT_VERSION_MIN}..={REPORT_VERSION_MAX})",
+                report.version
+            ));
+        }
+
+        let proc_gen = get_processor_generation(&raw, report.version)?;
+        let vendor_certs = load_cert_chain_for(proc_gen)?;
+
+        // Use the cert chain embedded in the evidence, or fetch the VCEK from the
+        // AMD KDS when the attester did not provide one.
+        let cert_chain = match cert_chain {
+            Some(cc) if !cc.is_empty() => cc,
+            _ => {
+                let vcek = fetch_vcek_from_kds(&raw, proc_gen, &report.chip_id).await?;
+                vec![CertTableEntry::new(CertType::VCEK, vcek)]
+            }
         };
 
-        verify_report_signature(&report, &cert_chain, &self.vendor_certs)?;
-
-        if report.version != 2 {
-            return Err(anyhow!("Unexpected report version"));
-        }
+        verify_report_signature(&report, &raw, &cert_chain, &vendor_certs, proc_gen)?;
 
         if report.vmpl != 0 {
             return Err(anyhow!("VMPL Check Failed"));
@@ -122,7 +304,7 @@ impl Verifier for Snp {
             }
         }
 
-        let claims_map = parse_tee_evidence(&report);
+        let claims_map = parse_tee_evidence(&report, &raw, proc_gen)?;
         let json = json!(claims_map);
         Ok((json, "cpu".to_string()))
     }
@@ -164,8 +346,10 @@ fn get_oid_int(cert: &x509_parser::certificate::TbsCertificate, oid: Oid) -> Res
 
 pub(crate) fn verify_report_signature(
     report: &AttestationReport,
+    raw: &[u8],
     cert_chain: &[CertTableEntry],
     vendor_certs: &VendorCertificates,
+    proc_gen: ProcessorGeneration,
 ) -> Result<()> {
     // check cert chain
     let VendorCertificates { ask, ark, asvk } = vendor_certs;
@@ -184,35 +368,56 @@ pub(crate) fn verify_report_signature(
     let common_name =
         get_common_name(&endorsement_key).context("No common name found in certificate")?;
 
-    // if the common name is "VCEK", then the key is a VCEK
-    // so lets check the chip id
-    if common_name == "VCEK"
-        && get_oid_octets::<64>(&parsed_endorsement_key, HW_ID_OID)? != report.chip_id
-    {
-        bail!("Chip ID mismatch");
+    // reported_tcb read from the raw bytes with a generation-aware layout
+    // (the sev 4.x struct misreads Turin's TCB which has a prepended FMC byte).
+    let tcb = read_reported_tcb(raw, proc_gen)?;
+
+    // if the common name is "VCEK", then the key is a VCEK, so check the chip id.
+    // Turin VCEKs carry an 8-byte HWID extension; earlier generations carry 64.
+    if common_name == "VCEK" {
+        match proc_gen {
+            ProcessorGeneration::Turin => {
+                let hwid = get_oid_octets::<8>(&parsed_endorsement_key, HW_ID_OID)?;
+                if hwid[..] != report.chip_id[0..8] {
+                    bail!("Chip ID mismatch");
+                }
+            }
+            _ => {
+                if get_oid_octets::<64>(&parsed_endorsement_key, HW_ID_OID)? != report.chip_id {
+                    bail!("Chip ID mismatch");
+                }
+            }
+        }
     }
 
     // tcb version
     // these integer extensions are 3 bytes with the last byte as the data
-    if get_oid_int(&parsed_endorsement_key, UCODE_SPL_OID)? != report.reported_tcb.microcode {
+    if get_oid_int(&parsed_endorsement_key, UCODE_SPL_OID)? != tcb.microcode {
         return Err(anyhow!("Microcode version mismatch"));
     }
 
-    if get_oid_int(&parsed_endorsement_key, SNP_SPL_OID)? != report.reported_tcb.snp {
+    if get_oid_int(&parsed_endorsement_key, SNP_SPL_OID)? != tcb.snp {
         return Err(anyhow!("SNP version mismatch"));
     }
 
-    if get_oid_int(&parsed_endorsement_key, TEE_SPL_OID)? != report.reported_tcb.tee {
+    if get_oid_int(&parsed_endorsement_key, TEE_SPL_OID)? != tcb.tee {
         return Err(anyhow!("TEE version mismatch"));
     }
 
-    if get_oid_int(&parsed_endorsement_key, LOADER_SPL_OID)? != report.reported_tcb.bootloader {
+    if get_oid_int(&parsed_endorsement_key, LOADER_SPL_OID)? != tcb.bootloader {
         return Err(anyhow!("Boot loader version mismatch"));
+    }
+
+    // FMC is a Turin+ TCB component.
+    if let Some(fmc) = tcb.fmc {
+        if get_oid_int(&parsed_endorsement_key, FMC_SPL_OID)? != fmc {
+            return Err(anyhow!("FMC version mismatch"));
+        }
     }
 
     // verify report signature
     let sig = ecdsa::EcdsaSig::try_from(&report.signature)?;
-    let data = &bincode::serialize(&report)?[..=0x29f];
+    let data = &raw[..=0x29f];
 
     let pub_key = EcKey::try_from(endorsement_key.public_key()?)?;
     let signed = sig.verify(&sha384(data), &pub_key)?;
@@ -267,7 +472,13 @@ fn verify_cert_chain(
     Ok(decoded_key)
 }
 
-pub(crate) fn parse_tee_evidence(report: &AttestationReport) -> TeeEvidenceParsedClaim {
+pub(crate) fn parse_tee_evidence(
+    report: &AttestationReport,
+    raw: &[u8],
+    proc_gen: ProcessorGeneration,
+) -> Result<TeeEvidenceParsedClaim> {
+    // generation-aware reported_tcb (see read_reported_tcb)
+    let tcb = read_reported_tcb(raw, proc_gen)?;
     let claims_map = json!({
         // policy fields
         "policy_abi_major": format!("{}",report.policy.abi_major()),
@@ -278,10 +489,10 @@ pub(crate) fn parse_tee_evidence(report: &AttestationReport) -> TeeEvidenceParse
         "policy_single_socket": format!("{}", report.policy.single_socket_required()),
 
         // versioning info
-        "reported_tcb_bootloader": format!("{}", report.reported_tcb.bootloader),
-        "reported_tcb_tee": format!("{}", report.reported_tcb.tee),
-        "reported_tcb_snp": format!("{}", report.reported_tcb.snp),
-        "reported_tcb_microcode": format!("{}", report.reported_tcb.microcode),
+        "reported_tcb_bootloader": format!("{}", tcb.bootloader),
+        "reported_tcb_tee": format!("{}", tcb.tee),
+        "reported_tcb_snp": format!("{}", tcb.snp),
+        "reported_tcb_microcode": format!("{}", tcb.microcode),
 
         // platform info
         "platform_tsme_enabled": format!("{}", report.plat_info.tsme_enabled()),
@@ -291,7 +502,7 @@ pub(crate) fn parse_tee_evidence(report: &AttestationReport) -> TeeEvidenceParse
         "measurement": format!("{}", base64::engine::general_purpose::STANDARD.encode(report.measurement)),
     });
 
-    claims_map as TeeEvidenceParsedClaim
+    Ok(claims_map as TeeEvidenceParsedClaim)
 }
 
 fn get_common_name(cert: &x509::X509) -> Result<String> {
@@ -319,6 +530,11 @@ mod tests {
 
     const VLEK: &[u8; 1329] = include_bytes!("../../test_data/snp/test-vlek.der");
     const VLEK_REPORT: &[u8; 1184] = include_bytes!("../../test_data/snp/test-vlek-report.bin");
+
+    // Real AMD EPYC 9xx5 "Turin" (Zen5) v5 attestation report and the matching
+    // VCEK fetched from the AMD KDS.
+    const TURIN_REPORT: &[u8; 1184] = include_bytes!("../../test_data/snp/turin-report.bin");
+    const TURIN_VCEK: &[u8; 1289] = include_bytes!("../../test_data/snp/turin-vcek.der");
 
     #[test]
     fn check_milan_certificates() {
@@ -445,7 +661,14 @@ mod tests {
             bincode::deserialize::<AttestationReport>(VCEK_REPORT.as_slice()).unwrap();
         let cert_chain = vec![CertTableEntry::new(CertType::VCEK, VCEK.to_vec())];
         let vendor_certs = load_milan_cert_chain().as_ref().unwrap();
-        verify_report_signature(&attestation_report, &cert_chain, vendor_certs).unwrap();
+        verify_report_signature(
+            &attestation_report,
+            &bincode::serialize(&attestation_report).unwrap(),
+            &cert_chain,
+            vendor_certs,
+            ProcessorGeneration::Milan,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -454,7 +677,14 @@ mod tests {
             bincode::deserialize::<AttestationReport>(VLEK_REPORT.as_slice()).unwrap();
         let cert_chain = vec![CertTableEntry::new(CertType::VLEK, VLEK.to_vec())];
         let vendor_certs = load_milan_cert_chain().as_ref().unwrap();
-        verify_report_signature(&attestation_report, &cert_chain, vendor_certs).unwrap();
+        verify_report_signature(
+            &attestation_report,
+            &bincode::serialize(&attestation_report).unwrap(),
+            &cert_chain,
+            vendor_certs,
+            ProcessorGeneration::Milan,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -467,7 +697,14 @@ mod tests {
         let attestation_report = bincode::deserialize::<AttestationReport>(&bytes).unwrap();
         let cert_chain = vec![CertTableEntry::new(CertType::VCEK, VCEK.to_vec())];
         let vendor_certs = load_milan_cert_chain().as_ref().unwrap();
-        verify_report_signature(&attestation_report, &cert_chain, vendor_certs).unwrap_err();
+        verify_report_signature(
+            &attestation_report,
+            &bincode::serialize(&attestation_report).unwrap(),
+            &cert_chain,
+            vendor_certs,
+            ProcessorGeneration::Milan,
+        )
+        .unwrap_err();
     }
 
     #[test]
@@ -480,6 +717,65 @@ mod tests {
         let attestation_report = bincode::deserialize::<AttestationReport>(&bytes).unwrap();
         let cert_chain = vec![CertTableEntry::new(CertType::VLEK, VLEK.to_vec())];
         let vendor_certs = load_milan_cert_chain().as_ref().unwrap();
-        verify_report_signature(&attestation_report, &cert_chain, vendor_certs).unwrap_err();
+        verify_report_signature(
+            &attestation_report,
+            &bincode::serialize(&attestation_report).unwrap(),
+            &cert_chain,
+            vendor_certs,
+            ProcessorGeneration::Milan,
+        )
+        .unwrap_err();
+    }
+
+    #[test]
+    fn check_turin_generation_and_tcb() {
+        let report = bincode::deserialize::<AttestationReport>(TURIN_REPORT.as_slice()).unwrap();
+        let raw = bincode::serialize(&report).unwrap();
+        assert_eq!(report.version, 5);
+        assert_eq!(
+            get_processor_generation(&raw, report.version).unwrap(),
+            ProcessorGeneration::Turin
+        );
+        // The sev 4.x struct misreads Turin's FMC-shifted TCB; the raw reader fixes it.
+        let tcb = read_reported_tcb(&raw, ProcessorGeneration::Turin).unwrap();
+        assert_eq!(
+            (tcb.bootloader, tcb.tee, tcb.snp, tcb.microcode),
+            (3, 2, 5, 97)
+        );
+        assert_eq!(tcb.fmc, Some(1));
+    }
+
+    #[test]
+    fn check_turin_report_signature() {
+        let report = bincode::deserialize::<AttestationReport>(TURIN_REPORT.as_slice()).unwrap();
+        let raw = bincode::serialize(&report).unwrap();
+        let vendor_certs = load_cert_chain_for(ProcessorGeneration::Turin).unwrap();
+        let cert_chain = vec![CertTableEntry::new(CertType::VCEK, TURIN_VCEK.to_vec())];
+        verify_report_signature(
+            &report,
+            &raw,
+            &cert_chain,
+            &vendor_certs,
+            ProcessorGeneration::Turin,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn check_turin_report_signature_failure() {
+        let mut bytes = *TURIN_REPORT;
+        bytes[0x90] ^= 0x01; // corrupt the measurement
+        let report = bincode::deserialize::<AttestationReport>(&bytes).unwrap();
+        let raw = bincode::serialize(&report).unwrap();
+        let vendor_certs = load_cert_chain_for(ProcessorGeneration::Turin).unwrap();
+        let cert_chain = vec![CertTableEntry::new(CertType::VCEK, TURIN_VCEK.to_vec())];
+        verify_report_signature(
+            &report,
+            &raw,
+            &cert_chain,
+            &vendor_certs,
+            ProcessorGeneration::Turin,
+        )
+        .unwrap_err();
     }
 }
