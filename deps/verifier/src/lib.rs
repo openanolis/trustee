@@ -44,6 +44,9 @@ pub mod tpm;
 #[cfg(feature = "tpm-verifier")]
 pub mod hygon_tpm;
 
+#[cfg(feature = "tpm-verifier")]
+pub mod tpm_registrar;
+
 pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
     match tee {
         Tee::Sev => todo!(),

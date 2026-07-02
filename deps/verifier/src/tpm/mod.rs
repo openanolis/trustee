@@ -12,15 +12,15 @@ use log::info;
 use openssl::hash::MessageDigest;
 use openssl::pkey::PKey;
 use openssl::x509::X509;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use tss_esapi::structures::{Attest, AttestInfo};
 use tss_esapi::traits::UnMarshall;
 
+use crate::tpm_registrar;
+
 const TPM_REPORT_DATA_SIZE: usize = 32;
-const DEFAULT_KEYLIME_REGISTRAR_URL: &str = "https://127.0.0.1:8991";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TpmEvidence {
@@ -62,47 +62,13 @@ impl Verifier for TpmVerifier {
         let tpm_evidence = serde_json::from_value::<TpmEvidence>(evidence)
             .context("Deserialize TPM Evidence failed.")?;
 
-        // If keylime uuid provided, fetch registrar AK/EK info and compare
+        // If keylime uuid provided, fetch registrar AK/EK info and compare.
+        // The registrar data is fetched over a shared, pooled HTTP client and
+        // cached per-UUID so repeated attestations do not hit the registrar.
         if let Some(uuid) = &tpm_evidence.keylime_agent_uuid {
-            let registrar = std::env::var("KEYLIME_REGISTRAR_URL")
-                .unwrap_or_else(|_| DEFAULT_KEYLIME_REGISTRAR_URL.to_string());
+            let registrar = tpm_registrar::registrar_url();
 
-            let client = Client::builder()
-                .danger_accept_invalid_certs(true)
-                .build()
-                .map_err(|e| anyhow!(format!("create http client: {}", e)))?;
-
-            let ver_resp = client
-                .get(format!("{}/version", registrar))
-                .send()
-                .await
-                .map_err(|e| anyhow!(format!("fetch registrar version: {}", e)))?
-                .json::<serde_json::Value>()
-                .await
-                .map_err(|e| anyhow!(format!("parse registrar version json: {}", e)))?;
-
-            let ver = ver_resp
-                .get("results")
-                .and_then(|v| v.get("current_version"))
-                .and_then(|v| {
-                    v.as_str()
-                        .map(|s| s.to_string())
-                        .or_else(|| v.as_u64().map(|n| n.to_string()))
-                })
-                .ok_or_else(|| anyhow!("Invalid registrar version response"))?;
-
-            let agent = client
-                .get(format!("{}/v{}/agents/{}", registrar, ver, uuid))
-                .send()
-                .await
-                .map_err(|e| anyhow!(format!("fetch agent info: {}", e)))?
-                .json::<serde_json::Value>()
-                .await
-                .map_err(|e| anyhow!(format!("parse agent json: {}", e)))?;
-
-            let results = agent
-                .get("results")
-                .ok_or_else(|| anyhow!("Invalid agent results"))?;
+            let results = tpm_registrar::get_agent_results(&registrar, uuid).await?;
             let get_str = |k: &str| -> Result<String> {
                 results
                     .get(k)
