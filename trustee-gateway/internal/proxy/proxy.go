@@ -291,12 +291,27 @@ func (p *Proxy) forwardRequest(c *gin.Context, serviceType ServiceType) (*http.R
 	return resp, nil
 }
 
+// isCORSHeader reports whether a header is a CORS response header owned by the
+// gateway's CORS middleware. Such headers are dropped when copying an upstream
+// response so the gateway remains the single source of CORS policy; otherwise a
+// CORS-enabled upstream (e.g. restful-as started with --allowed_origin) would
+// emit its own Access-Control-Allow-Origin and the response would carry two
+// conflicting values, which browsers reject.
+func isCORSHeader(canonicalKey string) bool {
+	return strings.HasPrefix(canonicalKey, "Access-Control-")
+}
+
 // CopyHeaders copies headers from a source response to the destination gin context
 func CopyHeaders(dst *gin.Context, src *http.Response) {
 	for k, vv := range src.Header {
+		ck := http.CanonicalHeaderKey(k)
 		// Cookies will be set via http.SetCookie() in CopyCookies().
 		// Avoid duplicating Set-Cookie header.
-		if http.CanonicalHeaderKey(k) == "Set-Cookie" {
+		if ck == "Set-Cookie" {
+			continue
+		}
+		// The gateway's CORS middleware owns Access-Control-* headers.
+		if isCORSHeader(ck) {
 			continue
 		}
 		for _, v := range vv {
@@ -316,6 +331,10 @@ func CopyHeadersExceptContentLength(dst *gin.Context, src *http.Response) {
 		}
 		// Avoid duplicating Set-Cookie header; CopyCookies handles it.
 		if ck == "Set-Cookie" {
+			continue
+		}
+		// The gateway's CORS middleware owns Access-Control-* headers.
+		if isCORSHeader(ck) {
 			continue
 		}
 		for _, v := range vv {
