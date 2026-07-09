@@ -8,6 +8,13 @@ BIN_NAMES := grpc-as restful-as
 DEBUG ?=
 DESTDIR ?= $(PREFIX)/bin
 
+# Verifier feature set. The default keeps the TDX verifier on the Intel DCAP
+# shared library (libsgx_dcap_quoteverify) backend, so the build is unchanged.
+#
+# To build the shared-library-free, pure-Rust TDX backend instead, use:
+#     make VERIFIER=all-verifier-rust
+# Note that this backend requires a newer Rust toolchain (>= 1.86); select it
+# with e.g. `rustup override set 1.86.0` or `cargo +1.86.0`.
 VERIFIER ?= all-verifier
 
 RVPS_GRPC := true
