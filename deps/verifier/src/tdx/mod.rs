@@ -8,7 +8,8 @@ use crate::tdx::claims::generate_parsed_claim;
 use super::*;
 use async_trait::async_trait;
 use base64::Engine;
-use quote::{ecdsa_quote_verification, parse_tdx_quote};
+use quote::parse_tdx_quote;
+use verify::ecdsa_quote_verification;
 use serde::{Deserialize, Serialize};
 
 use serde_json::Value;
@@ -16,6 +17,7 @@ use serde_json::Value;
 pub(crate) mod claims;
 pub(crate) mod gpu;
 pub(crate) mod quote;
+pub(crate) mod verify;
 
 use crate::tdx::gpu::GpuEvidenceList;
 

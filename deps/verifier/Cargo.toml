@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 default = ["all-verifier"]
 all-verifier = [
-    "tdx-verifier",
+    "tdx-dcap-ffi",
     "sgx-verifier",
     "snp-verifier",
     "csv-verifier",
@@ -14,15 +14,25 @@ all-verifier = [
     "system-verifier",
     "tpm-verifier",
 ]
+# TDX quote verification. The `tdx-verifier` umbrella pulls in everything the
+# TDX verifier needs *except* the actual quote-verification backend, which must
+# be selected separately and exactly once:
+#
+#   * tdx-dcap-ffi  - DCAP QVL via FFI, links `libsgx_dcap_quoteverify` (default)
+#   * tdx-dcap-rust - pure-Rust dcap-qvl, no external DCAP shared library
+#
+# Enabling `tdx-verifier` on its own (no backend) is a compile error. The
+# default build reaches TDX through `all-verifier` -> `tdx-dcap-ffi`, so its
+# behaviour is unchanged.
 tdx-verifier = [
     "scroll",
-    "intel-tee-quote-verification-rs",
     "gpu-verifier",
     "openssl",
 ]
+tdx-dcap-ffi = ["tdx-verifier", "intel-tee-quote-verification-rs"]
 sgx-verifier = ["scroll", "intel-tee-quote-verification-rs"]
 az-snp-vtpm-verifier = ["az-snp-vtpm", "sev", "snp-verifier"]
-az-tdx-vtpm-verifier = ["az-tdx-vtpm", "openssl", "tdx-verifier"]
+az-tdx-vtpm-verifier = ["az-tdx-vtpm", "openssl", "tdx-dcap-ffi"]
 snp-verifier = ["asn1-rs", "openssl", "sev", "x509-parser", "reqwest"]
 csv-verifier = ["codicon", "csv-rs", "openssl", "tokio/fs"]
 hygon-dcu-verifier = ["csv-rs"]
