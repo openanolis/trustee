@@ -5,6 +5,18 @@ server:
   tls:
     cert_file: ""
     key_file: ""
+  # Cross-Origin Resource Sharing. Enabled by default so browser-based consoles
+  # can call the gateway and their preflight (OPTIONS) requests are answered
+  # instead of returning 404.
+  cors:
+    enabled: true
+    allowed_origins: ["*"]
+    allowed_methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+    allowed_headers: ["*"]
+    # allow_credentials cannot be combined with a "*" origin; when true the
+    # request origin is reflected instead.
+    allow_credentials: false
+    max_age: 86400
 
 kbs:
   url: "http://localhost:8080"

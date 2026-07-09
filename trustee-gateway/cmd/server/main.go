@@ -86,6 +86,9 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(middleware.Logger())
+	if cfg.Server.CORS.Enabled {
+		router.Use(middleware.CORS(cfg.Server.CORS))
+	}
 
 	// API routes
 	setupRoutes(router, kbsHandler, rvpsHandler, attestationServiceHandler, auditHandler, healthCheckHandler, p, aaInstanceHandler, credentialHandler)
