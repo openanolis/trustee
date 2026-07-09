@@ -6,7 +6,10 @@ edition = "2021"
 [features]
 default = [ "restful-bin", "rvps-grpc", "all-verifier" ]
 all-verifier = [ "verifier/all-verifier" ]
-tdx-verifier = [ "verifier/tdx-verifier" ]
+# `tdx-verifier` keeps its historical meaning (DCAP shared library backend) for
+# backward compatibility. The pure-Rust backend is opt-in via `tdx-dcap-rust`.
+tdx-verifier = [ "verifier/tdx-dcap-ffi" ]
+tdx-dcap-ffi = [ "verifier/tdx-dcap-ffi" ]
 sgx-verifier = [ "verifier/sgx-verifier" ]
 az-snp-vtpm-verifier = [ "verifier/az-snp-vtpm-verifier" ]
 az-tdx-vtpm-verifier = [ "verifier/az-tdx-vtpm-verifier" ]
