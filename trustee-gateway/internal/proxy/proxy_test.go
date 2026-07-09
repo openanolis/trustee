@@ -101,3 +101,34 @@ func TestProxy_ForwardRequest(t *testing.T) {
 		t.Errorf("Unexpected response body: %s", string(respBody))
 	}
 }
+
+// TestCopyHeaders_StripsUpstreamCORS ensures Access-Control-* headers coming
+// from an upstream response are dropped, so the gateway's CORS middleware stays
+// the single source of CORS policy and the response never carries duplicate
+// Access-Control-Allow-Origin values.
+func TestCopyHeaders_StripsUpstreamCORS(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	src := &http.Response{Header: http.Header{}}
+	src.Header.Add("Access-Control-Allow-Origin", "http://upstream.example")
+	src.Header.Add("Access-Control-Allow-Methods", "GET, POST")
+	src.Header.Add("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	// Simulate the gateway CORS middleware having already set the header.
+	c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+
+	CopyHeaders(c, src)
+
+	got := c.Writer.Header().Values("Access-Control-Allow-Origin")
+	if len(got) != 1 || got[0] != "*" {
+		t.Fatalf("expected a single gateway Access-Control-Allow-Origin '*', got: %#v", got)
+	}
+	if c.Writer.Header().Get("Access-Control-Allow-Methods") != "" {
+		t.Fatalf("upstream Access-Control-Allow-Methods should be stripped, got: %q", c.Writer.Header().Get("Access-Control-Allow-Methods"))
+	}
+	if c.Writer.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("non-CORS headers must still be copied, got Content-Type: %q", c.Writer.Header().Get("Content-Type"))
+	}
+}
