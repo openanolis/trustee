@@ -20,10 +20,23 @@ type Config struct {
 
 // ServerConfig holds the gateway server configuration
 type ServerConfig struct {
-	Host         string    `mapstructure:"host"`
-	Port         int       `mapstructure:"port"`
-	TLS          TLSConfig `mapstructure:"tls"`
-	InsecureHTTP bool      `mapstructure:"insecure_http"`
+	Host         string     `mapstructure:"host"`
+	Port         int        `mapstructure:"port"`
+	TLS          TLSConfig  `mapstructure:"tls"`
+	InsecureHTTP bool       `mapstructure:"insecure_http"`
+	CORS         CORSConfig `mapstructure:"cors"`
+}
+
+// CORSConfig holds Cross-Origin Resource Sharing configuration. It controls the
+// headers returned for cross-origin requests and how browser preflight
+// (OPTIONS) requests are answered.
+type CORSConfig struct {
+	Enabled          bool     `mapstructure:"enabled"`
+	AllowedOrigins   []string `mapstructure:"allowed_origins"`
+	AllowedMethods   []string `mapstructure:"allowed_methods"`
+	AllowedHeaders   []string `mapstructure:"allowed_headers"`
+	AllowCredentials bool     `mapstructure:"allow_credentials"`
+	MaxAge           int      `mapstructure:"max_age"`
 }
 
 // TLSConfig holds TLS configuration
@@ -93,6 +106,14 @@ func LoadConfig(configPath string) (*Config, error) {
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8081)
 	viper.SetDefault("server.insecure_http", true)
+	// CORS: enabled by default so browser-based consoles can call the gateway
+	// and their preflight (OPTIONS) requests are answered instead of 404ing.
+	viper.SetDefault("server.cors.enabled", true)
+	viper.SetDefault("server.cors.allowed_origins", []string{"*"})
+	viper.SetDefault("server.cors.allowed_methods", []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"})
+	viper.SetDefault("server.cors.allowed_headers", []string{"*"})
+	viper.SetDefault("server.cors.allow_credentials", false)
+	viper.SetDefault("server.cors.max_age", 86400)
 	viper.SetDefault("kbs.url", "http://localhost:8080")
 	viper.SetDefault("attestation_service.url", "http://localhost:50005")
 	viper.SetDefault("rvps.grpc_addr", "localhost:50003")
