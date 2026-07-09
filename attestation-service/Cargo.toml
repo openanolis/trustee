@@ -6,10 +6,15 @@ edition = "2021"
 [features]
 default = [ "restful-bin", "rvps-grpc", "all-verifier" ]
 all-verifier = [ "verifier/all-verifier" ]
+# Like `all-verifier`, but the TDX verifier uses the pure-Rust dcap-qvl backend
+# and SGX is dropped (it would still link the DCAP shared library). Requires a
+# newer Rust toolchain; see deps/verifier/src/tdx/verify/native.rs.
+all-verifier-rust = [ "verifier/all-verifier-rust" ]
 # `tdx-verifier` keeps its historical meaning (DCAP shared library backend) for
 # backward compatibility. The pure-Rust backend is opt-in via `tdx-dcap-rust`.
 tdx-verifier = [ "verifier/tdx-dcap-ffi" ]
 tdx-dcap-ffi = [ "verifier/tdx-dcap-ffi" ]
+tdx-dcap-rust = [ "verifier/tdx-dcap-rust" ]
 sgx-verifier = [ "verifier/sgx-verifier" ]
 az-snp-vtpm-verifier = [ "verifier/az-snp-vtpm-verifier" ]
 az-tdx-vtpm-verifier = [ "verifier/az-tdx-vtpm-verifier" ]
