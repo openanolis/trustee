@@ -79,21 +79,20 @@ pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationRes
         dates.tcb_info.next_update
     );
 
-    // The FFI (DCAP QVL) backend treats debug-mode TDs and service TDs as
-    // non-fatal, deferring to the policy engine. Match that here so the reported
-    // claims (not this backend) drive those decisions.
-    //
-    // One intentional difference remains: dcap-qvl rejects *expired* collateral
-    // (TCB info / QE identity past its `nextUpdate`) as a hard error, whereas the
-    // FFI backend reports it via the `collateral_expired` flag and continues. We
-    // keep dcap-qvl's stricter behaviour (verifying against year-old collateral
-    // is unsafe) and still surface `collateral_expired` for policies that check
-    // it. In practice this only differs when the configured PCCS serves stale
-    // collateral for a platform's FMSPC; point `PCCS_URL` at an up-to-date PCCS
-    // (or Intel PCS) if you hit it.
+    // Match the FFI (DCAP QVL) backend, which defers these to the policy engine
+    // rather than hard-failing:
+    //   * allow_debug / allow_service_td  -> debug and service TDs are accepted;
+    //   * allow_expired                   -> expired collateral (TCB info / QE
+    //     identity past its `nextUpdate`) is non-fatal. Signatures and
+    //     certificate chains are still fully verified; only the freshness check
+    //     is relaxed. The real expiry is reported to the policy via
+    //     `collateral_expired` below. This mirrors the FFI backend and, in
+    //     particular, tolerates a PCCS that serves stale collateral for a
+    //     platform's FMSPC.
     let report = QuoteVerifier::new_prod()
         .allow_debug(true)
         .allow_service_td(true)
+        .allow_expired(true)
         .verify(quote, &collateral, real_now as u64)
         .map_err(|e| anyhow!("dcap-qvl quote verification failed: {e:#}"))?;
 
