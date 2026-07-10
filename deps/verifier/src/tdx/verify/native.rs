@@ -1,18 +1,24 @@
-//! Pure-Rust TDX quote verification backend. Selected by the `tdx-dcap-rust`
-//! feature.
+//! TDX quote verification backend that needs no external DCAP shared library.
+//! Selected by the `tdx-dcap-rust` feature.
 //!
 //! This backend removes the dependency on the Intel DCAP shared library
 //! (`libsgx_dcap_quoteverify`) and its dynamically loaded quote provider. The
 //! ECDSA quote signature, PCK certificate chain, TCB info and QE identity are
-//! all verified in Rust via the [`dcap_qvl`] crate; verification collateral is
-//! fetched over HTTPS from a PCCS using the verifier's own `reqwest` stack (we
+//! all verified via the [`dcap_qvl`] crate; verification collateral is fetched
+//! over HTTPS from a PCCS using the verifier's own `reqwest` stack (we
 //! deliberately do *not* enable `dcap-qvl`'s `report` feature, which would pull
 //! in `reqwest` 0.13 / `aws-lc-sys`).
 //!
-//! Toolchain: `dcap-qvl`'s dependency tree requires a newer Rust toolchain
-//! (>= 1.86) than the default (FFI) build. This does not affect the default
-//! build: the `tdx-dcap-rust` feature is opt-in, and with it disabled Cargo
-//! prunes this whole subtree.
+//! Crypto backend: `dcap-qvl` is used with its `ring` crypto backend. `ring`
+//! statically links its own crypto (no external shared library), and — unlike
+//! the RustCrypto stack — builds on Rust 1.76, so this backend has the same
+//! toolchain requirement as the default (FFI) build. With the feature disabled,
+//! Cargo prunes this whole subtree, so it has no effect on the default build.
+//!
+//! PCCS configuration: the collateral endpoint is resolved from, in order, the
+//! `PCCS_URL` environment variable, the `pccs_url` / `PCCS_URL` entry in
+//! `/etc/sgx_default_qcnl.conf` (the same file the DCAP quote provider reads, so
+//! both backends share one configuration), and finally a built-in default.
 //!
 //! Scope: the collateral fetch currently supports quotes whose certification
 //! data embeds the PCK certificate chain (PCK cert type 5), which is what cloud
@@ -36,10 +42,13 @@ use x509_parser::prelude::*;
 
 use crate::tdx::quote::{parse_tdx_quote, TcbVerificationResult};
 
-/// Default PCCS base URL. Matches the Alibaba Cloud PCCS the FFI backend's
-/// quote provider is normally configured against (`/etc/sgx_default_qcnl.conf`).
-/// Overridable at run time with the `PCCS_URL` environment variable.
+/// Default PCCS base URL, used only when neither `PCCS_URL` nor the QCNL config
+/// file provide one.
 const DEFAULT_PCCS_URL: &str = "https://sgx-dcap-server.cn-beijing.aliyuncs.com";
+
+/// QCNL config file read by the DCAP quote provider (FFI backend). We fall back
+/// to its `pccs_url` so both backends can share one PCCS configuration.
+const QCNL_CONF_PATH: &str = "/etc/sgx_default_qcnl.conf";
 
 /// TEE type for TDX, matching the value the FFI backend reports in
 /// `TcbVerificationResult::tee_type`.
@@ -51,11 +60,56 @@ const OID_SGX_TCB: &[u64] = &[1, 2, 840, 113741, 1, 13, 1, 2];
 const OID_SGX_PCESVN: &[u64] = &[1, 2, 840, 113741, 1, 13, 1, 2, 17];
 const OID_SGX_FMSPC: &[u64] = &[1, 2, 840, 113741, 1, 13, 1, 4];
 
-pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationResult> {
-    let pccs_url = std::env::var("PCCS_URL")
+/// Resolve the PCCS base URL: `PCCS_URL` env var, then the QCNL config file,
+/// then the built-in default.
+fn resolve_pccs_url() -> String {
+    if let Ok(v) = std::env::var("PCCS_URL") {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    if let Some(v) = std::fs::read_to_string(QCNL_CONF_PATH)
         .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| DEFAULT_PCCS_URL.to_string());
+        .and_then(|c| parse_qcnl_pccs_url(&c))
+    {
+        debug!("dcap-qvl backend: using PCCS URL from {QCNL_CONF_PATH}");
+        return v;
+    }
+    DEFAULT_PCCS_URL.to_string()
+}
+
+/// Extract the PCCS URL from QCNL config file contents, supporting both the JSON
+/// form (`{"pccs_url": "https://..."}`, optionally with `//` comments) and the
+/// legacy INI form (`PCCS_URL=https://...`).
+fn parse_qcnl_pccs_url(content: &str) -> Option<String> {
+    for raw in content.lines() {
+        let line = raw.trim();
+        if line.starts_with('#') || line.starts_with("//") {
+            continue;
+        }
+        let Some(key_pos) = line.to_ascii_lowercase().find("pccs_url") else {
+            continue;
+        };
+        // After the key (INI `=` or JSON `":`), take the URL up to the next
+        // quote / comma / whitespace. This covers both config styles.
+        let after = &line[key_pos + "pccs_url".len()..];
+        let Some(http_pos) = after.find("http") else {
+            continue;
+        };
+        let url = &after[http_pos..];
+        let end = url
+            .find(|c: char| c == '"' || c == ',' || c.is_whitespace())
+            .unwrap_or(url.len());
+        let url = &url[..end];
+        if !url.is_empty() {
+            return Some(url.to_string());
+        }
+    }
+    None
+}
+
+pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationResult> {
+    let pccs_url = resolve_pccs_url();
 
     // The PCK certificate chain is embedded in the quote's certification data
     // (PCK cert type 5). Extract it and derive FMSPC / CA type for collateral.
@@ -547,4 +601,32 @@ fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 fn rfind_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).rposition(|w| w == needle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_qcnl_pccs_url;
+
+    #[test]
+    fn parse_qcnl_ini_form() {
+        let conf = "# comment\nPCCS_URL=https://sgx-dcap-server.cn-hangzhou.aliyuncs.com/sgx/certification/v4/\nUSE_SECURE_CERT=false\n";
+        assert_eq!(
+            parse_qcnl_pccs_url(conf).as_deref(),
+            Some("https://sgx-dcap-server.cn-hangzhou.aliyuncs.com/sgx/certification/v4/")
+        );
+    }
+
+    #[test]
+    fn parse_qcnl_json_form() {
+        let conf = "{\n  // Intel default style\n  \"pccs_url\": \"https://pccs.example.com/sgx/certification/v4/\",\n  \"use_secure_cert\": true\n}\n";
+        assert_eq!(
+            parse_qcnl_pccs_url(conf).as_deref(),
+            Some("https://pccs.example.com/sgx/certification/v4/")
+        );
+    }
+
+    #[test]
+    fn parse_qcnl_missing() {
+        assert_eq!(parse_qcnl_pccs_url("USE_SECURE_CERT=false\n"), None);
+    }
 }
