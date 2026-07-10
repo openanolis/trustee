@@ -9,8 +9,8 @@ use super::*;
 use async_trait::async_trait;
 use base64::Engine;
 use quote::parse_tdx_quote;
-use verify::ecdsa_quote_verification;
 use serde::{Deserialize, Serialize};
+use verify::ecdsa_quote_verification;
 
 use serde_json::Value;
 

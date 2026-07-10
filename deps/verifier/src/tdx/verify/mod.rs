@@ -8,10 +8,10 @@
 //!   shared object at run time. This is the historical behaviour and is what
 //!   every default build (`all-verifier`) uses.
 //!
-//! * `tdx-dcap-rust` — a pure-Rust backend built on the `dcap-qvl` crate. It
-//!   removes the dependency on any external DCAP shared library. It is opt-in
-//!   and requires a newer Rust toolchain (see the crate-level docs); the
-//!   default toolchain and the default (FFI) build are unaffected.
+//! * `tdx-dcap-rust` — a backend built on the `dcap-qvl` crate that removes the
+//!   dependency on any external DCAP shared library. It is opt-in; with it
+//!   disabled the default (FFI) build is unaffected. It builds on the same Rust
+//!   toolchain as the default build (see the crate-level docs).
 //!
 //! Both backends expose the same entry point:
 //!
@@ -32,7 +32,7 @@ compile_error!(
 compile_error!(
     "the `tdx-verifier` feature requires a backend: enable either \
      `tdx-dcap-ffi` (Intel DCAP shared library, the default) or \
-     `tdx-dcap-rust` (pure-Rust dcap-qvl)"
+     `tdx-dcap-rust` (dcap-qvl, no external DCAP library)"
 );
 
 #[cfg(feature = "tdx-dcap-ffi")]

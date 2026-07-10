@@ -346,7 +346,7 @@ impl Quote {
     body_field!(rtmr_1);
     body_field!(rtmr_2);
     body_field!(rtmr_3);
-    // TDX TEE TCB SVN (16 bytes) from the TD report. Used by the pure-Rust
+    // TDX TEE TCB SVN (16 bytes) from the TD report. Used by the dcap-qvl
     // quote-verification backend to reproduce Intel QVL's TCB level matching.
     #[cfg(feature = "tdx-dcap-rust")]
     body_field!(tcb_svn);
