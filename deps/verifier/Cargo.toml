@@ -14,11 +14,10 @@ all-verifier = [
     "system-verifier",
     "tpm-verifier",
 ]
-# Same set as `all-verifier`, but the TDX verifier uses the pure-Rust dcap-qvl
-# backend instead of the DCAP shared library. `sgx-verifier` is intentionally
-# omitted: it still links `libsgx_dcap_quoteverify` via FFI, which would defeat
-# the purpose of a shared-library-free build. Requires a newer Rust toolchain
-# (see the `tdx-dcap-rust` note above).
+# Same set as `all-verifier`, but the TDX verifier uses the dcap-qvl backend
+# instead of the DCAP shared library. `sgx-verifier` is intentionally omitted:
+# it still links `libsgx_dcap_quoteverify` via FFI, which would defeat the
+# purpose of a shared-library-free build.
 all-verifier-rust = [
     "tdx-dcap-rust",
     "snp-verifier",
@@ -32,7 +31,7 @@ all-verifier-rust = [
 # be selected separately and exactly once:
 #
 #   * tdx-dcap-ffi  - DCAP QVL via FFI, links `libsgx_dcap_quoteverify` (default)
-#   * tdx-dcap-rust - pure-Rust dcap-qvl, no external DCAP shared library
+#   * tdx-dcap-rust - dcap-qvl, no external DCAP shared library
 #
 # Enabling `tdx-verifier` on its own (no backend) is a compile error. The
 # default build reaches TDX through `all-verifier` -> `tdx-dcap-ffi`, so its
@@ -43,14 +42,12 @@ tdx-verifier = [
     "openssl",
 ]
 tdx-dcap-ffi = ["tdx-verifier", "intel-tee-quote-verification-rs"]
-# Pure-Rust backend built on `dcap-qvl`. Removes the dependency on the Intel
-# DCAP shared library (`libsgx_dcap_quoteverify`) and its dynamically loaded
-# quote provider. Verification collateral (TCB info, QE identity, CRLs) is
-# fetched over HTTPS from a PCCS using the verifier's existing reqwest stack.
-#
-# NOTE: this backend pulls a dependency tree that requires a newer Rust
-# toolchain (>= 1.86) than the default (FFI) build; see
-# deps/verifier/src/tdx/verify/native.rs.
+# Backend built on `dcap-qvl` (with its `ring` crypto backend). Removes the
+# dependency on the Intel DCAP shared library (`libsgx_dcap_quoteverify`) and
+# its dynamically loaded quote provider. Verification collateral (TCB info, QE
+# identity, CRLs) is fetched over HTTPS from a PCCS using the verifier's existing
+# reqwest stack. Builds on the same Rust toolchain as the default (FFI) build;
+# see deps/verifier/src/tdx/verify/native.rs.
 tdx-dcap-rust = [
     "tdx-verifier",
     "dcap-qvl",
@@ -126,13 +123,13 @@ sha2.workspace = true
 sm3 = "0.4.2"
 tokio = { workspace = true, optional = true, default-features = false }
 intel-tee-quote-verification-rs = { version = "0.3.0", optional = true }
-# Pure-Rust TDX/SGX DCAP quote verification, used by the `tdx-dcap-rust`
+# TDX/SGX DCAP quote verification (used with its `ring` backend), by the `tdx-dcap-rust`
 # backend. Only the offline `verify` core is used (no `report` feature), so no
 # aws-lc / reqwest 0.13 is pulled in; collateral is fetched with the verifier's
 # own reqwest. Pinned to 0.4.1 for MSRV/dependency-tree stability.
 dcap-qvl = { version = "=0.4.1", default-features = false, features = [
     "std",
-    "rustcrypto",
+    "ring",
     "default-x509",
 ], optional = true }
 urlencoding = { version = "2", optional = true }
