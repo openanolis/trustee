@@ -4,7 +4,7 @@
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.8.6
+Version:        1.8.7
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -145,6 +145,21 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Mon Jul 13 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.7-2
+- Verifier/TDX: split quote verification into pluggable backends and add an
+  opt-in pure-Rust dcap-qvl backend (tdx-dcap-rust) that needs no libsgx DCAP
+  shared library; the default build keeps the FFI backend
+- Verifier/TDX: resolve the PCCS URL from the DCAP QCNL config and make expired
+  collateral non-fatal in the pure-Rust backend
+- Verifier/SNP: support attestation report v3-v5, Genoa/Turin platforms and
+  on-demand VCEK retrieval from the AMD KDS
+- Verifier/TPM: share a pooled registrar client and cache bindings
+- AS: enable CORS support in restful-as for browser scenarios
+- Gateway: handle CORS and preflight OPTIONS requests, and drop upstream CORS
+  headers when proxying
+- KBS: zeroize JWE key material to prevent recovery from memory
+- KBS: print the config guide when the config fails to parse
+
 * Mon Jun 08 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.6-2
 - RPM: depend on libtdx-verify(-devel) from the distro repository instead of
   shipping libsgx-dcap-quote-verify / libsgx-headers .so and headers inside
