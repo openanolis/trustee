@@ -1,12 +1,15 @@
 use anyhow::*;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
-use openssl::hash::MessageDigest;
-use openssl::pkey::{PKey, Private};
-use openssl::rand::rand_bytes;
-use openssl::rsa::Rsa;
-use openssl::sign::Signer;
+use rand::rngs::OsRng;
+use rand::RngCore;
+use rsa::pkcs1::DecodeRsaPrivateKey;
+use rsa::pkcs1v15::{Signature, SigningKey, VerifyingKey};
+use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, LineEnding};
+use rsa::signature::{Signer, Verifier};
+use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde_json::{json, Value};
+use sha2::Sha384;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -22,7 +25,7 @@ pub fn default_challenge_key_path() -> PathBuf {
     Path::new(DEFAULT_KEY_DIR).join(DEFAULT_PRIV_KEY_PEM)
 }
 
-fn ensure_keypair(key_path: &Path) -> Result<Rsa<Private>> {
+fn ensure_keypair(key_path: &Path) -> Result<RsaPrivateKey> {
     if let Some(dir) = key_path.parent() {
         if !dir.as_os_str().is_empty() && !dir.exists() {
             fs::create_dir_all(dir)
@@ -31,30 +34,36 @@ fn ensure_keypair(key_path: &Path) -> Result<Rsa<Private>> {
     }
 
     if key_path.exists() {
-        let pem = fs::read(key_path).context("read private key pem failed")?;
-        let rsa = Rsa::private_key_from_pem(&pem).context("parse private key pem failed")?;
+        let pem = fs::read_to_string(key_path).context("read private key pem failed")?;
+        // Accept both PKCS#8 (what we write now) and legacy PKCS#1 (what the
+        // previous implementation's `private_key_to_pem` wrote).
+        let rsa = RsaPrivateKey::from_pkcs8_pem(&pem)
+            .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&pem))
+            .context("parse private key pem failed")?;
         return Ok(rsa);
     }
 
-    let rsa = Rsa::generate(RSA_KEY_BITS)?;
+    let mut rng = OsRng;
+    let rsa = RsaPrivateKey::new(&mut rng, RSA_KEY_BITS as usize)?;
     let pem = rsa
-        .private_key_to_pem()
+        .to_pkcs8_pem(LineEnding::LF)
         .context("dump private key to pem failed")?;
-    fs::write(key_path, pem).context("write private key pem failed")?;
+    fs::write(key_path, pem.as_bytes()).context("write private key pem failed")?;
     Ok(rsa)
 }
 
-fn rs384_sign(rsa: &Rsa<Private>, payload: &[u8]) -> Result<Vec<u8>> {
-    let rsa_pkey = PKey::from_rsa(rsa.clone())?;
-    let mut signer = Signer::new(MessageDigest::sha384(), &rsa_pkey)?;
-    signer.update(payload)?;
-    Ok(signer.sign_to_vec()?)
+fn rs384_sign(rsa: &RsaPrivateKey, payload: &[u8]) -> Result<Vec<u8>> {
+    let signing_key = SigningKey::<Sha384>::new(rsa.clone());
+    let sig: Signature = signing_key.sign(payload);
+    Ok(Box::<[u8]>::from(sig).to_vec())
 }
 
 pub fn generate_common_challenge(key_path: &Path) -> Result<String> {
     // nonce
     let mut nonce = [0u8; 32];
-    rand_bytes(&mut nonce)?;
+    OsRng
+        .try_fill_bytes(&mut nonce)
+        .context("generate nonce failed")?;
     let nonce_b64 = STANDARD.encode(nonce);
 
     // header
@@ -68,7 +77,7 @@ pub fn generate_common_challenge(key_path: &Path) -> Result<String> {
     // claims with 5-minute expiry
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| anyhow!("time error: {:?}", e))?
+        .context("time error")?
         .as_secs();
     let exp = now + 5 * 60;
     let claims_value = json!({
@@ -105,19 +114,17 @@ pub fn verify_challenge_and_extract_nonce_b64url(token: &str, key_path: &Path) -
         .decode(parts[2])
         .context("invalid JWT signature encoding")?;
 
-    let pem = fs::read(key_path).context("read nonce token key failed")?;
-    let rsa = Rsa::private_key_from_pem(&pem).context("parse nonce token key failed")?;
-    let pkey = PKey::from_rsa(rsa).context("load nonce token key failed")?;
+    let pem_str = fs::read_to_string(key_path).context("read nonce token key failed")?;
+    let rsa = RsaPrivateKey::from_pkcs8_pem(&pem_str)
+        .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&pem_str))
+        .context("parse nonce token key failed")?;
+    let public_key: RsaPublicKey = rsa.to_public_key();
 
-    let mut verifier = openssl::sign::Verifier::new(MessageDigest::sha384(), &pkey)
-        .context("create verifier failed")?;
-    verifier
-        .update(signing_input.as_bytes())
-        .context("verifier update failed")?;
-    let ok = verifier.verify(&sig).context("verify signature failed")?;
-    if !ok {
-        bail!("invalid challenge_token signature");
-    }
+    let verifying_key = VerifyingKey::<Sha384>::new(public_key);
+    let sig_obj = Signature::try_from(sig.as_slice()).context("invalid signature bytes")?;
+    verifying_key
+        .verify(signing_input.as_bytes(), &sig_obj)
+        .context("verify signature failed")?;
 
     let payload = URL_SAFE_NO_PAD
         .decode(parts[1])
@@ -146,4 +153,43 @@ pub fn verify_challenge_and_extract_nonce_b64url(token: &str, key_path: &Path) -
         .or_else(|_| URL_SAFE_NO_PAD.decode(nonce_b64))
         .context("invalid nonce base64")?;
     Ok(URL_SAFE_NO_PAD.encode(nonce_bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Sign a challenge and verify it round-trips. Pins the rustcrypto RS384
+    /// implementation against the on-disk key format this module writes.
+    #[test]
+    fn challenge_sign_verify_roundtrip() {
+        // Use a temp key dir so we don't touch /etc/trustee/...
+        let tmp = tempfile::tempdir().unwrap();
+        let key_file = tmp.path().join("key.pem");
+
+        let challenge_json = generate_common_challenge(&key_file).expect("generate");
+        let outer: serde_json::Value = serde_json::from_str(&challenge_json).expect("json");
+        let jwt = outer["extra-params"]["jwt"]
+            .as_str()
+            .expect("jwt in extra-params")
+            .to_string();
+
+        // verify must accept the token we just issued and return the nonce.
+        let nonce_back =
+            verify_challenge_and_extract_nonce_b64url(&jwt, &key_file).expect("verify");
+        let nonce_original = outer["nonce"].as_str().unwrap().to_string();
+        // The challenge JSON uses STANDARD base64 for the nonce, while
+        // verify_challenge_and_extract_nonce_b64url returns URL_SAFE_NO_PAD.
+        // Compare the decoded bytes, not the encoded strings.
+        let nonce_back_bytes = URL_SAFE_NO_PAD
+            .decode(&nonce_back)
+            .expect("decode nonce_back");
+        let nonce_original_bytes = STANDARD
+            .decode(&nonce_original)
+            .expect("decode nonce_original");
+        assert_eq!(
+            nonce_back_bytes, nonce_original_bytes,
+            "nonce bytes must round-trip"
+        );
+    }
 }
