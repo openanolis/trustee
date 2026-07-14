@@ -18,8 +18,11 @@ use canon_json::CanonicalFormatter;
 use config::Config;
 pub use kbs_types::{Attestation, Tee};
 use log::{debug, info};
-use openssl::rsa::Rsa;
 use reqwest::Client;
+use rsa::pkcs1::DecodeRsaPrivateKey;
+use rsa::pkcs8::DecodePrivateKey;
+use rsa::traits::PublicKeyParts;
+use rsa::RsaPrivateKey;
 use rvps::{RvpsApi, RvpsError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -476,10 +479,13 @@ impl AttestationService {
             token::AttestationTokenConfig::OIDC(cfg) => {
                 if let Some(signer) = &cfg.signer {
                     let pem_data = std::fs::read(&signer.key_path)
-                        .map_err(|e| anyhow!("Read Token Signer private key failed: {:?}", e))?;
-                    let private_key = Rsa::private_key_from_pem(&pem_data)?;
-                    let n = private_key.n().to_vec();
-                    let e = private_key.e().to_vec();
+                        .context("Read Token Signer private key failed")?;
+                    let pem_str =
+                        std::str::from_utf8(&pem_data).context("Token Signer key not UTF-8")?;
+                    let private_key = RsaPrivateKey::from_pkcs8_pem(pem_str)
+                        .or_else(|_| RsaPrivateKey::from_pkcs1_pem(pem_str))?;
+                    let n = private_key.n().to_bytes_be();
+                    let e = private_key.e().to_bytes_be();
 
                     let jwk = Jwk {
                         kty: "RSA".to_string(),

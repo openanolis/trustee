@@ -70,7 +70,7 @@ kbs-types.workspace = true
 lazy_static = "1.4.0"
 log.workspace = true
 openssl = "0.10.55"
-p256 = { version = "0.13", features = ["ecdh"] }
+p256 = { version = "0.13", features = ["ecdh", "pkcs8", "pem"] }
 prost = { workspace = true, optional = true }
 rand = "0.8.5"
 reqwest = { version = "0.12", features = ["json"] }
