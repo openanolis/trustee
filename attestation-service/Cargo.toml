@@ -92,6 +92,11 @@ toml.workspace = true
 tonic = { workspace = true, optional = true }
 uuid = { version = "1.1.2", features = ["v4"] }
 verifier = { path = "../deps/verifier", default-features = false }
+# x509-cert is used by `token/simple.rs` for PEM/DER certificate-chain parsing
+# (JWK `x5c`). Pulled in as a direct dep so `simple.rs` can call
+# `Certificate::from_pem` / `to_der`. The `pem` feature enables
+# `der::DecodePem` (used by `from_pem`); `std` is part of the default set.
+x509-cert = { version = "0.2.5", default-features = false, features = ["pem", "std"] }
 
 [build-dependencies]
 shadow-rs.workspace = true
