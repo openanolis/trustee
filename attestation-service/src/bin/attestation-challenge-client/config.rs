@@ -40,6 +40,7 @@ pub fn build_default_config(work_dir: &Path) -> Result<Config> {
         work_dir: work_dir.to_path_buf(),
         rvps_config,
         attestation_token_broker: AttestationTokenConfig::Ear(ear_cfg),
+        challenge_key_path: None,
     })
 }
 

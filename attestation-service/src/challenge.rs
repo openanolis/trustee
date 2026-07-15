@@ -8,22 +8,30 @@ use openssl::rsa::Rsa;
 use openssl::sign::Signer;
 use serde_json::{json, Value};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const RSA_KEY_BITS: u32 = 2048;
 const TOKEN_ALG: &str = "RS384";
-const KEY_DIR: &str = "/etc/trustee/attestation-service/nonce_token_issuer";
-const PRIV_KEY_PEM: &str = "key.pem";
+const DEFAULT_KEY_DIR: &str = "/etc/trustee/attestation-service/nonce_token_issuer";
+const DEFAULT_PRIV_KEY_PEM: &str = "key.pem";
 
-fn ensure_keypair() -> Result<Rsa<Private>> {
-    let dir = Path::new(KEY_DIR);
-    if !dir.exists() {
-        fs::create_dir_all(dir).with_context(|| format!("create dir {} failed", KEY_DIR))?;
+/// Default filesystem path of the RSA private key used to sign/verify
+/// attestation challenge (nonce) tokens. Used when no explicit path is
+/// configured in the Attestation Service config.
+pub fn default_challenge_key_path() -> PathBuf {
+    Path::new(DEFAULT_KEY_DIR).join(DEFAULT_PRIV_KEY_PEM)
+}
+
+fn ensure_keypair(key_path: &Path) -> Result<Rsa<Private>> {
+    if let Some(dir) = key_path.parent() {
+        if !dir.as_os_str().is_empty() && !dir.exists() {
+            fs::create_dir_all(dir)
+                .with_context(|| format!("create dir {} failed", dir.display()))?;
+        }
     }
 
-    let key_path = dir.join(PRIV_KEY_PEM);
     if key_path.exists() {
-        let pem = fs::read(&key_path).context("read private key pem failed")?;
+        let pem = fs::read(key_path).context("read private key pem failed")?;
         let rsa = Rsa::private_key_from_pem(&pem).context("parse private key pem failed")?;
         return Ok(rsa);
     }
@@ -32,7 +40,7 @@ fn ensure_keypair() -> Result<Rsa<Private>> {
     let pem = rsa
         .private_key_to_pem()
         .context("dump private key to pem failed")?;
-    fs::write(&key_path, pem).context("write private key pem failed")?;
+    fs::write(key_path, pem).context("write private key pem failed")?;
     Ok(rsa)
 }
 
@@ -43,7 +51,7 @@ fn rs384_sign(rsa: &Rsa<Private>, payload: &[u8]) -> Result<Vec<u8>> {
     Ok(signer.sign_to_vec()?)
 }
 
-pub fn generate_common_challenge() -> Result<String> {
+pub fn generate_common_challenge(key_path: &Path) -> Result<String> {
     // nonce
     let mut nonce = [0u8; 32];
     rand_bytes(&mut nonce)?;
@@ -73,7 +81,7 @@ pub fn generate_common_challenge() -> Result<String> {
 
     // sign
     let signing_input = format!("{}.{}", header_b64, claims_b64);
-    let rsa = ensure_keypair()?;
+    let rsa = ensure_keypair(key_path)?;
     let signature = rs384_sign(&rsa, signing_input.as_bytes())?;
     let signature_b64 = URL_SAFE_NO_PAD.encode(signature);
     let jwt = format!("{}.{}", signing_input, signature_b64);
@@ -86,7 +94,7 @@ pub fn generate_common_challenge() -> Result<String> {
     Ok(serde_json::to_string(&output)?)
 }
 
-pub fn verify_challenge_and_extract_nonce_b64url(token: &str) -> Result<String> {
+pub fn verify_challenge_and_extract_nonce_b64url(token: &str, key_path: &Path) -> Result<String> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
         bail!("invalid JWT format in challenge_token");
@@ -97,8 +105,7 @@ pub fn verify_challenge_and_extract_nonce_b64url(token: &str) -> Result<String> 
         .decode(parts[2])
         .context("invalid JWT signature encoding")?;
 
-    let pem =
-        fs::read(Path::new(KEY_DIR).join(PRIV_KEY_PEM)).context("read nonce token key failed")?;
+    let pem = fs::read(key_path).context("read nonce token key failed")?;
     let rsa = Rsa::private_key_from_pem(&pem).context("parse nonce token key failed")?;
     let pkey = PKey::from_rsa(rsa).context("load nonce token key failed")?;
 

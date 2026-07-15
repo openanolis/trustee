@@ -23,6 +23,13 @@ pub struct Config {
     /// The Attestation Result Token Broker Config
     #[serde(default)]
     pub attestation_token_broker: AttestationTokenConfig,
+
+    /// Optional path to the RSA private key used to sign and verify
+    /// attestation challenge (nonce) tokens. When unset, a built-in default
+    /// path (`/etc/trustee/attestation-service/nonce_token_issuer/key.pem`)
+    /// is used, and the key is generated on first use if it does not exist.
+    #[serde(default)]
+    pub challenge_key_path: Option<PathBuf>,
 }
 
 fn default_work_dir() -> PathBuf {
@@ -48,6 +55,7 @@ impl Default for Config {
             work_dir: default_work_dir(),
             rvps_config: RvpsConfig::default(),
             attestation_token_broker: AttestationTokenConfig::default(),
+            challenge_key_path: None,
         }
     }
 }
@@ -99,7 +107,8 @@ mod tests {
             issuer_name: "test".into(),
             signer: None,
             policy_dir: "/var/lib/attestation-service/policies".into(),
-        })
+        }),
+        challenge_key_path: None,
     })]
     #[case("./tests/configs/example2.json", Config {
         work_dir: PathBuf::from("/var/lib/attestation-service/"),
@@ -115,7 +124,8 @@ mod tests {
                 cert_url: Some("https://example.io".into()),
                 cert_path: Some("/etc/cert.pem".into())
             })
-        })
+        }),
+        challenge_key_path: None,
     })]
     #[case("./tests/configs/example3.json", Config {
         work_dir: PathBuf::from("/var/lib/attestation-service/"),
@@ -130,7 +140,8 @@ mod tests {
             developer_name: "someone".into(),
             build_name: "0.1.0".into(),
             profile_name: "tag:github.com,2024:confidential-containers/Trustee".into()
-        })
+        }),
+        challenge_key_path: None,
     })]
     #[case("./tests/configs/example4.json", Config {
         work_dir: PathBuf::from("/var/lib/attestation-service/"),
@@ -149,7 +160,8 @@ mod tests {
                 cert_url: Some("https://example.io".into()),
                 cert_path: Some("/etc/cert.pem".into())
             })
-        })
+        }),
+        challenge_key_path: None,
     })]
     fn read_config(#[case] config: &str, #[case] expected: Config) {
         let config = std::fs::read_to_string(config).unwrap();

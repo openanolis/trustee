@@ -373,13 +373,23 @@ impl AttestationService {
             .await
     }
 
+    /// Filesystem path of the RSA private key used to sign and verify
+    /// attestation challenge (nonce) tokens. Falls back to the built-in
+    /// default when not set in the config.
+    pub fn challenge_key_path(&self) -> std::path::PathBuf {
+        self._config
+            .challenge_key_path
+            .clone()
+            .unwrap_or_else(challenge::default_challenge_key_path)
+    }
+
     pub async fn generate_challenge(
         &self,
         tee: Option<Tee>,
         tee_parameters: Option<String>,
     ) -> Result<String> {
         match tee {
-            None => challenge::generate_common_challenge(),
+            None => challenge::generate_common_challenge(&self.challenge_key_path()),
             Some(t) => {
                 self.generate_supplemental_challenge(t, tee_parameters.unwrap_or_default())
                     .await
