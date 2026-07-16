@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
+#[cfg(feature = "bin")]
 pub mod client;
 pub mod config;
 pub mod extractors;
@@ -11,7 +12,9 @@ mod provenance_source;
 pub mod reference_value;
 mod rekor;
 pub mod rv_list;
+#[cfg(feature = "bin")]
 pub mod rvps_api;
+#[cfg(feature = "bin")]
 pub mod server;
 pub mod storage;
 
