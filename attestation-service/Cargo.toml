@@ -10,7 +10,7 @@ default = [ "restful-bin", "rvps-grpc", "all-verifier", "fs" ]
 # rvps local_json/local_fs storage, nonce-key persistence, signer transparency
 # file, signer key/cert read by path. Turn off (`default-features = false`) for a
 # pure, fs-free library (e.g. wasm builds).
-fs = [ "tokio/fs" ]
+fs = [ "tokio/fs", "reference-value-provider-service/fs" ]
 all-verifier = [ "verifier/all-verifier" ]
 # Like `all-verifier`, but the TDX verifier uses the dcap-qvl backend and SGX is
 # dropped (it would still link the DCAP shared library). See

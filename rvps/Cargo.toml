@@ -17,8 +17,15 @@ bin = [
     "dep:prost",
     "dep:shadow-rs",
     "dep:tonic",
+    "fs",
     "tokio/full",
 ]
+
+# Filesystem-backed storage (LocalFs / LocalJson) and `file://` provenance
+# reads. Pulls `dep:sled` and `tokio/fs`. Library consumers that embed RVPS as
+# a pure library (attestation-service with `--no-default-features`, wasm) turn
+# this off so the lib core has zero fs/sled references.
+fs = ["dep:sled", "tokio/fs"]
 
 # Support in-toto provenance (not ready)
 in-toto =[ "path-clean" ]
@@ -57,10 +64,10 @@ serde_json.workspace = true
 serde_yaml = { workspace = true, optional = true  }
 sha2.workspace = true
 shadow-rs = { workspace = true, optional = true }
-sled = "0.34.7"
+sled = { version = "0.34.7", optional = true }
 strum.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["sync", "fs"] }
+tokio = { workspace = true, features = ["sync"] }
 tonic = { workspace = true, optional = true }
 
 [build-dependencies]
