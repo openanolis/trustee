@@ -4,9 +4,21 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = [ "bin", "reqwest", "sha2" ]
-# Used to build rvps binary
-bin = [ "clap", "config", "env_logger", "prost", "reqwest", "sha2", "shadow-rs", "tokio", "tonic" ]
+# The library core (the `Rvps` struct, storage, extractors, rekor/provenance
+# fetching) has no feature gates and compiles with `default-features = false`.
+# Consumers that only embed RVPS as a library (attestation-service, kbs) pull it
+# that way. The `bin` feature adds everything the `rvps` / `rvps-tool` binaries
+# need: the gRPC server/client, generated protos and CLI/config/logging.
+default = ["bin"]
+bin = [
+    "dep:clap",
+    "dep:config",
+    "dep:env_logger",
+    "dep:prost",
+    "dep:shadow-rs",
+    "dep:tonic",
+    "tokio/full",
+]
 
 # Support in-toto provenance (not ready)
 in-toto =[ "path-clean" ]
@@ -38,17 +50,17 @@ hex = { version = "0.4", optional = true }
 log.workspace = true
 path-clean = { version = "1.0.1", optional = true }
 prost = { workspace = true, optional = true }
-reqwest = { workspace = true, features = ["blocking"], optional = true }
+reqwest = { workspace = true, features = ["blocking"]}
 rpm = { version = "0.16", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml = { workspace = true, optional = true  }
-sha2 = { workspace = true, optional = true }
+sha2.workspace = true
 shadow-rs = { workspace = true, optional = true }
 sled = "0.34.7"
 strum.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["full"], optional = true }
+tokio = { workspace = true, features = ["sync", "fs"] }
 tonic = { workspace = true, optional = true }
 
 [build-dependencies]
