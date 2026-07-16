@@ -30,9 +30,11 @@ pub use serde_json::Value;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use sm3::Sm3;
 use std::collections::HashMap;
+#[cfg(feature = "fs")]
 use std::io::Read;
 use strum::{AsRefStr, Display, EnumString};
 use thiserror::Error;
+#[cfg(feature = "fs")]
 use tokio::fs;
 use verifier::{InitDataHash, ReportData, TeeEvidenceParsedClaim};
 
@@ -196,6 +198,7 @@ struct Jwk {
 
 impl AttestationService {
     /// Create a new Attestation Service instance.
+    #[cfg(feature = "fs")]
     pub async fn new(config: Config) -> Result<Self, ServiceError> {
         if !config.work_dir.as_path().exists() {
             fs::create_dir_all(&config.work_dir)
@@ -432,6 +435,7 @@ impl AttestationService {
     }
 
     /// Get certificate content from file path or URL
+    #[cfg(feature = "fs")]
     async fn get_cert_content(
         &self,
         cert_path: Option<&str>,
