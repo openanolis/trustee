@@ -350,6 +350,7 @@ async fn fetch_provenance_material(
                 .await
                 .with_context(|| format!("fetch provenance from OCI `{}`", src.uri))
         }
+        #[cfg(feature = "fs")]
         "file" => {
             let path = source.uri.strip_prefix("file://").unwrap_or(&source.uri);
             let raw_bytes = std::fs::read(path)
@@ -559,6 +560,7 @@ fn unique_docs(docs: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "fs")]
     use crate::storage::{local_json, ReferenceValueStorageConfig};
 
     #[test]
@@ -580,6 +582,7 @@ mod tests {
         assert!(docs[0].contains("predicateType"));
     }
 
+    #[cfg(feature = "fs")]
     #[tokio::test]
     async fn set_reference_value_list_from_release_manifest_file() {
         let tmp = tempfile::tempdir().unwrap();

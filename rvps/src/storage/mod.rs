@@ -10,32 +10,53 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use strum::Display;
 
+#[cfg(feature = "fs")]
 use self::local_fs::LocalFs;
+#[cfg(feature = "fs")]
 use self::local_json::LocalJson;
 
 use super::ReferenceValue;
 
+pub mod in_memory;
+#[cfg(feature = "fs")]
 pub mod local_fs;
+#[cfg(feature = "fs")]
 pub mod local_json;
 
 #[derive(Clone, Debug, Deserialize, Display, PartialEq)]
 #[serde(tag = "type")]
 pub enum ReferenceValueStorageConfig {
+    InMemory(in_memory::Config),
+    #[cfg(feature = "fs")]
     LocalFs(local_fs::Config),
+    #[cfg(feature = "fs")]
     LocalJson(local_json::Config),
 }
 
 impl Default for ReferenceValueStorageConfig {
     fn default() -> Self {
-        ReferenceValueStorageConfig::LocalFs(local_fs::Config::default())
+        #[cfg(feature = "fs")]
+        {
+            ReferenceValueStorageConfig::LocalFs(local_fs::Config::default())
+        }
+        #[cfg(not(feature = "fs"))]
+        {
+            ReferenceValueStorageConfig::InMemory(in_memory::Config::default())
+        }
     }
 }
 
 impl ReferenceValueStorageConfig {
     pub fn to_storage(&self) -> Result<Box<dyn ReferenceValueStorage + Send + Sync>> {
         match self {
+            ReferenceValueStorageConfig::InMemory(cfg) => {
+                Ok(Box::new(in_memory::InMemory::new(cfg.clone())?)
+                    as Box<dyn ReferenceValueStorage + Send + Sync>)
+            }
+            #[cfg(feature = "fs")]
             ReferenceValueStorageConfig::LocalFs(cfg) => Ok(Box::new(LocalFs::new(cfg.clone())?)
                 as Box<dyn ReferenceValueStorage + Send + Sync>),
+            #[cfg(feature = "fs")]
             ReferenceValueStorageConfig::LocalJson(cfg) => {
                 Ok(Box::new(LocalJson::new(cfg.clone())?)
                     as Box<dyn ReferenceValueStorage + Send + Sync>)
