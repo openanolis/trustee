@@ -26,7 +26,7 @@ se-verifier  = [ "verifier/se-verifier" ]
 system-verifier = [ "verifier/system-verifier" ]
 tpm-verifier = [ "verifier/tpm-verifier" ]
 
-rvps-grpc = [ "prost", "tonic" ]
+rvps-grpc = [ "prost", "tonic", "tokio/sync" ]
 
 # For building gRPC CoCo-AS binary
 grpc-bin = [ "clap", "env_logger", "prost", "tonic", "tokio/full" ]
@@ -91,7 +91,7 @@ strum.workspace = true
 tempfile.workspace = true
 time = { version = "0.3.23", features = ["std"] }
 thiserror.workspace = true
-tokio = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["fs"] }
 toml.workspace = true
 tonic = { workspace = true, optional = true }
 verifier = { path = "../deps/verifier", default-features = false }
