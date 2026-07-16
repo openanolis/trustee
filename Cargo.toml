@@ -62,7 +62,7 @@ const_format = "0.2"
 sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-rustls", "mysql", "sqlite", "any", "json", "chrono"] }
 strum = { version = "0.25", features = ["derive"] }
 thiserror = "2.0"
-tokio = { version = "1", default-features = false, features = ["full"] }
+tokio = { version = "1", default-features = false }
 toml = "0.8.23"
 tempfile = "3.4.0"
 tonic = "0.12"

@@ -159,4 +159,4 @@ tonic-build.workspace = true
 assert-json-diff.workspace = true
 rstest.workspace = true
 serial_test.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
