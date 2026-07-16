@@ -10,6 +10,7 @@
 use anyhow::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use const_format::concatcp;
 use log::info;
 use openssl::rsa::Rsa;
 use openssl::sign::Signer;
@@ -23,7 +24,6 @@ use rand::{thread_rng, Rng};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use serde_variant::to_variant_name;
-use shadow_rs::concatcp;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;

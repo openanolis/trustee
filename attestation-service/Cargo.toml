@@ -82,7 +82,7 @@ serde_json.workspace = true
 serde_variant = "0.1.2"
 sha2.workspace = true
 sm3 = "0.4.2"
-shadow-rs.workspace = true
+shadow-rs = { workspace = true, default-features = false }
 strum.workspace = true
 tempfile.workspace = true
 time = { version = "0.3.23", features = ["std"] }
@@ -92,6 +92,7 @@ toml.workspace = true
 tonic = { workspace = true, optional = true }
 uuid = { version = "1.1.2", features = ["v4"] }
 verifier = { path = "../deps/verifier", default-features = false }
+const_format.workspace = true
 
 [build-dependencies]
 shadow-rs.workspace = true
