@@ -90,7 +90,6 @@ thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tonic = { workspace = true, optional = true }
-uuid = { version = "1.1.2", features = ["v4"] }
 verifier = { path = "../deps/verifier", default-features = false }
 const_format.workspace = true
 # x509-cert is used by `token/simple.rs` for PEM/DER certificate-chain parsing
@@ -98,6 +97,10 @@ const_format.workspace = true
 # `Certificate::from_pem` / `to_der`. The `pem` feature enables
 # `der::DecodePem` (used by `from_pem`); `std` is part of the default set.
 x509-cert = { version = "0.2.5", default-features = false, features = ["pem", "std"] }
+[target.'cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))'.dependencies]
+uuid = { version = "1.1.2", features = ["v4"] }
+[target.'cfg(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"))'.dependencies]
+uuid = { version = "1.1.2", features = ["v4", "js"] }
 
 [build-dependencies]
 shadow-rs.workspace = true
