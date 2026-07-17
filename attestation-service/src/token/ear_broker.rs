@@ -15,11 +15,10 @@ use ear::{
 use jsonwebtoken::{jwk, EncodingKey};
 use kbs_types::Tee;
 use log::{debug, info, warn};
-use openssl::bn::{BigNum, BigNumContext};
-use openssl::ec::{EcGroup, EcKey};
-use openssl::nid::Nid;
-use openssl::pkey::{PKey, Private};
-use openssl::x509::X509;
+use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey, LineEnding};
+use p256::SecretKey;
+use rand::rngs::OsRng;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use serde_variant::to_variant_name;
@@ -27,6 +26,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 use time::{Duration, OffsetDateTime};
+use x509_cert::der::{DecodePem, Encode};
+use x509_cert::Certificate;
 
 use crate::policy_engine::{PolicyEngine, PolicyEngineType};
 use crate::token::DEFAULT_TOKEN_WORK_DIR;
@@ -137,9 +138,9 @@ impl Default for Configuration {
 
 pub struct EarAttestationTokenBroker {
     config: Configuration,
-    private_key: EcKey<Private>,
+    private_key: SecretKey,
     cert_url: Option<String>,
-    cert_chain: Option<Vec<X509>>,
+    cert_chain: Option<Vec<Certificate>>,
     policy_engine: Arc<dyn PolicyEngine>,
 }
 
@@ -164,16 +165,19 @@ impl EarAttestationTokenBroker {
         }
 
         let signer = config.signer.clone().unwrap();
-        let pem_data = std::fs::read(&signer.key_path)
-            .map_err(|e| anyhow!("Read Token Signer private key failed: {:?}", e))?;
-        let private_key = EcKey::private_key_from_pem(&pem_data)?;
+        let pem_data =
+            std::fs::read(&signer.key_path).context("Read Token Signer private key failed")?;
+        let pem_str = std::str::from_utf8(&pem_data).context("Token Signer key not UTF-8")?;
+        let private_key = SecretKey::from_sec1_pem(pem_str)
+            .or_else(|_| SecretKey::from_pkcs8_pem(pem_str))
+            .context("Parse Token Signer private key failed")?;
 
         let cert_chain = signer
             .cert_path
             .as_ref()
-            .map(|cert_path| -> Result<Vec<X509>> {
+            .map(|cert_path| -> Result<Vec<Certificate>> {
                 let pem_cert_chain = std::fs::read_to_string(cert_path)
-                    .map_err(|e| anyhow!("Read Token Signer cert file failed: {:?}", e))?;
+                    .context("Read Token Signer cert file failed")?;
                 let mut chain = Vec::new();
 
                 for pem in pem_cert_chain.split("-----END CERTIFICATE-----") {
@@ -181,8 +185,10 @@ impl EarAttestationTokenBroker {
                     if !trimmed.starts_with("-----BEGIN CERTIFICATE-----") {
                         continue;
                     }
-                    let cert = X509::from_pem(trimmed.as_bytes())
-                        .map_err(|_| anyhow!("Invalid PEM certificate chain"))?;
+                    // x509-cert's DecodePem expects a single PEM block; the split
+                    // above already isolates one. Use the Label-aware decoder.
+                    let cert = Certificate::from_pem(trimmed.as_bytes())
+                        .context("Invalid PEM certificate chain")?;
                     chain.push(cert);
                 }
                 Ok(chain)
@@ -314,8 +320,11 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
         let mut jwt_header = ear::new_jwt_header(&Algorithm::ES256)?;
         jwt_header.jwk = Some(self.pubkey_jwk()?);
 
-        let pkey = PKey::from_ec_key(self.private_key.clone())?;
-        let private_key_bytes = pkey.private_key_to_pem_pkcs8()?;
+        let private_key_bytes = self
+            .private_key
+            .to_pkcs8_pem(LineEnding::LF)
+            .context("serialize EC private key to PKCS#8 PEM")?;
+        let private_key_bytes: &[u8] = private_key_bytes.as_bytes();
 
         let signed_ear = if let Some(transparency) = signer_transparency::load_signer_transparency()
         {
@@ -329,10 +338,10 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
             jsonwebtoken::encode(
                 &jwt_header,
                 &Value::Object(ear_claims),
-                &EncodingKey::from_ec_pem(&private_key_bytes)?,
+                &EncodingKey::from_ec_pem(private_key_bytes)?,
             )?
         } else {
-            ear.sign_jwt_pem_with_header(&jwt_header, &private_key_bytes)?
+            ear.sign_jwt_pem_with_header(&jwt_header, private_key_bytes)?
         };
 
         Ok(signed_ear)
@@ -391,18 +400,19 @@ impl EarAttestationTokenBroker {
         };
 
         let public_key = self.private_key.public_key();
-        let group = self.private_key.group();
-
-        let mut ctx = BigNumContext::new()?;
-        let mut x = BigNum::new()?;
-        let mut y = BigNum::new()?;
-        public_key.affine_coordinates_gfp(group, &mut x, &mut y, &mut ctx)?;
+        let encoded = public_key.to_encoded_point(false);
+        let x = encoded
+            .x()
+            .ok_or_else(|| anyhow!("EC public key has no x coordinate"))?;
+        let y = encoded
+            .y()
+            .ok_or_else(|| anyhow!("EC public key has no y coordinate"))?;
 
         let algorithm = jwk::AlgorithmParameters::EllipticCurve(jwk::EllipticCurveKeyParameters {
             key_type: jwk::EllipticCurveKeyType::EC,
             curve: jwk::EllipticCurve::P256,
-            x: URL_SAFE_NO_PAD.encode(x.to_vec()),
-            y: URL_SAFE_NO_PAD.encode(y.to_vec()),
+            x: URL_SAFE_NO_PAD.encode(x.as_slice()),
+            y: URL_SAFE_NO_PAD.encode(y.as_slice()),
         });
 
         let jwk = jwk::Jwk { common, algorithm };
@@ -411,15 +421,20 @@ impl EarAttestationTokenBroker {
     }
 }
 
-fn generate_ec_keys() -> Result<(EcKey<Private>, Vec<u8>, Vec<u8>)> {
-    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-    let ec_key = EcKey::generate(&group)?;
-    let pkey = PKey::from_ec_key(ec_key.clone())?;
-
+fn generate_ec_keys() -> Result<(SecretKey, Vec<u8>, Vec<u8>)> {
+    let mut rng = OsRng;
+    let secret = SecretKey::random(&mut rng);
+    let priv_pem = secret
+        .to_pkcs8_pem(LineEnding::LF)
+        .context("serialize EC private key to PKCS#8 PEM")?;
+    let pub_pem = secret
+        .public_key()
+        .to_public_key_pem(LineEnding::LF)
+        .context("serialize EC public key to SPKI PEM")?;
     Ok((
-        ec_key,
-        pkey.private_key_to_pem_pkcs8()?,
-        pkey.public_key_to_pem()?,
+        secret,
+        priv_pem.as_bytes().to_vec(),
+        pub_pem.as_bytes().to_vec(),
     ))
 }
 

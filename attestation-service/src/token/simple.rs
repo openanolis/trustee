@@ -12,21 +12,24 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use const_format::concatcp;
 use log::info;
-use openssl::rsa::Rsa;
-use openssl::sign::Signer;
-use openssl::x509::X509;
-use openssl::{
-    hash::MessageDigest,
-    pkey::{PKey, Private},
-};
 use rand::distributions::Alphanumeric;
+use rand::rngs::OsRng;
 use rand::{thread_rng, Rng};
+use rsa::pkcs1::DecodeRsaPrivateKey;
+use rsa::pkcs1v15::{Signature, SigningKey};
+use rsa::pkcs8::DecodePrivateKey;
+use rsa::signature::Signer;
+use rsa::traits::PublicKeyParts;
+use rsa::RsaPrivateKey;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use serde_variant::to_variant_name;
+use sha2::Sha384;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use x509_cert::der::{DecodePem, Encode};
+use x509_cert::Certificate;
 
 use crate::policy_engine::{PolicyEngine, PolicyEngineType};
 use crate::token::{AttestationTokenBroker, DEFAULT_TOKEN_WORK_DIR};
@@ -97,10 +100,10 @@ impl Default for Configuration {
 }
 
 pub struct SimpleAttestationTokenBroker {
-    private_key: Rsa<Private>,
+    private_key: RsaPrivateKey,
     config: Configuration,
     cert_url: Option<String>,
-    cert_chain: Option<Vec<X509>>,
+    cert_chain: Option<Vec<Certificate>>,
     policy_engine: Arc<dyn PolicyEngine>,
 }
 
@@ -115,8 +118,9 @@ impl SimpleAttestationTokenBroker {
 
         if config.signer.is_none() {
             log::info!("No Token Signer key in config file, create an ephemeral key and without CA pubkey cert");
+            let mut rng = OsRng;
             return Ok(Self {
-                private_key: Rsa::generate(RSA_KEY_BITS)?,
+                private_key: RsaPrivateKey::new(&mut rng, RSA_KEY_BITS as usize)?,
                 config,
                 cert_url: None,
                 cert_chain: None,
@@ -125,16 +129,18 @@ impl SimpleAttestationTokenBroker {
         }
 
         let signer = config.signer.clone().unwrap();
-        let pem_data = std::fs::read(&signer.key_path)
-            .map_err(|e| anyhow!("Read Token Signer private key failed: {:?}", e))?;
-        let private_key = Rsa::private_key_from_pem(&pem_data)?;
+        let pem_data = std::fs::read_to_string(&signer.key_path)
+            .context("Read Token Signer private key failed")?;
+        let private_key = RsaPrivateKey::from_pkcs8_pem(&pem_data)
+            .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&pem_data))
+            .context("Parse Token Signer private key failed")?;
 
         let cert_chain = signer
             .cert_path
             .as_ref()
-            .map(|cert_path| -> Result<Vec<X509>> {
+            .map(|cert_path| -> Result<Vec<Certificate>> {
                 let pem_cert_chain = std::fs::read_to_string(cert_path)
-                    .map_err(|e| anyhow!("Read Token Signer cert file failed: {:?}", e))?;
+                    .context("Read Token Signer cert file failed")?;
                 let mut chain = Vec::new();
 
                 for pem in pem_cert_chain.split("-----END CERTIFICATE-----") {
@@ -142,8 +148,10 @@ impl SimpleAttestationTokenBroker {
                     if !trimmed.starts_with("-----BEGIN CERTIFICATE-----") {
                         continue;
                     }
-                    let cert = X509::from_pem(trimmed.as_bytes())
-                        .map_err(|_| anyhow!("Invalid PEM certificate chain"))?;
+                    // x509-cert's DecodePem expects a single PEM block; the split
+                    // above already isolates one. Use the Label-aware decoder.
+                    let cert = Certificate::from_pem(trimmed.as_bytes())
+                        .context("Invalid PEM certificate chain")?;
                     chain.push(cert);
                 }
                 Ok(chain)
@@ -162,17 +170,14 @@ impl SimpleAttestationTokenBroker {
 
 impl SimpleAttestationTokenBroker {
     fn rs384_sign(&self, payload: &[u8]) -> Result<Vec<u8>> {
-        let rsa_pkey = PKey::from_rsa(self.private_key.clone())?;
-        let mut signer = Signer::new(MessageDigest::sha384(), &rsa_pkey)?;
-        signer.update(payload)?;
-        let signature = signer.sign_to_vec()?;
-
-        Ok(signature)
+        let signing_key = SigningKey::<Sha384>::new(self.private_key.clone());
+        let sig: Signature = signing_key.sign(payload);
+        Ok(Box::<[u8]>::from(sig).to_vec())
     }
 
     fn pubkey_jwks(&self) -> Result<String> {
-        let n = self.private_key.n().to_vec();
-        let e = self.private_key.e().to_vec();
+        let n = self.private_key.n().to_bytes_be();
+        let e = self.private_key.e().to_bytes_be();
 
         let mut jwk = Jwk {
             kty: "RSA".to_string(),
@@ -439,11 +444,16 @@ mod tests {
 
     use crate::TeeClaims;
     use assert_json_diff::assert_json_eq;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
     use kbs_types::Tee;
     use serde_json::json;
+    use tempfile::NamedTempFile;
+    use x509_cert::der::Decode;
+    use x509_cert::Certificate;
 
     use crate::token::{
-        simple::{Configuration, SimpleAttestationTokenBroker},
+        simple::{Configuration, SimpleAttestationTokenBroker, TokenSignerConfig},
         AttestationTokenBroker,
     };
 
@@ -537,5 +547,153 @@ mod tests {
                 "init_data": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
         });
         assert_json_eq!(expected, flatten);
+    }
+
+    // A pre-generated RSA-2048 PKCS#8 private key (PEM). Used together with
+    // `TEST_CERT_CHAIN_PEM` to exercise the `signer = Some(...)` branch of
+    // `SimpleAttestationTokenBroker::new`, which parses the PEM cert chain via
+    // `Certificate::from_pem` and later encodes it into the JWK `x5c` array via
+    // `Certificate::to_der`. Generated with `openssl genpkey` / `openssl req
+    // -x509`; embedded as text so no binary fixture is committed.
+    const TEST_SIGNER_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCdazaeItcE7c8W
+cuc3i+KE94fKdLt/aOw2oIr6lVlzW95cwuok35uTYlJwTrvhPd8Qz1xBuerk9qAQ
+hMhEtslKX96ZBUHn/St7ajIvLAJahW4VdaOd8hcakS2b9sSaIaw84rtcpaGa/w1k
+fQglM5w2zClbfWnhwLYr4Fp0tzhI3hWuqmQs3S7uGc0An1vcb9TZDkgt6hhB6Fpr
+LHZcodgKbNHkM/WrNRKqJxFmwgSQc2v0VdA0QQyP7fNpuPdjdqrkSCQH7mMWQh2e
+mbifKalRHAj5jzSrmhxfXis+yJ5yU/dij3TwG9JAWuYRR7hbgeKHEq9FMsWoNRCf
+0TirPKjJAgMBAAECggEAFnLtrQuG4lsPh0IHmzJFsXSjVsni2z6ZQQkQCMA3q23U
+fiIFxhBlXVVOMFnqDSsHnpwTqgPbbZ+GIBTvgm0Ws5aMZgIL7gt6ofT5ByUdiM8y
+bbkDBkk55j4B5RYB34Eh0OT8ly+/phztSgFSoguEIYRn+XYfHWSgFg2+mJpwWmOo
+KG1xGNSgpaAmjwpaMDWZkvOxeyPUZa7SZ8Qs+IaNd34KdbuCf0Bry5IB2aeNuQX4
+YISpeNa+7ZFk+I9zbHtHMQuUNBYTeTRD6m7nyuKYfTghuooHbJMGDbCCOjHZZ+7+
+wdvtKe3uw8v7bvmYL0YTit46XN45nD+2ZaU7LEPYIQKBgQDOf19oRzRgtMI84XTK
+DheTgaZnkH0scBcNTF1InXLrJtD7SaAeDVAKpSjcp9j0ztCfVRqAR86FDJK5N9Sj
+y5+F2Za3I6Y84Jv2cEOqlRADDmMZ3T3X1g2AIb4pB53+uqQXSCp7xHc1Y8u/v2tB
+kZ/4iYxvdUL1kfgw4chaCDZCrQKBgQDDJ+h/Xkx0wbq2/CKXpwQ5cAX3+//cfmef
+cVneWOq4kf7xEfM2es763zLCNEV/R0Jz6k94+Dg/MPRGk7jwYiJQzer3xnjrAlMg
+Xmm3NubiCKK4lVbzlHR9GsSNEhOSPzVqvCY4EKjr66ilD5nC97qAugnNx3vvIr8v
+P+9Rh7ceDQKBgDpUIE8ETfdDF9q6lJK+iEpSRP7cAX+b6ecHuxHX564kuMNCeMgE
+WqenH3O0tcPw510aXPH/VoaelpNbAeWCjvzwCXKRz1NC3sstyu9US8GRPsz/gYiG
+HiojXeOZEzfw4IjzCY0MYd/i4Jq5J0LOL7G0qMaTCOb05HZqUH2d9DXBAoGBAMKA
+MttGe4LeVh3revqUTcSFHp3CPYZfQR2K1luhWQZtE57mGfVRPpqP+0HM4PryZYur
+mlthYIWyX7M7pVWHKNZJ9IXP/FGU9o5LKqecg04B91NqG8gWTGcnV3+V5YWbk7x2
+Gs1D5WeEbodb3g6P4gRL5lt+FsoGYm9QFE+4qEu9AoGBAIYroZ3Zcn/cuZrxd86+
+IfhfMSAQFBcGy3mxwNnFK1oYNsaI2Q58XpmE2Szq3xKCJvxaySoaCYMI0gLnsNIY
+cuYg+Fi67/AQ/dSefVb47kn9YnX8xAi2HfTvaX5M3z7bM00W/3aWAL+c785+L15/
+wihjpplQnoBixGHV/2XFex6x
+-----END PRIVATE KEY-----
+";
+
+    // A 2-cert PEM chain (leaf + CA). The split-on-`-----END CERTIFICATE-----`
+    // loop in `SimpleAttestationTokenBroker::new` parses both entries.
+    const TEST_CERT_CHAIN_PEM: &str = "-----BEGIN CERTIFICATE-----
+MIIDCTCCAfGgAwIBAgIUdzxyN1GLEQxMXM8WxZBC8XyZgLswDQYJKoZIhvcNAQEL
+BQAwFDESMBAGA1UEAwwJdGVzdC1sZWFmMB4XDTI2MDcxMzEzMzMyOFoXDTI2MDcx
+NDEzMzMyOFowFDESMBAGA1UEAwwJdGVzdC1sZWFmMIIBIjANBgkqhkiG9w0BAQEF
+AAOCAQ8AMIIBCgKCAQEAnWs2niLXBO3PFnLnN4vihPeHynS7f2jsNqCK+pVZc1ve
+XMLqJN+bk2JScE674T3fEM9cQbnq5PagEITIRLbJSl/emQVB5/0re2oyLywCWoVu
+FXWjnfIXGpEtm/bEmiGsPOK7XKWhmv8NZH0IJTOcNswpW31p4cC2K+BadLc4SN4V
+rqpkLN0u7hnNAJ9b3G/U2Q5ILeoYQehaayx2XKHYCmzR5DP1qzUSqicRZsIEkHNr
+9FXQNEEMj+3zabj3Y3aq5EgkB+5jFkIdnpm4nympURwI+Y80q5ocX14rPsieclP3
+Yo908BvSQFrmEUe4W4HihxKvRTLFqDUQn9E4qzyoyQIDAQABo1MwUTAdBgNVHQ4E
+FgQU8wNZeMzYYavyOsdZiCaCRilG0h0wHwYDVR0jBBgwFoAU8wNZeMzYYavyOsdZ
+iCaCRilG0h0wDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAQ1EE
+2oW6T0isfKL+JDVUJ+SQNj78XrZD/j4Yz1TelUcWisKXy2yLlaS6b5kc76uBt5fq
+2k9zIL++DgrJKwLxLQLtzyzjSQfZjUL8droACYpHib68Lrndb5Wcj9a3Wcfiiapj
+vvpS0AsewA7vJDbMT20ysk5UXuOhtzBHUGMJ3T8L4SI9DtcPhAHH+xsVj7m/bQSX
+lH9fNZ3BtwToqc+EYJGpG73/ywyAIoXPKJz/QzKNgg9AEI+zii+jDp7kmb4/hDzQ
+Zec2jczp/Dz57pSUaFnTwESsnxV5MSyYzuS7dtRzznvvUd5zcXmxDM1a9yIb1Odi
+IC3JTM1/6bvS5z8fqQ==
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDBTCCAe2gAwIBAgIUZXV/g7lAiljh80f59PX8tfvJOpEwDQYJKoZIhvcNAQEL
+BQAwEjEQMA4GA1UEAwwHdGVzdC1jYTAeFw0yNjA3MTMxMzMzMjhaFw0yNjA3MTQx
+MzMzMjhaMBIxEDAOBgNVBAMMB3Rlc3QtY2EwggEiMA0GCSqGSIb3DQEBAQUAA4IB
+DwAwggEKAoIBAQDETWzpRRPicHUs5jm7jqm3HwuWB4cTHVOyoq87ttlEVVsVYpni
+g2DLSUvDu0qXTNf8KaA5IYlqCIcEuDrKYNl0o1vcL79FFT/URFsZVr0Q6R1PjrKf
+9nWN7df9sFCvMokJOpIxtBc0t4jFcYJKIS9EGBykP83zmDPv3+9KhLtlOq5cHEvM
+89TSLvLn6sCHYwqFvOLlfNVrMGMAbDG656tnIcWXor3AFa/ghlLgsAeJgimfhaDM
+I/JjZVZwKK5u3Vm027sKRPcv/U90wtRw7+HL84Cm++HtX71uBPcU8MyeCPV+IziN
+ruWeTq9XbfCwMknU8G2/sHplwD4LJbgVUXxXAgMBAAGjUzBRMB0GA1UdDgQWBBSO
+UCn2c7P9LIuWx588AgyQ90Y7wjAfBgNVHSMEGDAWgBSOUCn2c7P9LIuWx588AgyQ
+90Y7wjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQB4UD93ayQK
+JhhRqNdusfXGKanIoIxDRbTR6tzCjquJpFl+BuPZtYOQYQr/ZLaF+KlWoKnabTnN
+Szdn92fQ0lTrc9T/gGI7MKm7w2iUXN4NYF40NOGl6fwf755+drDZ96uPbbB+ezMW
+VLwu9FhLqR+i0ezsjjc4SvKTywsANT2tiheLgOlF//p9WoGSHPfnh57Yrn6TP+NI
+6nW8UlqfXfdSjYugZILyU9KM5sMOJJSA8eIFuBApvzIwsxPZlIlfKxOKjaDQlVIE
+qSF2UcxxPZ/OQ8T2kTNYWr0OAQ5Xd8niWu7KU6ZX0miQNIv2c7qsYDR14JEroeo0
+frJCGYDUg+8c
+-----END CERTIFICATE-----
+";
+
+    #[test]
+    fn test_simple_signer_cert_chain_x5c() {
+        // Exercise the `signer = Some(...)` branch of
+        // `SimpleAttestationTokenBroker::new` with a PEM private key and a
+        // 2-cert PEM chain. This drives the previously-untested cert-chain
+        // parse closure (`Certificate::from_pem`) and the `pubkey_jwks()`
+        // `x5c`-encoding branch (`Certificate::to_der` + base64url).
+
+        let key_file = NamedTempFile::new().expect("create temp key file");
+        std::fs::write(&key_file, TEST_SIGNER_KEY_PEM).expect("write temp key file");
+        let chain_file = NamedTempFile::new().expect("create temp chain file");
+        std::fs::write(&chain_file, TEST_CERT_CHAIN_PEM).expect("write temp chain file");
+
+        let config = Configuration {
+            signer: Some(TokenSignerConfig {
+                key_path: key_file.path().to_string_lossy().to_string(),
+                cert_url: None,
+                cert_path: Some(chain_file.path().to_string_lossy().to_string()),
+            }),
+            ..Configuration::default()
+        };
+
+        let broker = SimpleAttestationTokenBroker::new(config)
+            .expect("broker construction with signer + cert chain must succeed");
+
+        let jwks = serde_json::from_str::<serde_json::Value>(
+            &broker.pubkey_jwks().expect("pubkey_jwks must succeed"),
+        )
+        .expect("pubkey_jwks must return valid JSON");
+
+        let keys = jwks
+            .get("keys")
+            .and_then(|v| v.as_array())
+            .expect("JWKS must contain a `keys` array");
+        assert_eq!(keys.len(), 1, "exactly one JWK expected");
+
+        let jwk = &keys[0];
+
+        // RSA public-key fields derived from the configured private key.
+        let n = jwk
+            .get("n")
+            .and_then(|v| v.as_str())
+            .expect("`n` must be present");
+        let e = jwk
+            .get("e")
+            .and_then(|v| v.as_str())
+            .expect("`e` must be present");
+        assert!(!n.is_empty(), "`n` must be non-empty");
+        assert!(!e.is_empty(), "`e` must be non-empty");
+
+        // x5c round-trips the `to_der` encode + `from_pem` parse: each entry
+        // base64url-decodes back to a DER blob that `Certificate::from_der`
+        // accepts.
+        let x5c = jwk
+            .get("x5c")
+            .and_then(|v| v.as_array())
+            .expect("`x5c` must be present when a cert chain is configured");
+        assert_eq!(x5c.len(), 2, "x5c must contain exactly 2 cert entries");
+
+        for entry in x5c {
+            let b64 = entry
+                .as_str()
+                .expect("each x5c entry must be a base64url string");
+            let der = URL_SAFE_NO_PAD
+                .decode(b64)
+                .expect("each x5c entry must base64url-decode to DER bytes");
+            Certificate::from_der(&der).expect("decoded x5c entry must be a valid DER certificate");
+        }
     }
 }
