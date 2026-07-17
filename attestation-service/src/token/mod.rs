@@ -5,8 +5,8 @@
 
 use crate::TeeClaims;
 use anyhow::*;
+use const_format::concatcp;
 use serde::Deserialize;
-use shadow_rs::concatcp;
 use std::collections::HashMap;
 use strum::Display;
 

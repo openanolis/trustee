@@ -7,6 +7,7 @@ use anyhow::*;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use const_format::concatcp;
 use ear::{
     Algorithm, Appraisal, Ear, ExtensionKind, ExtensionValue, Extensions, RawValue, TrustVector,
     VerifierID,
@@ -22,7 +23,6 @@ use openssl::x509::X509;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use serde_variant::to_variant_name;
-use shadow_rs::concatcp;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
