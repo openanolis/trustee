@@ -58,6 +58,7 @@ serde_with = { version = "1.11.0", features = ["base64", "hex"] }
 serial_test = "0.9.0"
 sha2 = "0.10"
 shadow-rs = "0.19.0"
+const_format = "0.2"
 sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-rustls", "mysql", "sqlite", "any", "json", "chrono"] }
 strum = { version = "0.25", features = ["derive"] }
 thiserror = "2.0"
@@ -68,13 +69,3 @@ tonic = "0.12"
 tonic-build = "0.12"
 serde_yaml = "0.9"
 zeroize = { version = "1.7", features = ["derive"] }
-
-# dcap-qvl fork adding a `QuoteVerifier::allow_expired` option, used by the
-# pure-Rust TDX verifier backend (feature `tdx-dcap-rust`) to treat expired
-# collateral as non-fatal, matching the Intel DCAP QVL (FFI) backend. The fork
-# only relaxes the freshness check; signature/chain verification is unchanged.
-# See https://github.com/jialez0/dcap-qvl/tree/v0.4.1-allow-expired
-# (based on Phala-Network/dcap-qvl v0.4.1). This patch is inert for the default
-# build, which does not enable `tdx-dcap-rust` and never compiles dcap-qvl.
-[patch.crates-io]
-dcap-qvl = { git = "https://github.com/jialez0/dcap-qvl", branch = "v0.4.1-allow-expired" }

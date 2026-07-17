@@ -595,6 +595,7 @@ dependencies = [
  "cfg-if",
  "clap",
  "concat-kdf",
+ "const_format",
  "ear",
  "env_logger 0.10.2",
  "futures",
@@ -1711,7 +1712,7 @@ dependencies = [
 [[package]]
 name = "dcap-qvl"
 version = "0.4.1"
-source = "git+https://github.com/jialez0/dcap-qvl?branch=v0.4.1-allow-expired#d988f7de3f5e82d0d7e8f9bceeb3af9fa8d9daa1"
+source = "git+https://github.com/inclavare-containers/dcap-qvl?rev=d988f7de3f5e82d0d7e8f9bceeb3af9fa8d9daa1#d988f7de3f5e82d0d7e8f9bceeb3af9fa8d9daa1"
 dependencies = [
  "anyhow",
  "asn1_der",

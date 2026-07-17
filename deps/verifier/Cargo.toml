@@ -126,11 +126,20 @@ intel-tee-quote-verification-rs = { version = "0.3.0", optional = true }
 # backend. Only the offline `verify` core is used (no `report` feature), so no
 # aws-lc / reqwest 0.13 is pulled in; collateral is fetched with the verifier's
 # own reqwest. Pinned to 0.4.1 for MSRV/dependency-tree stability.
-dcap-qvl = { version = "=0.4.1", default-features = false, features = [
+#
+# dcap-qvl fork adding a `QuoteVerifier::allow_expired` option, used by the
+# pure-Rust TDX verifier backend (feature `tdx-dcap-rust`) to treat expired
+# collateral as non-fatal, matching the Intel DCAP QVL (FFI) backend. The fork
+# only relaxes the freshness check; signature/chain verification is unchanged.
+# See https://github.com/jialez0/dcap-qvl/tree/v0.4.1-allow-expired
+# (based on Phala-Network/dcap-qvl v0.4.1). This patch is inert for the default
+# build, which does not enable `tdx-dcap-rust` and never compiles dcap-qvl.
+dcap-qvl = { git = "https://github.com/inclavare-containers/dcap-qvl", rev = "d988f7de3f5e82d0d7e8f9bceeb3af9fa8d9daa1", default-features = false, features = [
     "std",
     "ring",
     "default-x509",
 ], optional = true }
+
 urlencoding = { version = "2", optional = true }
 strum.workspace = true
 tss-esapi = { version = "7.4.0", optional = true }
