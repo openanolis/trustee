@@ -159,18 +159,9 @@ fn parse_purge_after(s: &str) -> Result<Option<Duration>> {
 }
 
 impl EncryptedDb {
-    pub fn new(config: &EncryptedDbBackendConfig) -> Result<Self> {
-        // The plug-in framework calls us synchronously, but everything we
-        // actually do is async. Spin up a small block_on bridge.
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("build tokio runtime for EncryptedDb init")?;
-        runtime.block_on(Self::init_async(config))
-    }
-
-    /// Async constructor used by integration tests. Production code should
-    /// use [`EncryptedDb::new`] which builds a small bridge runtime.
+    /// Initialize the encrypted database backend on the caller's async
+    /// runtime. Keeping the SQLx pool on that runtime also keeps its
+    /// background connection tasks alive for the lifetime of the backend.
     pub async fn init_async(config: &EncryptedDbBackendConfig) -> Result<Self> {
         let pool = DbPool::connect(&config.database).await?;
         migrate_schema(&pool).await?;

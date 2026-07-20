@@ -82,6 +82,10 @@ jobs:
       working-directory: kbs
       run: make check
 
+    - name: KBS EncryptedDb Test
+      working-directory: kbs
+      run: make check TEST_FEATURES=encrypted-db
+
   as-check:
     if: |
       github.event_name == 'pull_request' || 
