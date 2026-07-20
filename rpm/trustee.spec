@@ -145,7 +145,9 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
-* Mon Jul 13 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.7-2
+* Mon Jul 20 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.7-2
+- KBS: initialize EncryptedDb on the existing Actix/Tokio runtime to prevent
+  a nested-runtime panic during service startup
 - Verifier/TDX: split quote verification into pluggable backends and add an
   opt-in pure-Rust dcap-qvl backend (tdx-dcap-rust) that needs no libsgx DCAP
   shared library; the default build keeps the FFI backend
