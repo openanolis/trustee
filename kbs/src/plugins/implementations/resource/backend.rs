@@ -434,10 +434,8 @@ pub struct ResourceStorage {
     backend: RepositoryInstance,
 }
 
-impl TryFrom<RepositoryConfig> for ResourceStorage {
-    type Error = Error;
-
-    fn try_from(value: RepositoryConfig) -> Result<Self> {
+impl ResourceStorage {
+    pub async fn new(value: RepositoryConfig) -> Result<Self> {
         match value {
             RepositoryConfig::LocalFs(desc) => {
                 let backend = local_fs::LocalFs::new(&desc)
@@ -456,7 +454,8 @@ impl TryFrom<RepositoryConfig> for ResourceStorage {
             }
             #[cfg(feature = "encrypted-db")]
             RepositoryConfig::EncryptedDb(config) => {
-                let backend = super::encrypted_db::EncryptedDb::new(&config)
+                let backend = super::encrypted_db::EncryptedDb::init_async(&config)
+                    .await
                     .context("Failed to initialize encrypted DB Resource Storage")?;
                 Ok(Self {
                     backend: Arc::new(backend),
@@ -477,9 +476,7 @@ impl TryFrom<RepositoryConfig> for ResourceStorage {
             }
         }
     }
-}
 
-impl ResourceStorage {
     pub(crate) async fn set_secret_resource(
         &self,
         resource_desc: ResourceDesc,
