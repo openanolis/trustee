@@ -142,6 +142,11 @@ jobs:
         run: |
           sudo -E PATH="$PATH" -s cargo test -p attestation-service -p verifier
 
+      - name: Run pure-Rust TDX verifier tests
+        run: |
+          sudo -E PATH="$PATH" -s cargo test -p verifier --no-default-features --features tdx-dcap-rust tdx::verify::native::tests
+          sudo -E PATH="$PATH" -s cargo build -p attestation-service --bin restful-as --no-default-features --features restful-bin,all-verifier-rust,rvps-grpc
+
       - name: Run cargo fmt check
         run: |
           sudo -E PATH="$PATH" -s cargo fmt -p attestation-service -p verifier --check

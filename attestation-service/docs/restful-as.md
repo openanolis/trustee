@@ -34,6 +34,12 @@ PCCS are usually supported by cloud providers, you can find the steps to configu
 - IBM Cloud: [Attestation with Intel SGX and Data Center Attestation Primitives (DCAP) for Virtual Servers for VPC](https://cloud.ibm.com/docs/vpc?topic=vpc-about-attestation-sgx-dcap-vpc)
 Or you can [set-up a PCCS yourself](https://download.01.org/intel-sgx/sgx-dcap/1.9/windows/docs/Intel_SGX_DCAP_Windows_SW_Installation_Guide.pdf).
 
+When the TDX verifier is built with the pure-Rust `tdx-dcap-rust` backend,
+verification collateral is cached in the AS process. The cache lifetime uses
+`VERIFY_COLLATERAL_CACHE_EXPIRE_HOURS` from the environment or QCNL config and
+defaults to 168 hours. Set the value to `0` to disable the cache. Concurrent
+cache misses are coalesced to avoid overloading PCCS during startup.
+
 Then an attestation request can be used to request the server. We provide an [example request of validating a SGX quote](../tests/coco-as/request.json).
 
 You can use the [tool](https://github.com/confidential-containers/guest-components/tree/main/attestation-agent/attester#evidence-getter-tool) to generate a report on
