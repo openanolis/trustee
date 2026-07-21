@@ -45,8 +45,9 @@ tdx-dcap-ffi = ["tdx-verifier", "intel-tee-quote-verification-rs"]
 # dependency on the Intel DCAP shared library (`libsgx_dcap_quoteverify`) and
 # its dynamically loaded quote provider. Verification collateral (TCB info, QE
 # identity, CRLs) is fetched over HTTPS from a PCCS using the verifier's existing
-# reqwest stack. Builds on the same Rust toolchain as the default (FFI) build;
-# see deps/verifier/src/tdx/verify/native.rs.
+# reqwest stack and cached in process according to the QCNL
+# VERIFY_COLLATERAL_CACHE_EXPIRE_HOURS setting. Builds on the same Rust toolchain
+# as the default (FFI) build; see deps/verifier/src/tdx/verify/native.rs.
 tdx-dcap-rust = [
     "tdx-verifier",
     "dcap-qvl",
