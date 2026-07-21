@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::Path, sync::Arc};
+use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 
 use actix_cors::Cors;
 use actix_web::{http::header, web, App, HttpServer};
@@ -48,6 +48,12 @@ pub struct Cli {
     /// (the default), no CORS origins are allowed.
     #[arg(short = 'r', long = "allowed_origin", value_delimiter = ',', num_args = 1..)]
     pub allowed_origin: Vec<String>,
+
+    /// HTTP/1.1 keep-alive timeout in seconds. Set to 0 to disable keep-alive.
+    /// Keep this longer than the client's idle connection timeout to avoid
+    /// clients reusing connections while the server is closing them.
+    #[arg(long, default_value_t = 120)]
+    pub http_keep_alive_secs: u64,
 }
 
 #[derive(EnumString, AsRefStr)]
@@ -130,6 +136,12 @@ async fn main() -> Result<(), RestfulError> {
 
     let cli = Cli::parse();
 
+    let http_keep_alive = Duration::from_secs(cli.http_keep_alive_secs);
+    info!(
+        "HTTP keep-alive timeout: {} seconds",
+        cli.http_keep_alive_secs
+    );
+
     let config = match cli.config_file {
         Some(path) => {
             info!("Using config file {path}");
@@ -170,7 +182,8 @@ async fn main() -> Result<(), RestfulError> {
                     .route(web::get().to(get_openid_configuration)),
             )
             .app_data(web::Data::clone(&attestation_service))
-    });
+    })
+    .keep_alive(http_keep_alive);
 
     let server = match (cli.https_prikey, cli.https_pubkey_cert) {
         (Some(prikey), Some(pubkey_cert)) => {
@@ -201,4 +214,39 @@ async fn main() -> Result<(), RestfulError> {
 
     server.await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_keep_alive_defaults_to_120_seconds() {
+        let cli = Cli::try_parse_from(["restful-as", "--socket", "127.0.0.1:8080"])
+            .expect("parse default CLI options");
+        assert_eq!(cli.http_keep_alive_secs, 120);
+    }
+
+    #[test]
+    fn http_keep_alive_can_be_configured_or_disabled() {
+        let cli = Cli::try_parse_from([
+            "restful-as",
+            "--socket",
+            "127.0.0.1:8080",
+            "--http-keep-alive-secs",
+            "30",
+        ])
+        .expect("parse configured keep-alive");
+        assert_eq!(cli.http_keep_alive_secs, 30);
+
+        let cli = Cli::try_parse_from([
+            "restful-as",
+            "--socket",
+            "127.0.0.1:8080",
+            "--http-keep-alive-secs",
+            "0",
+        ])
+        .expect("parse disabled keep-alive");
+        assert_eq!(cli.http_keep_alive_secs, 0);
+    }
 }
