@@ -96,6 +96,11 @@ Start Attestation Service and specify the listen port of its web service:
 restful-as --socket 127.0.0.1:8080
 ```
 
+The HTTP/1.1 keep-alive timeout defaults to 120 seconds. It should be longer
+than the idle connection timeout of clients or local gateways so that clients
+close pooled connections first. Configure it with
+`--http-keep-alive-secs <SECONDS>`; set it to `0` to disable HTTP keep-alive.
+
 If you want to see the runtime log, run:
 ```shell
 RUST_LOG=debug restful-as --socket 127.0.0.1:8080 -c config.json
