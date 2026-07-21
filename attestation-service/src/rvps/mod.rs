@@ -42,7 +42,15 @@ type Result<T> = std::result::Result<T, RvpsError>;
 /// * `query_reference_value` gets one policy-facing value by its identifier.
 /// * `get_reference_values` keeps the legacy bulk-query API available.
 /// * `delete_reference_value` is responsible for deleting a reference value.
-#[async_trait::async_trait]
+#[cfg_attr(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"), async_trait::async_trait(?Send))]
+#[cfg_attr(
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )),
+    async_trait::async_trait
+)]
 pub trait RvpsApi: Send + Sync {
     /// Verify the given message and register the reference value included.
     async fn verify_and_extract(&self, message: &str) -> Result<()>;
