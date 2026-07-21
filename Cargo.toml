@@ -57,7 +57,7 @@ serde_qs = "0.13.0"
 serde_with = { version = "1.11.0", features = ["base64", "hex"] }
 serial_test = "0.9.0"
 sha2 = "0.10"
-shadow-rs = "0.19.0"
+shadow-rs = { version = "0.19.0", default-features = false, features = ["tzdb"] }
 const_format = "0.2"
 sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-rustls", "mysql", "sqlite", "any", "json", "chrono"] }
 strum = { version = "0.25", features = ["derive"] }
