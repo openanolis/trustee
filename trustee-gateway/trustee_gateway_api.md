@@ -15,6 +15,10 @@
 - [1.10 设置资源 (Set Resource)](#110-设置资源-set-resource)
 - [1.11 列出资源 (List Resources)](#111-列出资源-list-resources)
 - [1.12 删除资源 (Delete Resource)](#112-删除资源-delete-resource)
+- [1.13 获取资源加密公钥 (Get Resource Public Key)](#113-获取资源加密公钥-get-resource-public-key)
+- [1.14 热加载托管密钥 (Reload Managed Keys)](#114-热加载托管密钥-reload-managed-keys)
+- [1.15 重包资源 (Rewrap Resources)](#115-重包资源-rewrap-resources)
+- [1.16 轮转托管密钥 (Rotate Managed Keys)](#116-轮转托管密钥-rotate-managed-keys)
 
 ### [2. AS API (`/api/attestation-service`)](#as-api-apiattestation-service)
 - [2.1 证明 (Attestation)](#21-证明-attestation-1)
@@ -706,6 +710,60 @@ curl -k -X DELETE http://<gateway-host>:<port>/api/kbs/v0/resource/my-repo/my-ty
 *   **返回示例 (成功 - KBS 返回空内容):**_状态码: 200 OK 或 204 No Content_
 
 ### ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/7066c995-d1a1-4d28-b709-013982722a26.png)
+
+#### 1.13 获取资源加密公钥 (Get Resource Public Key)
+
+*   **端点:** `GET /api/kbs/v0/resource/pubkey`
+
+*   **说明:** 获取 `EncryptedDb` 或 `EncryptedLocalFs` 当前主密钥对应的 PEM 公钥。客户端必须先用该公钥加密资源信封，再调用设置资源 API 上传密文。Gateway 将 KBS 的状态码、响应头、Cookie 和响应体原样转发。
+
+```shell
+curl -k http://<gateway-host>:<port>/api/kbs/v0/resource/pubkey \
+     -H "Authorization: Bearer <admin-token>"
+```
+
+*   **成功响应:** `200 OK`，响应体为 `-----BEGIN PUBLIC KEY-----` 开头的 PEM 公钥。
+
+#### 1.14 热加载托管密钥 (Reload Managed Keys)
+
+*   **端点:** `POST /api/kbs/v0/resource/reload`
+
+*   **说明:** 从共享存储重新加载托管密钥，不重启 KBS。适用于离线迁移或需要立即绕过多副本轮询间隔的场景。
+
+```shell
+curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/resource/reload \
+     -H "Authorization: Bearer <admin-token>"
+```
+
+*   **成功响应:** `200 OK`，例如 `{"reloaded_keys":2}`。
+
+#### 1.15 重包资源 (Rewrap Resources)
+
+*   **端点:** `POST /api/kbs/v0/resource/rewrap`
+
+*   **说明:** 不生成新密钥，将尚未使用当前主密钥的资源重新包装到当前主密钥。该操作由 KBS 执行，Gateway 原样转发报告。
+
+```shell
+curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/resource/rewrap \
+     -H "Authorization: Bearer <admin-token>"
+```
+
+*   **成功响应:** `200 OK`，响应包含 `total`、`rewrapped`、`skipped` 和 `failed` 计数。
+
+#### 1.16 轮转托管密钥 (Rotate Managed Keys)
+
+*   **端点:** `POST /api/kbs/v0/resource/rotate`
+
+*   **说明:** 生成新的主密钥、重包已有资源、退役旧密钥，并返回新公钥及轮转报告。`EncryptedDb` 会在共享数据库中串行化多副本轮转；客户端应在成功后刷新 `pubkey`。
+
+```shell
+curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/resource/rotate \
+     -H "Authorization: Bearer <admin-token>"
+```
+
+*   **成功响应:** `200 OK`，响应包含 `public_key`、`rewrapped`、`skipped`、`failed`、`retired_keys`；`EncryptedDb` 还包含 `purged_keys`。
+
+以上四个维护接口均由 KBS 执行管理员认证。若 Gateway 无法转发请求或读取响应，则返回 `500 Internal Server Error`；其他状态码和错误体由 KBS 决定。
 
 ---
 

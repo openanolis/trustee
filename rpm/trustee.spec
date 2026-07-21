@@ -1,4 +1,4 @@
-%define alinux_release 2
+%define alinux_release 3
 %global config_dir /etc/trustee
 %global debug_package %{nil}
 %global __brp_mangle_shebangs %{nil}
@@ -145,6 +145,11 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Tue Jul 21 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.7-3
+- Gateway: expose the resource public-key, key reload, rewrap, and rotation
+  APIs required by EncryptedDb and EncryptedLocalFs deployments
+- Gateway: add end-to-end route coverage for the complete KBS resource API
+
 * Tue Jul 21 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.7-2
 - KBS: keep EncryptedDb resource keys within the legacy InnoDB 767-byte
   index limit while preserving their full 255-character capacity

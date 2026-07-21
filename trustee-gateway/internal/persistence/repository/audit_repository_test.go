@@ -48,12 +48,13 @@ func TestListAttestationRecords(t *testing.T) {
 	baseTime := time.Now()
 	records := []*models.AttestationRecord{
 		{
-			ClientIP:    "192.168.1.1",
-			SessionID:   "session1",
-			RequestBody: "request1",
-			Status:      200,
-			Successful:  true,
-			Timestamp:   baseTime,
+			ClientIP:      "192.168.1.1",
+			SessionID:     "session1",
+			RequestBody:   "request1",
+			SourceService: "auth",
+			Status:        200,
+			Successful:    true,
+			Timestamp:     baseTime,
 		},
 		{
 			ClientIP:    "192.168.1.2",
@@ -64,12 +65,13 @@ func TestListAttestationRecords(t *testing.T) {
 			Timestamp:   baseTime.Add(time.Hour),
 		},
 		{
-			ClientIP:    "192.168.1.3",
-			SessionID:   "session3",
-			RequestBody: "request3",
-			Status:      200,
-			Successful:  true,
-			Timestamp:   baseTime.Add(2 * time.Hour),
+			ClientIP:      "192.168.1.3",
+			SessionID:     "session3",
+			RequestBody:   "request3",
+			SourceService: "auth",
+			Status:        200,
+			Successful:    true,
+			Timestamp:     baseTime.Add(2 * time.Hour),
 		},
 	}
 

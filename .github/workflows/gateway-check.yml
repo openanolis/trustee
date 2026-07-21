@@ -1,0 +1,33 @@
+name: Trustee Gateway Check
+
+on:
+  push:
+    branches:
+      - "main"
+    paths:
+      - 'trustee-gateway/**'
+      - '.github/workflows/gateway-check.yml'
+  pull_request:
+    paths:
+      - 'trustee-gateway/**'
+      - '.github/workflows/gateway-check.yml'
+
+jobs:
+  gateway-check:
+    name: Go Test and Vet
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: trustee-gateway
+    steps:
+      - name: Code checkout
+        uses: actions/checkout@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: trustee-gateway/go.mod
+          cache-dependency-path: trustee-gateway/go.sum
+      - name: Gateway test
+        run: go test ./...
+      - name: Gateway vet
+        run: go vet ./...

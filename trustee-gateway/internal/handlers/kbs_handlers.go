@@ -199,6 +199,31 @@ func extractClaims(tokenString string) (string, error) {
 	return claims, nil
 }
 
+// HandleResourceAdminRequest proxies resource-storage maintenance endpoints to
+// KBS. These endpoints are admin authenticated by KBS and intentionally use a
+// dedicated handler so they cannot be confused with attested resource reads.
+func (h *KBSHandler) HandleResourceAdminRequest(c *gin.Context) {
+	resp, err := h.proxy.ForwardToKBS(c)
+	if err != nil {
+		logrus.Errorf("Failed to forward resource admin request to KBS: %v", err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to forward request to KBS"})
+		return
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.Errorf("Failed to read KBS resource admin response: %v", err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to read KBS response"})
+		return
+	}
+
+	proxy.CopyHeaders(c, resp)
+	proxy.CopyCookies(c, resp)
+	c.Status(resp.StatusCode)
+	_, _ = c.Writer.Write(responseBody)
+}
+
 // HandleSetAttestationPolicy handles setting an attestation policy
 func (h *KBSHandler) HandleSetAttestationPolicy(c *gin.Context) {
 	// Read the request body
@@ -589,7 +614,7 @@ func (h *KBSHandler) DeleteAttestationPolicy(c *gin.Context) {
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logrus.Errorf("Failed to read KBS delete attestation policy response: %v", err)

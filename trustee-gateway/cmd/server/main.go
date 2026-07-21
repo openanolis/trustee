@@ -149,29 +149,7 @@ func main() {
 }
 
 func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandler *handlers.RVPSHandler, attestationServiceHandler *handlers.AttestationServiceHandler, auditHandler *handlers.AuditHandler, healthCheckHandler *handlers.HealthCheckHandler, p *proxy.Proxy, aaInstanceHandler *handlers.AAInstanceHandler, credentialHandler *handlers.CredentialHandler) {
-	// KBS API routes
-	kbs := router.Group("/api/kbs/v0")
-	{
-		// Attestation routes
-		kbs.POST("/auth", kbsHandler.HandleAuth)
-		kbs.POST("/attest", kbsHandler.HandleAttest)
-
-		// Policy routes
-		kbs.POST("/attestation-policy", kbsHandler.HandleSetAttestationPolicy)
-		kbs.GET("/attestation-policy/:id", kbsHandler.GetAttestationPolicy)
-		kbs.GET("/attestation-policies", kbsHandler.ListAttestationPolicies)
-		kbs.DELETE("/attestation-policy/:id", kbsHandler.DeleteAttestationPolicy)
-
-		kbs.POST("/resource-policy", kbsHandler.HandleSetResourcePolicy)
-		kbs.GET("/resource-policy", kbsHandler.GetResourcePolicy)
-
-		// Resource routes with explicit repository
-		kbs.GET("/resource/:repository/:type/:tag", kbsHandler.HandleGetResource)
-		kbs.POST("/resource/:repository/:type/:tag", kbsHandler.HandleSetResource)
-		kbs.DELETE("/resource/:repository/:type/:tag", kbsHandler.HandleDeleteResource)
-
-		kbs.GET("/resources", kbsHandler.ListResources)
-	}
+	setupKBSRoutes(router, kbsHandler)
 
 	// Attestation Service API routes
 	attestationSvc := router.Group("/api/attestation-service")
@@ -230,5 +208,38 @@ func setupRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler, rvpsHandle
 	{
 		aa.POST("/heartbeat", aaInstanceHandler.HandleHeartbeat)
 		aa.GET("/list", aaInstanceHandler.HandleGetActiveAAInstances)
+	}
+}
+
+func setupKBSRoutes(router *gin.Engine, kbsHandler *handlers.KBSHandler) {
+	// KBS API routes
+	kbs := router.Group("/api/kbs/v0")
+	{
+		// Attestation routes
+		kbs.POST("/auth", kbsHandler.HandleAuth)
+		kbs.POST("/attest", kbsHandler.HandleAttest)
+
+		// Policy routes
+		kbs.POST("/attestation-policy", kbsHandler.HandleSetAttestationPolicy)
+		kbs.GET("/attestation-policy/:id", kbsHandler.GetAttestationPolicy)
+		kbs.GET("/attestation-policies", kbsHandler.ListAttestationPolicies)
+		kbs.DELETE("/attestation-policy/:id", kbsHandler.DeleteAttestationPolicy)
+
+		kbs.POST("/resource-policy", kbsHandler.HandleSetResourcePolicy)
+		kbs.GET("/resource-policy", kbsHandler.GetResourcePolicy)
+
+		// Resource routes with explicit repository
+		kbs.GET("/resource/:repository/:type/:tag", kbsHandler.HandleGetResource)
+		kbs.POST("/resource/:repository/:type/:tag", kbsHandler.HandleSetResource)
+		kbs.DELETE("/resource/:repository/:type/:tag", kbsHandler.HandleDeleteResource)
+
+		// Resource storage maintenance routes. EncryptedLocalFs and EncryptedDb
+		// use these APIs for client-side encryption and managed-key lifecycle.
+		kbs.GET("/resource/pubkey", kbsHandler.HandleResourceAdminRequest)
+		kbs.POST("/resource/reload", kbsHandler.HandleResourceAdminRequest)
+		kbs.POST("/resource/rewrap", kbsHandler.HandleResourceAdminRequest)
+		kbs.POST("/resource/rotate", kbsHandler.HandleResourceAdminRequest)
+
+		kbs.GET("/resources", kbsHandler.ListResources)
 	}
 }
