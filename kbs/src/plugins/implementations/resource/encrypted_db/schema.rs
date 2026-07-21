@@ -86,9 +86,9 @@ CREATE TABLE IF NOT EXISTS kbs_managed_keys (
 
 const MYSQL_CREATE_RESOURCES: &str = r#"
 CREATE TABLE IF NOT EXISTS kbs_resources (
-    repository_name  VARCHAR(255)    NOT NULL,
-    resource_type    VARCHAR(255)    NOT NULL,
-    resource_tag     VARCHAR(255)    NOT NULL,
+    repository_name  VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    resource_type    VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    resource_tag     VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     envelope         MEDIUMTEXT      NOT NULL,
     generation       BIGINT          NOT NULL,
     updated_at       DATETIME(6)     NOT NULL,

@@ -145,7 +145,9 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
-* Mon Jul 20 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.7-2
+* Tue Jul 21 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.7-2
+- KBS: keep EncryptedDb resource keys within the legacy InnoDB 767-byte
+  index limit while preserving their full 255-character capacity
 - KBS: initialize EncryptedDb on the existing Actix/Tokio runtime to prevent
   a nested-runtime panic during service startup
 - Verifier/TDX: split quote verification into pluggable backends and add an

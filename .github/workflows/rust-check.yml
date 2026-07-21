@@ -35,6 +35,19 @@ jobs:
     strategy:
       fail-fast: false
     runs-on: ubuntu-24.04
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_DATABASE: trustee_kbs_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
     - name: Code checkout
       uses: actions/checkout@v5
@@ -84,7 +97,12 @@ jobs:
 
     - name: KBS EncryptedDb Test
       working-directory: kbs
-      run: make check TEST_FEATURES=encrypted-db
+      env:
+        MYSQL_TEST_URL: mysql://root@127.0.0.1:3306/trustee_kbs_test
+      run: |
+        docker exec ${{ job.services.mysql.id }} \
+          mysql -uroot -e "SET GLOBAL innodb_default_row_format=COMPACT"
+        make check TEST_FEATURES=encrypted-db
 
   as-check:
     if: |
