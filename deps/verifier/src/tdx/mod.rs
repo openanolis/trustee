@@ -1,7 +1,9 @@
 use ::eventlog::{ccel::tcg_enum::TcgAlgorithm, CcEventLog, ReferenceMeasurement};
 use anyhow::anyhow;
 use log::{debug, error, info, warn};
+#[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
 use std::env;
+use std::sync::RwLock;
 
 use crate::tdx::claims::generate_parsed_claim;
 
@@ -22,8 +24,43 @@ pub(crate) mod verify;
 #[cfg(feature = "tdx-dcap-rust")]
 pub use verify::set_pccs_url;
 
+pub use gpu::set_rim_service_url;
+
 use crate::tdx::gpu::GpuEvidenceList;
 use crate::VerifierError;
+
+/// Injectable GPU-verify skip override (pure-lib / wasm host). When set,
+/// takes precedence over the `TRUSTEE_SKIP_NVGPU_VERIFY` env var. Pass `None`
+/// to restore env / default resolution. On wasm the default is `false`
+/// (verify); a host that cannot supply a RIM URL may set `Some(true)` to
+/// skip explicitly.
+static SKIP_GPU_VERIFY_OVERRIDE: RwLock<Option<bool>> = RwLock::new(None);
+
+/// Inject the GPU-verify skip flag (pure-lib / wasm host). `Some(true)` skips
+/// GPU RIM verification (pass-through), `Some(false)` forces verification,
+/// `None` restores the default (native: `TRUSTEE_SKIP_NVGPU_VERIFY` env;
+/// wasm: `false`).
+pub fn set_skip_gpu_verify(skip: Option<bool>) {
+    *SKIP_GPU_VERIFY_OVERRIDE.write().unwrap() = skip;
+}
+
+/// Default GPU-verify skip resolution when no override is injected (native):
+/// the `TRUSTEE_SKIP_NVGPU_VERIFY` env var, opt-in. Wasm has no env and
+/// defaults to `false` (verify) — see the wasm variant below.
+#[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
+fn default_skip_gpu_verify() -> bool {
+    env::var("TRUSTEE_SKIP_NVGPU_VERIFY")
+        .map(|value| value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// On wasm there is no `TRUSTEE_SKIP_NVGPU_VERIFY` env var; default to
+/// verifying (a host that cannot supply a RIM URL may call
+/// `set_skip_gpu_verify(Some(true))` explicitly).
+#[cfg(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"))]
+fn default_skip_gpu_verify() -> bool {
+    false
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TdxEvidence {
@@ -177,9 +214,15 @@ async fn verify_evidence(
 
     if let Some(gpu_evidence) = evidence.gpu_evidence {
         let mut gpu_claims = serde_json::Map::new();
-        let skip_gpu_verify = env::var("TRUSTEE_SKIP_NVGPU_VERIFY")
-            .map(|value| value.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        // Skip opt-in: injected override takes precedence; otherwise the
+        // target-specific default (native: `TRUSTEE_SKIP_NVGPU_VERIFY` env;
+        // wasm: `false`, i.e. verify). A wasm host that cannot supply a RIM
+        // URL should call set_skip_gpu_verify(Some(true)) explicitly.
+        let skip_gpu_verify = SKIP_GPU_VERIFY_OVERRIDE
+            .read()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(default_skip_gpu_verify);
 
         if skip_gpu_verify {
             info!("Skipping GPU evidence verification per TRUSTEE_SKIP_NVGPU_VERIFY.");
@@ -194,31 +237,30 @@ async fn verify_evidence(
                 }
             }
         } else {
-            // Create tasks for parallel GPU processing
-            let mut tasks = Vec::new();
-            for (index, single_gpu_evidence) in gpu_evidence.evidence_list.iter().enumerate() {
-                let gpu_evidence = single_gpu_evidence.clone();
-                let task = tokio::spawn(async move {
-                    let result = gpu::GpuEvidence::evaluate(&gpu_evidence).await;
-                    (index, result)
+            // Evaluate each GPU concurrently without `tokio::spawn`: the RIM
+            // fetches are I/O-bound, so cooperative polling (`join_all`) is
+            // sufficient and works on both the native multi-threaded runtime
+            // and the single-threaded wasm target (where `tokio::spawn` is
+            // unavailable).
+            let futs = gpu_evidence
+                .evidence_list
+                .iter()
+                .enumerate()
+                .map(|(index, single_gpu_evidence)| {
+                    let gpu_evidence = single_gpu_evidence.clone();
+                    async move {
+                        let result = gpu::GpuEvidence::evaluate(&gpu_evidence).await;
+                        (index, result)
+                    }
                 });
-                tasks.push(task);
-            }
-
-            // Wait for all tasks to complete
-            for task in tasks {
-                match task.await {
-                    std::result::Result::Ok((
-                        index,
-                        std::result::Result::Ok(gpu_evidence_claims),
-                    )) => {
+            let results = futures::future::join_all(futs).await;
+            for (index, result) in results {
+                match result {
+                    std::result::Result::Ok(gpu_evidence_claims) => {
                         gpu_claims.insert(format!("nvidia_gpu.{}", index), gpu_evidence_claims);
                     }
-                    std::result::Result::Ok((index, std::result::Result::Err(e))) => {
-                        warn!("GPU {} evaluation failed: {}", index, e);
-                    }
                     std::result::Result::Err(e) => {
-                        warn!("GPU task failed: {}", e);
+                        warn!("GPU {} evaluation failed: {}", index, e);
                     }
                 }
             }

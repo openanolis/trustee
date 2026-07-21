@@ -8,7 +8,7 @@ use reqwest;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::OnceCell;
 
 const DEFAULT_RIM_SERVICE_BASE_URL: &str =
@@ -28,7 +28,24 @@ async fn get_rim_cache() -> &'static Arc<Mutex<HashMap<String, String>>> {
         .await
 }
 
-/// Get region_id from Aliyun metadata service
+/// Injectable RIM service base URL override (pure-lib / wasm host). When set,
+/// takes precedence over env / metadata / default resolution. The embedder
+/// calls this directly; the verifier crate does not read an AS config for it.
+static RIM_SERVICE_URL_OVERRIDE: RwLock<Option<String>> = RwLock::new(None);
+
+/// Inject the RIM service base URL (pure-lib / wasm host). When set, takes
+/// precedence over env / metadata / default resolution. Pass `None` to clear
+/// the override and restore env / metadata / default resolution.
+pub fn set_rim_service_url(url: Option<String>) {
+    *RIM_SERVICE_URL_OVERRIDE.write().unwrap() = url;
+}
+
+/// Get region_id from Aliyun metadata service (native only).
+///
+/// On wasm the metadata endpoint is a cloud-VPC IP unreachable from a
+/// browser, so this probe is compiled out; `get_rim_service_url` then relies
+/// on the injected override (or fails closed).
+#[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
 async fn get_region_id() -> Result<String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(METADATA_TIMEOUT))
@@ -64,9 +81,18 @@ async fn get_region_id() -> Result<String> {
     Ok(region_id)
 }
 
-/// Get RIM service URL
+/// Get RIM service URL (native): injected override → `NV_RIM_URL` env →
+/// Aliyun metadata `region_id` probe → built-in default.
+#[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
 async fn get_rim_service_url() -> Result<String> {
-    // First check environment variable
+    if let Some(url) = RIM_SERVICE_URL_OVERRIDE.read().unwrap().clone() {
+        if !url.is_empty() {
+            debug!("Using injected RIM service URL: {}", url);
+            return Ok(url);
+        }
+    }
+
+    // Environment variable
     if let Ok(url) = env::var("NV_RIM_URL") {
         debug!("Using RIM URL from environment variable: {}", url);
         return Ok(url);
@@ -115,6 +141,28 @@ async fn get_rim_service_url() -> Result<String> {
             Ok(DEFAULT_RIM_SERVICE_BASE_URL.to_string())
         }
     }
+}
+
+/// Get RIM service URL (wasm): injected override, else fail closed.
+///
+/// On wasm there is no env, the metadata service is a cloud-VPC IP
+/// unreachable from a browser, and the built-in default is not a URL a
+/// browser can meaningfully reach. Rather than silently fetching the wrong
+/// endpoint or skipping verification, return `Err` so the caller's
+/// `evaluate()` surfaces a warning and inserts no claims for that GPU.
+#[cfg(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"))]
+async fn get_rim_service_url() -> Result<String> {
+    if let Some(url) = RIM_SERVICE_URL_OVERRIDE.read().unwrap().clone() {
+        if !url.is_empty() {
+            debug!("Using injected RIM service URL: {}", url);
+            return Ok(url);
+        }
+    }
+    Err(anyhow!(
+        "RIM service URL not configured: the embedder must call \
+         set_rim_service_url(...) before GPU evidence verification, or \
+         set_skip_gpu_verify(true) to skip it"
+    ))
 }
 
 pub fn parse_rim_content(content: &str, rim_type: &str) -> Result<RimInfo> {
