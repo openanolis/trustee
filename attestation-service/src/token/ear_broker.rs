@@ -36,16 +36,21 @@ use crate::rvps::ReferenceValueResolver;
 use crate::token::DEFAULT_TOKEN_WORK_DIR;
 use crate::{AttestationTokenBroker, TeeClaims};
 
-use super::{signer_transparency, COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
+#[cfg(feature = "fs")]
+use super::signer_transparency;
+use super::{COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
 
 pub const DEFAULT_PROFILE: &str = "tag:github.com,2024:confidential-containers/Trustee";
 pub const DEFAULT_DEVELOPER_NAME: &str = "https://confidentialcontainers.org";
 
 const DEFAULT_POLICY_DIR: &str = concatcp!(DEFAULT_TOKEN_WORK_DIR, "/ear/policies");
 
+/// Part 2 — signer resolution spec (native/serde path only). Renamed from
+/// `TokenSignerConfig`; field set unchanged.
 #[derive(Deserialize, Debug, Clone, PartialEq)]
-pub struct TokenSignerConfig {
+pub struct SignerConfig {
     pub key_path: String,
+
     #[serde(default = "Option::default")]
     pub cert_url: Option<String>,
 
@@ -54,8 +59,10 @@ pub struct TokenSignerConfig {
     pub cert_path: Option<String>,
 }
 
+/// Part 1 — fs-free token-issuance metadata. This is the *only* part of the
+/// config the broker holds at runtime.
 #[derive(Deserialize, Debug, Clone, PartialEq)]
-pub struct Configuration {
+pub struct TokenBrokerSettings {
     /// The Attestation Results Token duration time (in minutes)
     /// Default: 5 minutes
     #[serde(default = "default_duration")]
@@ -65,14 +72,12 @@ pub struct Configuration {
     #[serde(default = "default_issuer_name")]
     pub issuer_name: String,
 
-    /// The developer name to be used as part of the Verifier ID
-    /// in the EAR.
+    /// The developer name to be used as part of the Verifier ID in the EAR.
     /// Default: `https://confidentialcontainers.org`
     #[serde(default = "default_developer")]
     pub developer_name: String,
 
-    /// The build name to be used as part of the Verifier ID
-    /// in the EAR.
+    /// The build name to be used as part of the Verifier ID in the EAR.
     /// The default value will be generated from the Cargo package
     /// name and version of the AS.
     #[serde(default = "default_build")]
@@ -82,12 +87,32 @@ pub struct Configuration {
     /// Default: `tag:github.com,2024:confidential-containers/Trustee`
     #[serde(default = "default_profile")]
     pub profile_name: String,
+}
+
+impl Default for TokenBrokerSettings {
+    fn default() -> Self {
+        Self {
+            duration_min: default_duration(),
+            issuer_name: default_issuer_name(),
+            developer_name: default_developer(),
+            build_name: default_build(),
+            profile_name: default_profile(),
+        }
+    }
+}
+
+/// The serde Configuration = parts 1 + 2 + 3, composed. `#[serde(flatten)]`
+/// on `settings` keeps the existing flat JSON/TOML config format working.
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct Configuration {
+    #[serde(flatten)]
+    pub settings: TokenBrokerSettings,
 
     /// Configuration for signing the EAR
     /// If this is not specified, the EAR
     /// will be signed with an ephemeral private key.
     #[serde(default = "Option::default")]
-    pub signer: Option<TokenSignerConfig>,
+    pub signer: Option<SignerConfig>,
 
     /// The path to the work directory that contains policies
     /// to provision the tokens.
@@ -128,46 +153,34 @@ fn default_policy_dir() -> String {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
-            duration_min: default_duration(),
-            issuer_name: default_issuer_name(),
-            developer_name: default_developer(),
-            build_name: default_build(),
-            profile_name: default_profile(),
+            settings: TokenBrokerSettings::default(),
             signer: None,
             policy_dir: default_policy_dir(),
         }
     }
 }
 
-pub struct EarAttestationTokenBroker {
-    config: Configuration,
-    private_key: SecretKey,
-    cert_url: Option<String>,
-    cert_chain: Option<Vec<Certificate>>,
-    policy_engine: Arc<dyn PolicyEngine>,
+/// Injected signer for the EAR broker. Returns already-resolved crypto
+/// material (borrowed) so the broker holds no PEM/path/fs knowledge.
+/// Resolution is eager, in the provider's constructor.
+pub trait SignerProvider: Send + Sync {
+    fn private_key(&self) -> &SecretKey;
+    fn cert_chain(&self) -> Option<&[Certificate]>;
+    fn cert_url(&self) -> Option<&str>;
 }
 
-impl EarAttestationTokenBroker {
-    pub fn new(config: Configuration) -> Result<Self> {
-        let policy_engine = PolicyEngineType::OPA.to_policy_engine(
-            Path::new(&config.policy_dir),
-            include_str!("ear_default_policy_cpu.rego"),
-            "default.rego",
-        )?;
-        info!("Loading default AS policy \"default.rego\"");
+/// Signer resolved from a `SignerConfig` (native/serde path). Reads
+/// `key_path`/`cert_path` under the `fs` feature; `key_pem`/`cert_pem` work
+/// without fs.
+struct ConfigSigner {
+    private_key: SecretKey,
+    cert_chain: Option<Vec<Certificate>>,
+    cert_url: Option<String>,
+}
 
-        if config.signer.is_none() {
-            log::info!("No Token Signer key in config file, create an ephemeral key and without CA pubkey cert");
-            return Ok(Self {
-                private_key: generate_ec_keys()?.0,
-                config,
-                cert_url: None,
-                cert_chain: None,
-                policy_engine,
-            });
-        }
-
-        let signer = config.signer.clone().unwrap();
+impl ConfigSigner {
+    #[cfg(feature = "fs")]
+    fn from_signer_config(signer: SignerConfig) -> Result<Self> {
         let pem_data =
             std::fs::read(&signer.key_path).context("Read Token Signer private key failed")?;
         let pem_str = std::str::from_utf8(&pem_data).context("Token Signer key not UTF-8")?;
@@ -199,12 +212,104 @@ impl EarAttestationTokenBroker {
             .transpose()?;
 
         Ok(Self {
-            config,
             private_key,
-            cert_url: signer.cert_url,
             cert_chain,
+            cert_url: signer.cert_url,
+        })
+    }
+}
+
+impl SignerProvider for ConfigSigner {
+    fn private_key(&self) -> &SecretKey {
+        &self.private_key
+    }
+    fn cert_chain(&self) -> Option<&[Certificate]> {
+        self.cert_chain.as_deref()
+    }
+    fn cert_url(&self) -> Option<&str> {
+        self.cert_url.as_deref()
+    }
+}
+
+/// Ephemeral signer: generates a fresh EC key. Used when no signer is
+/// configured (both `from_config` and `from_components`).
+struct EphemeralSigner {
+    private_key: SecretKey,
+}
+
+impl EphemeralSigner {
+    fn new() -> Self {
+        let mut rng = OsRng;
+        Self {
+            private_key: SecretKey::random(&mut rng),
+        }
+    }
+}
+
+impl SignerProvider for EphemeralSigner {
+    fn private_key(&self) -> &SecretKey {
+        &self.private_key
+    }
+    fn cert_chain(&self) -> Option<&[Certificate]> {
+        None
+    }
+    fn cert_url(&self) -> Option<&str> {
+        None
+    }
+}
+
+pub struct EarAttestationTokenBroker {
+    settings: TokenBrokerSettings,
+    signer: Arc<dyn SignerProvider>,
+    policy_engine: Arc<dyn PolicyEngine>,
+}
+
+impl EarAttestationTokenBroker {
+    /// Native / serde path. Resolves the signer from `SignerConfig`
+    /// (`key_pem` | `key_path`, fs-gated) and builds the `PolicyEngine` from
+    /// `policy_dir` (OPA fs / InMemory). Replaces the old `new(config)`.
+    #[cfg(feature = "fs")]
+    pub fn from_config(config: Configuration) -> Result<Self> {
+        let policy_engine = PolicyEngineType::OPA.to_policy_engine(
+            Path::new(&config.policy_dir),
+            include_str!("ear_default_policy_cpu.rego"),
+            "default.rego",
+        )?;
+        info!("Loading default AS policy \"default.rego\"");
+
+        let signer: Arc<dyn SignerProvider> = match config.signer {
+            Some(sc) => Arc::new(ConfigSigner::from_signer_config(sc)?),
+            None => {
+                log::info!(
+                    "No Token Signer key in config file, create an ephemeral key and without CA pubkey cert"
+                );
+                Arc::new(EphemeralSigner::new())
+            }
+        };
+
+        Ok(Self {
+            settings: config.settings,
+            signer,
             policy_engine,
         })
+    }
+
+    /// Pure-lib / wasm path. Objects injected — zero fs, zero paths.
+    /// Falls back to an ephemeral key when `signer` is None.
+    pub fn from_components(
+        settings: TokenBrokerSettings,
+        signer: Option<Arc<dyn SignerProvider>>,
+        policy_engine: Arc<dyn PolicyEngine>,
+    ) -> Self {
+        let signer: Arc<dyn SignerProvider> = match signer {
+            Some(s) => s,
+            None => Arc::new(EphemeralSigner::new()),
+        };
+        Self {
+            settings,
+            signer,
+            policy_engine,
+        }
     }
 }
 
@@ -303,7 +408,7 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
 
         let now = OffsetDateTime::now_utc();
         let exp = now
-            .checked_add(Duration::minutes(self.config.duration_min))
+            .checked_add(Duration::minutes(self.settings.duration_min))
             .ok_or(anyhow!("Token expiration overflow."))?;
 
         let mut extensions = Extensions::new();
@@ -311,11 +416,11 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
         extensions.set_by_name("exp", ExtensionValue::Integer(exp.unix_timestamp()))?;
 
         let ear = Ear {
-            profile: self.config.profile_name.clone(),
+            profile: self.settings.profile_name.clone(),
             iat: now.unix_timestamp(),
             vid: VerifierID {
-                build: self.config.build_name.clone(),
-                developer: self.config.developer_name.clone(),
+                build: self.settings.build_name.clone(),
+                developer: self.settings.developer_name.clone(),
             },
             raw_evidence: None,
             nonce: None,
@@ -326,11 +431,13 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
         jwt_header.jwk = Some(self.pubkey_jwk()?);
 
         let private_key_bytes = self
-            .private_key
+            .signer
+            .private_key()
             .to_pkcs8_pem(LineEnding::LF)
             .context("serialize EC private key to PKCS#8 PEM")?;
         let private_key_bytes: &[u8] = private_key_bytes.as_bytes();
 
+        #[cfg(feature = "fs")]
         let signed_ear = if let Some(transparency) = signer_transparency::load_signer_transparency()
         {
             let mut ear_claims = serde_json::to_value(&ear)?
@@ -348,6 +455,8 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
         } else {
             ear.sign_jwt_pem_with_header(&jwt_header, private_key_bytes)?
         };
+        #[cfg(not(feature = "fs"))]
+        let signed_ear = ear.sign_jwt_pem_with_header(&jwt_header, private_key_bytes)?;
 
         Ok(signed_ear)
     }
@@ -385,8 +494,8 @@ impl EarAttestationTokenBroker {
     // TODO: converge this with the jwk function in the simple token broker
     fn pubkey_jwk(&self) -> Result<jwk::Jwk> {
         let chain = self
-            .cert_chain
-            .as_ref()
+            .signer
+            .cert_chain()
             .map(|certs| -> Result<Vec<String>> {
                 let mut chain = vec![];
                 for cert in certs {
@@ -399,12 +508,12 @@ impl EarAttestationTokenBroker {
 
         let common = jwk::CommonParameters {
             key_algorithm: Some(jwk::KeyAlgorithm::ES256),
-            x509_url: self.cert_url.clone(),
+            x509_url: self.signer.cert_url().map(str::to_owned),
             x509_chain: chain,
             ..Default::default()
         };
 
-        let public_key = self.private_key.public_key();
+        let public_key = self.signer.private_key().public_key();
         let encoded = public_key.to_encoded_point(false);
         let x = encoded
             .x()
@@ -426,6 +535,7 @@ impl EarAttestationTokenBroker {
     }
 }
 
+#[cfg(all(test, feature = "fs"))]
 fn generate_ec_keys() -> Result<(SecretKey, Vec<u8>, Vec<u8>)> {
     let mut rng = OsRng;
     let secret = SecretKey::random(&mut rng);
@@ -520,7 +630,7 @@ mod tests {
         // use default config with no signer.
         // this will sign the token with an ephemeral key.
         let config = Configuration::default();
-        let broker = EarAttestationTokenBroker::new(config).unwrap();
+        let broker = EarAttestationTokenBroker::from_config(config).unwrap();
 
         let _token = broker
             .issue(
@@ -545,8 +655,8 @@ mod tests {
         let mut private_key_file = NamedTempFile::new().unwrap();
         private_key_file.write_all(&private_key_bytes).unwrap();
 
-        let signer = TokenSignerConfig {
-            key_path: private_key_file.path().to_str().unwrap().to_string(),
+        let signer = SignerConfig {
+            key_path: Some(private_key_file.path().to_str().unwrap().to_string()),
             cert_url: None,
             cert_path: None,
         };
@@ -554,7 +664,7 @@ mod tests {
         let mut config = Configuration::default();
         config.signer = Some(signer);
 
-        let broker = EarAttestationTokenBroker::new(config).unwrap();
+        let broker = EarAttestationTokenBroker::from_config(config).unwrap();
         let token = broker
             .issue(
                 vec![TeeClaims {
@@ -623,6 +733,43 @@ mod tests {
     async fn test_snp_default_policy_rejects_debug_guest() {
         let ear = issue_snp_ear("1").await;
         assert_eq!(ear["submods"]["cpu0"]["ear.status"], "warning");
+    }
+
+    #[cfg(not(feature = "fs"))]
+    #[tokio::test]
+    async fn from_components_issues_without_fs() {
+        // Programmatic path: inject an InMemory policy engine and let the
+        // broker fall back to an ephemeral key. Proves issue() works with no
+        // fs feature, no policy_dir, no SignerConfig.
+        let policy_engine: Arc<dyn PolicyEngine> = PolicyEngineType::OPAInMemory
+            .to_policy_engine(
+                Path::new("/"),
+                include_str!("ear_default_policy_cpu.rego"),
+                "default.rego",
+            )
+            .unwrap();
+        let broker = EarAttestationTokenBroker::from_components(
+            TokenBrokerSettings::default(),
+            None,
+            policy_engine,
+        )
+        .unwrap();
+
+        let _token = broker
+            .issue(
+                vec![TeeClaims {
+                    tee: Tee::Sample,
+                    tee_class: "cpu".to_string(),
+                    claims: json!({"claim": "claim1"}),
+                    runtime_data_claims: json!({"runtime_data": "111"}),
+                    init_data_claims: json!({"initdata": "111"}),
+                    additional_data: None,
+                }],
+                vec!["default".into()],
+                HashMap::new(),
+            )
+            .await
+            .unwrap();
     }
 
     #[test]

@@ -103,8 +103,10 @@ mod tests {
             storage: ReferenceValueStorageConfig::LocalFs(local_fs::Config::default()),
         }),
         attestation_token_broker: AttestationTokenConfig::Simple(simple::Configuration {
-            duration_min: 5,
-            issuer_name: "test".into(),
+            settings: simple::TokenBrokerSettings {
+                duration_min: 5,
+                issuer_name: "test".into(),
+            },
             signer: None,
             policy_dir: "/var/lib/attestation-service/policies".into(),
         }),
@@ -116,14 +118,16 @@ mod tests {
             storage: ReferenceValueStorageConfig::LocalFs(local_fs::Config::default()),
         }),
         attestation_token_broker: AttestationTokenConfig::Simple(simple::Configuration {
-            duration_min: 5,
-            issuer_name: "test".into(),
+            settings: simple::TokenBrokerSettings {
+                duration_min: 5,
+                issuer_name: "test".into(),
+            },
             policy_dir: "/var/lib/attestation-service/policies".into(),
-            signer: Some(simple::TokenSignerConfig {
+            signer: Some(simple::SignerConfig {
                 key_path: "/etc/key".into(),
                 cert_url: Some("https://example.io".into()),
                 cert_path: Some("/etc/cert.pem".into())
-            })
+            }),
         }),
         challenge_key_path: None,
     })]
@@ -133,13 +137,15 @@ mod tests {
             storage: ReferenceValueStorageConfig::LocalFs(local_fs::Config::default()),
         }),
         attestation_token_broker: AttestationTokenConfig::Ear(ear_broker::Configuration {
-            duration_min: 5,
-            issuer_name: "test".into(),
+            settings: ear_broker::TokenBrokerSettings {
+                duration_min: 5,
+                issuer_name: "test".into(),
+                developer_name: "someone".into(),
+                build_name: "0.1.0".into(),
+                profile_name: "tag:github.com,2024:confidential-containers/Trustee".into(),
+            },
             signer: None,
             policy_dir: "/var/lib/attestation-service/policies".into(),
-            developer_name: "someone".into(),
-            build_name: "0.1.0".into(),
-            profile_name: "tag:github.com,2024:confidential-containers/Trustee".into()
         }),
         challenge_key_path: None,
     })]
@@ -149,17 +155,19 @@ mod tests {
             storage: ReferenceValueStorageConfig::LocalFs(local_fs::Config::default()),
         }),
         attestation_token_broker: AttestationTokenConfig::Ear(ear_broker::Configuration {
-            duration_min: 5,
-            issuer_name: "test".into(),
+            settings: ear_broker::TokenBrokerSettings {
+                duration_min: 5,
+                issuer_name: "test".into(),
+                developer_name: "someone".into(),
+                build_name: "0.1.0".into(),
+                profile_name: "tag:github.com,2024:confidential-containers/Trustee".into(),
+            },
             policy_dir: "/var/lib/attestation-service/policies".into(),
-            developer_name: "someone".into(),
-            build_name: "0.1.0".into(),
-            profile_name: "tag:github.com,2024:confidential-containers/Trustee".into(),
-            signer: Some(ear_broker::TokenSignerConfig {
+            signer: Some(ear_broker::SignerConfig {
                 key_path: "/etc/key".into(),
                 cert_url: Some("https://example.io".into()),
                 cert_path: Some("/etc/cert.pem".into())
-            })
+            }),
         }),
         challenge_key_path: None,
     })]

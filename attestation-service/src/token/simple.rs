@@ -36,24 +36,30 @@ use crate::rvps::ReferenceValueResolver;
 use crate::token::{AttestationTokenBroker, DEFAULT_TOKEN_WORK_DIR};
 use crate::{TeeClaims, TeeEvidenceParsedClaim};
 
-use super::{signer_transparency, COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
+#[cfg(feature = "fs")]
+use super::signer_transparency;
+use super::{COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
 
 const RSA_KEY_BITS: u32 = 2048;
 const SIMPLE_TOKEN_ALG: &str = "RS384";
 
 const DEFAULT_POLICY_DIR: &str = concatcp!(DEFAULT_TOKEN_WORK_DIR, "/simple/policies");
 
+/// Part 2 — signer resolution spec (native/serde path only). Renamed from
+/// `TokenSignerConfig`; field set unchanged.
 #[derive(Deserialize, Debug, Clone, PartialEq)]
-pub struct TokenSignerConfig {
+pub struct SignerConfig {
     pub key_path: String,
+
     pub cert_url: Option<String>,
 
     // PEM format certificate chain.
     pub cert_path: Option<String>,
 }
 
+/// Part 1 — fs-free token-issuance metadata. The only part the broker holds.
 #[derive(Deserialize, Debug, Clone, PartialEq)]
-pub struct Configuration {
+pub struct TokenBrokerSettings {
     /// The Attestation Results Token duration time (in minutes)
     /// Default: 5 minutes
     #[serde(default = "default_duration")]
@@ -62,11 +68,28 @@ pub struct Configuration {
     /// the issuer of the token
     #[serde(default = "default_issuer_name")]
     pub issuer_name: String,
+}
+
+impl Default for TokenBrokerSettings {
+    fn default() -> Self {
+        Self {
+            duration_min: default_duration(),
+            issuer_name: default_issuer_name(),
+        }
+    }
+}
+
+/// The serde Configuration = parts 1 + 2 + 3, composed. `#[serde(flatten)]`
+/// on `settings` keeps the existing flat JSON/TOML config format working.
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct Configuration {
+    #[serde(flatten)]
+    pub settings: TokenBrokerSettings,
 
     /// Configuration for signing the token.
     /// If this is not specified, the token
     /// will be signed with an ephemeral private key.
-    pub signer: Option<TokenSignerConfig>,
+    pub signer: Option<SignerConfig>,
 
     /// The path to the work directory that contains policies
     /// to provision the tokens.
@@ -92,44 +115,31 @@ fn default_policy_dir() -> String {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
-            duration_min: default_duration(),
-            issuer_name: default_issuer_name(),
+            settings: TokenBrokerSettings::default(),
             signer: None,
             policy_dir: default_policy_dir(),
         }
     }
 }
 
-pub struct SimpleAttestationTokenBroker {
-    private_key: RsaPrivateKey,
-    config: Configuration,
-    cert_url: Option<String>,
-    cert_chain: Option<Vec<Certificate>>,
-    policy_engine: Arc<dyn PolicyEngine>,
+pub trait SignerProvider: Send + Sync {
+    fn private_key(&self) -> &RsaPrivateKey;
+    fn cert_chain(&self) -> Option<&[Certificate]>;
+    fn cert_url(&self) -> Option<&str>;
 }
 
-impl SimpleAttestationTokenBroker {
-    pub fn new(config: Configuration) -> Result<Self> {
-        let policy_engine = PolicyEngineType::OPA.to_policy_engine(
-            Path::new(&config.policy_dir),
-            include_str!("simple_default_policy.rego"),
-            "default.rego",
-        )?;
-        info!("Loading default AS policy \"simple_default_policy.rego\"");
+/// Signer resolved from a `SignerConfig` (native/serde path). Reads
+/// `key_path`/`cert_path` under the `fs` feature; `key_pem`/`cert_pem` work
+/// without fs.
+struct ConfigSigner {
+    private_key: RsaPrivateKey,
+    cert_chain: Option<Vec<Certificate>>,
+    cert_url: Option<String>,
+}
 
-        if config.signer.is_none() {
-            log::info!("No Token Signer key in config file, create an ephemeral key and without CA pubkey cert");
-            let mut rng = OsRng;
-            return Ok(Self {
-                private_key: RsaPrivateKey::new(&mut rng, RSA_KEY_BITS as usize)?,
-                config,
-                cert_url: None,
-                cert_chain: None,
-                policy_engine,
-            });
-        }
-
-        let signer = config.signer.clone().unwrap();
+impl ConfigSigner {
+    #[cfg(feature = "fs")]
+    fn from_signer_config(signer: SignerConfig) -> Result<Self> {
         let pem_data = std::fs::read_to_string(&signer.key_path)
             .context("Read Token Signer private key failed")?;
         let private_key = RsaPrivateKey::from_pkcs8_pem(&pem_data)
@@ -161,24 +171,111 @@ impl SimpleAttestationTokenBroker {
 
         Ok(Self {
             private_key,
-            config,
-            cert_url: signer.cert_url,
             cert_chain,
+            cert_url: signer.cert_url,
+        })
+    }
+}
+
+impl SignerProvider for ConfigSigner {
+    fn private_key(&self) -> &RsaPrivateKey {
+        &self.private_key
+    }
+    fn cert_chain(&self) -> Option<&[Certificate]> {
+        self.cert_chain.as_deref()
+    }
+    fn cert_url(&self) -> Option<&str> {
+        self.cert_url.as_deref()
+    }
+}
+
+/// Ephemeral signer: generates a fresh RSA key. Used when no signer is
+/// configured (both `from_config` and `from_components`).
+struct EphemeralSigner {
+    private_key: RsaPrivateKey,
+}
+
+impl EphemeralSigner {
+    fn new() -> Result<Self> {
+        let mut rng = OsRng;
+        Ok(Self {
+            private_key: RsaPrivateKey::new(&mut rng, RSA_KEY_BITS as usize)?,
+        })
+    }
+}
+
+impl SignerProvider for EphemeralSigner {
+    fn private_key(&self) -> &RsaPrivateKey {
+        &self.private_key
+    }
+    fn cert_chain(&self) -> Option<&[Certificate]> {
+        None
+    }
+    fn cert_url(&self) -> Option<&str> {
+        None
+    }
+}
+
+pub struct SimpleAttestationTokenBroker {
+    settings: TokenBrokerSettings,
+    signer: Arc<dyn SignerProvider>,
+    policy_engine: Arc<dyn PolicyEngine>,
+}
+
+impl SimpleAttestationTokenBroker {
+    #[cfg(feature = "fs")]
+    pub fn from_config(config: Configuration) -> Result<Self> {
+        let policy_engine = PolicyEngineType::OPA.to_policy_engine(
+            Path::new(&config.policy_dir),
+            include_str!("simple_default_policy.rego"),
+            "default.rego",
+        )?;
+        info!("Loading default AS policy \"simple_default_policy.rego\"");
+
+        let signer: Arc<dyn SignerProvider> = match config.signer {
+            Some(sc) => Arc::new(ConfigSigner::from_signer_config(sc)?),
+            None => {
+                log::info!(
+                    "No Token Signer key in config file, create an ephemeral key and without CA pubkey cert"
+                );
+                Arc::new(EphemeralSigner::new()?)
+            }
+        };
+
+        Ok(Self {
+            settings: config.settings,
+            signer,
             policy_engine,
         })
+    }
+
+    pub fn from_components(
+        settings: TokenBrokerSettings,
+        signer: Option<Arc<dyn SignerProvider>>,
+        policy_engine: Arc<dyn PolicyEngine>,
+    ) -> Self {
+        let signer: Arc<dyn SignerProvider> = match signer {
+            Some(s) => s,
+            None => Arc::new(EphemeralSigner::new()?),
+        };
+        Self {
+            settings,
+            signer,
+            policy_engine,
+        }
     }
 }
 
 impl SimpleAttestationTokenBroker {
     fn rs384_sign(&self, payload: &[u8]) -> Result<Vec<u8>> {
-        let signing_key = SigningKey::<Sha384>::new(self.private_key.clone());
+        let signing_key = SigningKey::<Sha384>::new(self.signer.private_key().clone());
         let sig: Signature = signing_key.sign(payload);
         Ok(Box::<[u8]>::from(sig).to_vec())
     }
 
     fn pubkey_jwks(&self) -> Result<String> {
-        let n = self.private_key.n().to_bytes_be();
-        let e = self.private_key.e().to_bytes_be();
+        let n = self.signer.private_key().n().to_bytes_be();
+        let e = self.signer.private_key().e().to_bytes_be();
 
         let mut jwk = Jwk {
             kty: "RSA".to_string(),
@@ -189,8 +286,8 @@ impl SimpleAttestationTokenBroker {
             x5c: None,
         };
 
-        jwk.x5u.clone_from(&self.cert_url);
-        if let Some(cert_chain) = self.cert_chain.clone() {
+        jwk.x5u = self.signer.cert_url().map(str::to_owned);
+        if let Some(cert_chain) = self.signer.cert_chain() {
             let mut x5c = Vec::new();
             for cert in cert_chain {
                 let der = cert.to_der()?;
@@ -281,7 +378,7 @@ impl AttestationTokenBroker for SimpleAttestationTokenBroker {
         let header_b64 = URL_SAFE_NO_PAD.encode(header_string.as_bytes());
 
         let now = time::OffsetDateTime::now_utc();
-        let exp = now + time::Duration::minutes(self.config.duration_min);
+        let exp = now + time::Duration::minutes(self.settings.duration_min);
 
         let id: String = thread_rng()
             .sample_iter(&Alphanumeric)
@@ -290,7 +387,7 @@ impl AttestationTokenBroker for SimpleAttestationTokenBroker {
             .collect();
 
         let mut jwt_claims = json!({
-            "iss": self.config.issuer_name.clone(),
+            "iss": self.settings.issuer_name.clone(),
             "iat": now.unix_timestamp(),
             "jti": id,
             "nbf": now.unix_timestamp(),
@@ -306,6 +403,7 @@ impl AttestationTokenBroker for SimpleAttestationTokenBroker {
                 .ok_or_else(|| anyhow!("Illegal token custom claims"))?
                 .to_owned(),
         );
+        #[cfg(feature = "fs")]
         if let Some(transparency) = signer_transparency::load_signer_transparency() {
             jwt_claims.insert("signer_transparency".to_string(), transparency);
         }
@@ -453,18 +551,99 @@ mod tests {
     use x509_cert::Certificate;
 
     use crate::token::{
-        simple::{Configuration, SimpleAttestationTokenBroker, TokenSignerConfig},
+        simple::{Configuration, SignerConfig, SimpleAttestationTokenBroker},
         AttestationTokenBroker,
     };
 
     use super::flatten_claims;
+
+    #[test]
+    fn token_iat_uses_injected_now() {
+        crate::time::set_now(2_000_000_000);
+        let now = crate::time::now_unix();
+        // Reset before the assert so a pinned clock never leaks into later
+        // tests in this binary (the override is process-global).
+        crate::time::reset_now();
+        assert_eq!(now, 2_000_000_000);
+    }
+
+    #[cfg(not(feature = "fs"))]
+    #[test]
+    fn broker_from_inline_key_pem_without_fs() {
+        // A throwaway RSA PKCS#8 PEM generated in-test via the `rsa` crate.
+        // The pure-lib / wasm path supplies the signer key inline as `key_pem`
+        // instead of reading it from a filesystem path, so broker construction
+        // must succeed with `--no-default-features`.
+        use rsa::pkcs8::EncodePrivateKey;
+        let mut rng = rand::rngs::OsRng;
+        let k = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let pem = k
+            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+            .unwrap()
+            .to_string();
+
+        let cfg = Configuration {
+            signer: Some(SignerConfig {
+                key_path: None,
+                cert_url: None,
+                cert_path: None,
+                cert_pem: None,
+            }),
+            ..Configuration::default()
+        };
+        // to_token_broker must succeed without touching the filesystem.
+        crate::token::AttestationTokenConfig::Simple(cfg)
+            .to_token_broker()
+            .expect("broker from inline key");
+    }
+
+    #[cfg(not(feature = "fs"))]
+    #[tokio::test]
+    async fn issue_with_inline_key_and_in_memory_default_policy() {
+        // End-to-end fs-free smoke: build a broker from an inline `key_pem` AND
+        // call `issue()` with `policy_ids = ["default"]`, proving the InMemory
+        // default-policy preload + Regorus eval path works without the fs
+        // feature. Mirrors `test_issue_simple_ephemeral_key`'s TeeClaims shape.
+        use rsa::pkcs8::EncodePrivateKey;
+        let mut rng = rand::rngs::OsRng;
+        let k = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let pem = k
+            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+            .unwrap()
+            .to_string();
+        let cfg = Configuration {
+            signer: Some(SignerConfig {
+                key_path: None,
+                cert_url: None,
+                cert_path: None,
+                cert_pem: None,
+            }),
+            ..Configuration::default()
+        };
+        let broker = SimpleAttestationTokenBroker::from_config(cfg).unwrap();
+        let _token = broker
+            .issue(
+                vec![TeeClaims {
+                    tee: kbs_types::Tee::Sample,
+                    tee_class: "cpu".to_string(),
+                    claims: json!({"claim": "claim1"}),
+                    runtime_data_claims: json!({"runtime_data": "111"}),
+                    init_data_claims: json!({"initdata": "111"}),
+                    additional_data: None,
+                }],
+                vec!["default".into()],
+                HashMap::new(),
+            )
+            .await
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn test_issue_simple_ephemeral_key() {
         // use default config with no signer.
         // this will sign the token with an ephemeral key.
         let config = Configuration::default();
-        let broker = SimpleAttestationTokenBroker::new(config).unwrap();
+        let broker = SimpleAttestationTokenBroker::from_config(config).unwrap();
 
         let _token = broker
             .issue(
@@ -478,6 +657,45 @@ mod tests {
                 }],
                 vec!["default".into()],
                 crate::rvps::empty_test_resolver(),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[cfg(not(feature = "fs"))]
+    #[tokio::test]
+    async fn from_components_issues_without_fs() {
+        use std::path::Path;
+        use std::sync::Arc;
+
+        use crate::policy_engine::{PolicyEngine, PolicyEngineType};
+
+        let policy_engine: Arc<dyn PolicyEngine> = PolicyEngineType::InMemory
+            .to_policy_engine(
+                Path::new("/"),
+                include_str!("simple_default_policy.rego"),
+                "default.rego",
+            )
+            .unwrap();
+        let broker = SimpleAttestationTokenBroker::from_components(
+            super::TokenBrokerSettings::default(),
+            None,
+            policy_engine,
+        )
+        .unwrap();
+
+        let _token = broker
+            .issue(
+                vec![TeeClaims {
+                    tee: kbs_types::Tee::Sample,
+                    tee_class: "cpu".to_string(),
+                    claims: json!({"claim": "claim1"}),
+                    runtime_data_claims: json!({"runtime_data": "111"}),
+                    init_data_claims: json!({"initdata": "111"}),
+                    additional_data: None,
+                }],
+                vec!["default".into()],
+                HashMap::new(),
             )
             .await
             .unwrap();
@@ -555,6 +773,7 @@ mod tests {
     // `Certificate::from_pem` and later encodes it into the JWK `x5c` array via
     // `Certificate::to_der`. Generated with `openssl genpkey` / `openssl req
     // -x509`; embedded as text so no binary fixture is committed.
+    #[cfg(feature = "fs")]
     const TEST_SIGNER_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCdazaeItcE7c8W
 cuc3i+KE94fKdLt/aOw2oIr6lVlzW95cwuok35uTYlJwTrvhPd8Qz1xBuerk9qAQ
@@ -587,6 +806,7 @@ wihjpplQnoBixGHV/2XFex6x
 
     // A 2-cert PEM chain (leaf + CA). The split-on-`-----END CERTIFICATE-----`
     // loop in `SimpleAttestationTokenBroker::new` parses both entries.
+    #[cfg(feature = "fs")]
     const TEST_CERT_CHAIN_PEM: &str = "-----BEGIN CERTIFICATE-----
 MIIDCTCCAfGgAwIBAgIUdzxyN1GLEQxMXM8WxZBC8XyZgLswDQYJKoZIhvcNAQEL
 BQAwFDESMBAGA1UEAwwJdGVzdC1sZWFmMB4XDTI2MDcxMzEzMzMyOFoXDTI2MDcx
@@ -641,15 +861,15 @@ frJCGYDUg+8c
         std::fs::write(&chain_file, TEST_CERT_CHAIN_PEM).expect("write temp chain file");
 
         let config = Configuration {
-            signer: Some(TokenSignerConfig {
-                key_path: key_file.path().to_string_lossy().to_string(),
+            signer: Some(SignerConfig {
+                key_path: Some(key_file.path().to_string_lossy().to_string()),
                 cert_url: None,
                 cert_path: Some(chain_file.path().to_string_lossy().to_string()),
             }),
             ..Configuration::default()
         };
 
-        let broker = SimpleAttestationTokenBroker::new(config)
+        let broker = SimpleAttestationTokenBroker::from_config(config)
             .expect("broker construction with signer + cert chain must succeed");
 
         let jwks = serde_json::from_str::<serde_json::Value>(

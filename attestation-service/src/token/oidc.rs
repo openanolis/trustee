@@ -36,7 +36,9 @@ use crate::rvps::ReferenceValueResolver;
 use crate::token::{AttestationTokenBroker, DEFAULT_TOKEN_WORK_DIR};
 use crate::TeeClaims;
 
-use super::{signer_transparency, COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
+#[cfg(feature = "fs")]
+use super::signer_transparency;
+use super::{COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
 
 const RSA_KEY_BITS: u32 = 2048;
 const OIDC_TOKEN_ALG: &str = "RS256";
@@ -44,13 +46,42 @@ const DEFAULT_OIDC_AUDIENCE: &str = "sigstore";
 
 const DEFAULT_POLICY_DIR: &str = concatcp!(DEFAULT_TOKEN_WORK_DIR, "/oidc/policies");
 
+/// Part 2 — signer resolution spec (native/serde path only). Renamed from
+/// `TokenSignerConfig`; field set unchanged.
 #[derive(Deserialize, Debug, Clone, PartialEq)]
-pub struct TokenSignerConfig {
+pub struct SignerConfig {
     pub key_path: String,
+
     pub cert_url: Option<String>,
 
     // PEM format certificate chain.
     pub cert_path: Option<String>,
+}
+
+/// Part 1 — fs-free token-issuance metadata (incl. `oid_config`). The only
+/// part the broker holds.
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct TokenBrokerSettings {
+    /// The Attestation Results Token duration time (in minutes)
+    /// Default: 5 minutes
+    #[serde(default = "default_duration")]
+    pub duration_min: i64,
+
+    /// the issuer of the token
+    #[serde(default = "default_issuer_name")]
+    pub issuer_name: String,
+
+    pub oid_config: Option<OpenIDConfig>,
+}
+
+impl Default for TokenBrokerSettings {
+    fn default() -> Self {
+        Self {
+            duration_min: default_duration(),
+            issuer_name: default_issuer_name(),
+            oid_config: None,
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -70,23 +101,17 @@ pub struct OpenIDConfig {
     pub additional_claims: Option<Vec<String>>,
 }
 
+/// The serde Configuration = parts 1 + 2 + 3, composed. `#[serde(flatten)]`
+/// on `settings` keeps the existing flat JSON/TOML config format working.
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct Configuration {
-    /// The Attestation Results Token duration time (in minutes)
-    /// Default: 5 minutes
-    #[serde(default = "default_duration")]
-    pub duration_min: i64,
-
-    /// the issuer of the token
-    #[serde(default = "default_issuer_name")]
-    pub issuer_name: String,
+    #[serde(flatten)]
+    pub settings: TokenBrokerSettings,
 
     /// Configuration for signing the token.
     /// If this is not specified, the token
     /// will be signed with an ephemeral private key.
-    pub signer: Option<TokenSignerConfig>,
-
-    pub oid_config: Option<OpenIDConfig>,
+    pub signer: Option<SignerConfig>,
 
     /// The path to the work directory that contains policies
     /// to provision the tokens.
@@ -122,45 +147,31 @@ fn default_policy_dir() -> String {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
-            duration_min: default_duration(),
-            issuer_name: default_issuer_name(),
+            settings: TokenBrokerSettings::default(),
             signer: None,
-            oid_config: None,
             policy_dir: default_policy_dir(),
         }
     }
 }
 
-pub struct OIDCAttestationTokenBroker {
-    private_key: RsaPrivateKey,
-    config: Configuration,
-    cert_url: Option<String>,
-    cert_chain: Option<Vec<Certificate>>,
-    policy_engine: Arc<dyn PolicyEngine>,
+pub trait SignerProvider: Send + Sync {
+    fn private_key(&self) -> &RsaPrivateKey;
+    fn cert_chain(&self) -> Option<&[Certificate]>;
+    fn cert_url(&self) -> Option<&str>;
 }
 
-impl OIDCAttestationTokenBroker {
-    pub fn new(config: Configuration) -> Result<Self> {
-        let policy_engine = PolicyEngineType::OPA.to_policy_engine(
-            Path::new(&config.policy_dir),
-            include_str!("oidc_default_policy.rego"),
-            "default.rego",
-        )?;
-        info!("Loading default AS policy \"oidc_default_policy.rego\"");
+/// Signer resolved from a `SignerConfig` (native/serde path). Reads
+/// `key_path`/`cert_path` under the `fs` feature; `key_pem`/`cert_pem` work
+/// without fs.
+struct ConfigSigner {
+    private_key: RsaPrivateKey,
+    cert_chain: Option<Vec<Certificate>>,
+    cert_url: Option<String>,
+}
 
-        if config.signer.is_none() {
-            log::info!("No Token Signer key in config file, create an ephemeral key and without CA pubkey cert");
-            let mut rng = OsRng;
-            return Ok(Self {
-                private_key: RsaPrivateKey::new(&mut rng, RSA_KEY_BITS as usize)?,
-                config,
-                cert_url: None,
-                cert_chain: None,
-                policy_engine,
-            });
-        }
-
-        let signer = config.signer.clone().unwrap();
+impl ConfigSigner {
+    #[cfg(feature = "fs")]
+    fn from_signer_config(signer: SignerConfig) -> Result<Self> {
         let pem_data = std::fs::read_to_string(&signer.key_path)
             .context("Read Token Signer private key failed")?;
         let private_key = RsaPrivateKey::from_pkcs8_pem(&pem_data)
@@ -192,24 +203,111 @@ impl OIDCAttestationTokenBroker {
 
         Ok(Self {
             private_key,
-            config,
-            cert_url: signer.cert_url,
             cert_chain,
+            cert_url: signer.cert_url,
+        })
+    }
+}
+
+impl SignerProvider for ConfigSigner {
+    fn private_key(&self) -> &RsaPrivateKey {
+        &self.private_key
+    }
+    fn cert_chain(&self) -> Option<&[Certificate]> {
+        self.cert_chain.as_deref()
+    }
+    fn cert_url(&self) -> Option<&str> {
+        self.cert_url.as_deref()
+    }
+}
+
+/// Ephemeral signer: generates a fresh RSA key. Used when no signer is
+/// configured (both `from_config` and `from_components`).
+struct EphemeralSigner {
+    private_key: RsaPrivateKey,
+}
+
+impl EphemeralSigner {
+    fn new() -> Result<Self> {
+        let mut rng = OsRng;
+        Ok(Self {
+            private_key: RsaPrivateKey::new(&mut rng, RSA_KEY_BITS as usize)?,
+        })
+    }
+}
+
+impl SignerProvider for EphemeralSigner {
+    fn private_key(&self) -> &RsaPrivateKey {
+        &self.private_key
+    }
+    fn cert_chain(&self) -> Option<&[Certificate]> {
+        None
+    }
+    fn cert_url(&self) -> Option<&str> {
+        None
+    }
+}
+
+pub struct OIDCAttestationTokenBroker {
+    settings: TokenBrokerSettings,
+    signer: Arc<dyn SignerProvider>,
+    policy_engine: Arc<dyn PolicyEngine>,
+}
+
+impl OIDCAttestationTokenBroker {
+    #[cfg(feature = "fs")]
+    pub fn from_config(config: Configuration) -> Result<Self> {
+        let policy_engine = PolicyEngineType::OPA.to_policy_engine(
+            Path::new(&config.policy_dir),
+            include_str!("oidc_default_policy.rego"),
+            "default.rego",
+        )?;
+        info!("Loading default AS policy \"oidc_default_policy.rego\"");
+
+        let signer: Arc<dyn SignerProvider> = match config.signer {
+            Some(sc) => Arc::new(ConfigSigner::from_signer_config(sc)?),
+            None => {
+                log::info!(
+                    "No Token Signer key in config file, create an ephemeral key and without CA pubkey cert"
+                );
+                Arc::new(EphemeralSigner::new()?)
+            }
+        };
+
+        Ok(Self {
+            settings: config.settings,
+            signer,
             policy_engine,
         })
+    }
+
+    pub fn from_components(
+        settings: TokenBrokerSettings,
+        signer: Option<Arc<dyn SignerProvider>>,
+        policy_engine: Arc<dyn PolicyEngine>,
+    ) -> Self {
+        let signer: Arc<dyn SignerProvider> = match signer {
+            Some(s) => s,
+            None => Arc::new(EphemeralSigner::new()?),
+        };
+        Self {
+            settings,
+            signer,
+            policy_engine,
+        }
     }
 }
 
 impl OIDCAttestationTokenBroker {
     fn rs256_sign(&self, payload: &[u8]) -> Result<Vec<u8>> {
-        let signing_key = SigningKey::<Sha256>::new(self.private_key.clone());
+        let signing_key = SigningKey::<Sha256>::new(self.signer.private_key().clone());
         let sig: Signature = signing_key.sign(payload);
         Ok(Box::<[u8]>::from(sig).to_vec())
     }
 
     fn pubkey_jwks(&self) -> Result<String> {
-        let n = self.private_key.n().to_bytes_be();
-        let e = self.private_key.e().to_bytes_be();
+        let n = self.signer.private_key().n().to_bytes_be();
+        let e = self.signer.private_key().e().to_bytes_be();
 
         let mut jwk = Jwk {
             kty: "RSA".to_string(),
@@ -220,8 +318,8 @@ impl OIDCAttestationTokenBroker {
             x5c: None,
         };
 
-        jwk.x5u.clone_from(&self.cert_url);
-        if let Some(cert_chain) = self.cert_chain.clone() {
+        jwk.x5u = self.signer.cert_url().map(str::to_owned);
+        if let Some(cert_chain) = self.signer.cert_chain() {
             let mut x5c = Vec::new();
             for cert in cert_chain {
                 let der = cert.to_der()?;
@@ -317,7 +415,7 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
         let header_b64 = URL_SAFE_NO_PAD.encode(header_string.as_bytes());
 
         let now = time::OffsetDateTime::now_utc();
-        let exp = now + time::Duration::minutes(self.config.duration_min);
+        let exp = now + time::Duration::minutes(self.settings.duration_min);
 
         let id: String = thread_rng()
             .sample_iter(&Alphanumeric)
@@ -325,13 +423,13 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
             .map(char::from)
             .collect();
 
-        let audience: String = if let Some(oidc) = &self.config.oid_config {
+        let audience: String = if let Some(oidc) = &self.settings.oid_config {
             oidc.audience.clone()
         } else {
             default_oidc_audience()
         };
 
-        let sub: String = if let Some(oidc) = &self.config.oid_config {
+        let sub: String = if let Some(oidc) = &self.settings.oid_config {
             let parts: Vec<String> = oidc.sub_claims.as_ref().map_or_else(Vec::new, |k| {
                 k.iter()
                     .map(|s| {
@@ -385,7 +483,7 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
         }; // Some OIDC clients require non-empty sub
 
         let mut jwt_claims = json!({
-            "iss": self.config.issuer_name.clone(),
+            "iss": self.settings.issuer_name.clone(),
             "aud": audience,
             "sub": sub,
             "iat": now.unix_timestamp(),
@@ -403,11 +501,12 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
                 .ok_or_else(|| anyhow!("Illegal token custom claims"))?
                 .to_owned(),
         );
+        #[cfg(feature = "fs")]
         if let Some(transparency) = signer_transparency::load_signer_transparency() {
             jwt_claims.insert("signer_transparency".to_string(), transparency);
         }
 
-        let additional_claims: HashSet<String> = if let Some(oidc) = &self.config.oid_config {
+        let additional_claims: HashSet<String> = if let Some(oidc) = &self.settings.oid_config {
             oidc.additional_claims
                 .as_ref()
                 .map_or_else(HashSet::new, |v| v.iter().cloned().collect())
@@ -513,7 +612,7 @@ mod tests {
     use x509_cert::Certificate;
 
     use crate::token::{
-        oidc::{Configuration, OIDCAttestationTokenBroker, TokenSignerConfig},
+        oidc::{Configuration, OIDCAttestationTokenBroker, SignerConfig},
         AttestationTokenBroker,
     };
 
@@ -522,7 +621,7 @@ mod tests {
         // use default config with no signer.
         // this will sign the token with an ephemeral key.
         let config = Configuration::default();
-        let broker = OIDCAttestationTokenBroker::new(config).unwrap();
+        let broker = OIDCAttestationTokenBroker::from_config(config).unwrap();
 
         let _token = broker
             .issue(
@@ -577,12 +676,52 @@ mod tests {
         assert_eq!(token.split('.').count(), 3);
     }
 
+    #[cfg(not(feature = "fs"))]
+    #[tokio::test]
+    async fn from_components_issues_without_fs() {
+        use std::path::Path;
+        use std::sync::Arc;
+
+        use crate::policy_engine::{PolicyEngine, PolicyEngineType};
+
+        let policy_engine: Arc<dyn PolicyEngine> = PolicyEngineType::InMemory
+            .to_policy_engine(
+                Path::new("/"),
+                include_str!("oidc_default_policy.rego"),
+                "default.rego",
+            )
+            .unwrap();
+        let broker = OIDCAttestationTokenBroker::from_components(
+            super::TokenBrokerSettings::default(),
+            None,
+            policy_engine,
+        )
+        .unwrap();
+
+        let _token = broker
+            .issue(
+                vec![TeeClaims {
+                    tee: Tee::Sample,
+                    tee_class: "cpu".to_string(),
+                    claims: json!({"claim": "claim1"}),
+                    runtime_data_claims: json!({"runtime_data": "111"}),
+                    init_data_claims: json!({"initdata": "111"}),
+                    additional_data: None,
+                }],
+                vec!["default".into()],
+                HashMap::new(),
+            )
+            .await
+            .unwrap();
+    }
+
     // A pre-generated RSA-2048 PKCS#8 private key (PEM). Used together with
     // `TEST_CERT_CHAIN_PEM` to exercise the `signer = Some(...)` branch of
     // `OIDCAttestationTokenBroker::new`, which parses the PEM cert chain via
     // `Certificate::from_pem` and later encodes it into the JWK `x5c` array via
     // `Certificate::to_der`. Generated with `openssl genpkey` / `openssl req
     // -x509`; embedded as text so no binary fixture is committed.
+    #[cfg(feature = "fs")]
     const TEST_SIGNER_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCdazaeItcE7c8W
 cuc3i+KE94fKdLt/aOw2oIr6lVlzW95cwuok35uTYlJwTrvhPd8Qz1xBuerk9qAQ
@@ -615,6 +754,7 @@ wihjpplQnoBixGHV/2XFex6x
 
     // A 2-cert PEM chain (leaf + CA). The split-on-`-----END CERTIFICATE-----`
     // loop in `OIDCAttestationTokenBroker::new` parses both entries.
+    #[cfg(feature = "fs")]
     const TEST_CERT_CHAIN_PEM: &str = "-----BEGIN CERTIFICATE-----
 MIIDCTCCAfGgAwIBAgIUdzxyN1GLEQxMXM8WxZBC8XyZgLswDQYJKoZIhvcNAQEL
 BQAwFDESMBAGA1UEAwwJdGVzdC1sZWFmMB4XDTI2MDcxMzEzMzMyOFoXDTI2MDcx
@@ -669,16 +809,15 @@ frJCGYDUg+8c
         std::fs::write(&chain_file, TEST_CERT_CHAIN_PEM).expect("write temp chain file");
 
         let config = Configuration {
-            signer: Some(TokenSignerConfig {
+            signer: Some(SignerConfig {
                 key_path: key_file.path().to_string_lossy().to_string(),
                 cert_url: None,
                 cert_path: Some(chain_file.path().to_string_lossy().to_string()),
             }),
-            oid_config: None,
             ..Configuration::default()
         };
 
-        let broker = OIDCAttestationTokenBroker::new(config)
+        let broker = OIDCAttestationTokenBroker::from_config(config)
             .expect("broker construction with signer + cert chain must succeed");
 
         let jwks = serde_json::from_str::<serde_json::Value>(
