@@ -55,6 +55,8 @@ use kbs::plugins::implementations::resource::{ResourceDesc, StorageBackend};
 
 const PASSPHRASE: &[u8] = b"e2e-master-secret-pls-change";
 
+type ResourceKeyColumn = (String, Option<String>, Option<String>, Option<i64>);
+
 /// Prepare a fresh schema by dropping the tables EncryptedDb owns. We do
 /// this via a side-channel sqlx connection so the per-test state is
 /// deterministic.
@@ -66,6 +68,36 @@ async fn reset_mysql_schema(dsn: &str) {
         "DROP TABLE IF EXISTS kbs_meta",
     ] {
         sqlx::query(stmt).execute(&pool).await.unwrap();
+    }
+    pool.close().await;
+}
+
+/// The resource path grammar is ASCII-only, so keeping these columns in the
+/// one-byte `ascii` character set preserves their 255-character capacity and
+/// keeps the three-column primary key below InnoDB's legacy 767-byte limit.
+async fn assert_resource_key_schema(dsn: &str) {
+    let pool = sqlx::MySqlPool::connect(dsn).await.expect("connect mysql");
+    let columns: Vec<ResourceKeyColumn> = sqlx::query_as(
+        "SELECT COLUMN_NAME, CHARACTER_SET_NAME, COLLATION_NAME,
+                CHARACTER_MAXIMUM_LENGTH
+         FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE()
+           AND TABLE_NAME = 'kbs_resources'
+           AND COLUMN_NAME IN ('repository_name', 'resource_type', 'resource_tag')
+         ORDER BY ORDINAL_POSITION",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("inspect kbs_resources key schema");
+    assert_eq!(columns.len(), 3);
+    for (name, charset, collation, max_len) in columns {
+        assert_eq!(charset.as_deref(), Some("ascii"), "charset for {name}");
+        assert_eq!(
+            collation.as_deref(),
+            Some("ascii_bin"),
+            "collation for {name}"
+        );
+        assert_eq!(max_len, Some(255), "maximum length for {name}");
     }
     pool.close().await;
 }
@@ -141,6 +173,7 @@ async fn end_to_end_two_replicas() {
     let replica_a = EncryptedDb::init_async(&cfg(&dsn, &secret_path))
         .await
         .expect("replica A init");
+    assert_resource_key_schema(&dsn).await;
     // Replica B: same DSN, same passphrase, same shared state.
     let replica_b = EncryptedDb::init_async(&cfg(&dsn, &secret_path))
         .await
@@ -160,6 +193,19 @@ async fn end_to_end_two_replicas() {
         .await
         .unwrap();
     assert_eq!(plain, b"r1-payload", "B must decrypt what A wrote");
+
+    // Exercise the full declared capacity of every primary-key component.
+    // On an InnoDB COMPACT table these three ASCII columns occupy 765 index
+    // bytes; the old utf8mb4 schema required up to 3060 and failed to create.
+    let max_component = "a".repeat(255);
+    let max_desc = desc(&max_component, &max_component, &max_component);
+    let max_envelope = encrypt_for_pubkey(&p1, b"max-length-resource-key");
+    replica_a
+        .write_secret_resource(max_desc.clone(), &max_envelope)
+        .await
+        .unwrap();
+    let plain = replica_b.read_secret_resource(max_desc).await.unwrap();
+    assert_eq!(plain, b"max-length-resource-key");
 
     // 4. POST /rotate to B.
     let rotate = replica_b.rotate_keys().await.unwrap();
