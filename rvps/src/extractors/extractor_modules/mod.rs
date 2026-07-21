@@ -15,6 +15,7 @@ pub mod in_toto;
 #[cfg(feature = "reproducible-build")]
 pub mod reproducible_build;
 pub mod sample;
+#[cfg(feature = "fs")]
 pub mod slsa;
 
 /// Extractor is a standard interface that all provenance extractors
@@ -43,6 +44,7 @@ impl Default for ExtractorModuleList {
             mod_list.insert("sample".to_string(), instantiate_func);
         }
 
+        #[cfg(feature = "fs")]
         {
             let instantiate_func: ExtractorInstantiateFunc =
                 Box::new(|| -> ExtractorInstance { Box::new(slsa::SlsaExtractor) });

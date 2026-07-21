@@ -25,13 +25,15 @@ bin = [
 # reads. Pulls `dep:sled` and `tokio/fs`. Library consumers that embed RVPS as
 # a pure library (attestation-service with `--no-default-features`, wasm) turn
 # this off so the lib core has zero fs/sled references.
-fs = ["dep:sled", "tokio/fs"]
+fs = ["dep:sled", "tokio/fs", "dep:tempfile"]
 
-# Support in-toto provenance (not ready)
-in-toto =[ "path-clean" ]
+# Support in-toto provenance (not ready). Uses `tempfile` at runtime, so the
+# extractor pulls it in when enabled without `fs`.
+in-toto = [ "path-clean", "dep:tempfile" ]
 
-# Enable reproducible build feature
-reproducible-build = [ "rpm", "serde_yaml", "hex", "git2" ]
+# Enable reproducible build feature. Uses `tempfile` at runtime, so the
+# extractor pulls it in when enabled without `fs`.
+reproducible-build = [ "rpm", "serde_yaml", "hex", "git2", "dep:tempfile" ]
 
 rebuild-grpc-protos = []
 
@@ -66,7 +68,7 @@ sha2.workspace = true
 shadow-rs = { workspace = true, optional = true }
 sled = { version = "0.34.7", optional = true }
 strum.workspace = true
-tempfile.workspace = true
+tempfile = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["sync"] }
 tonic = { workspace = true, optional = true }
 
