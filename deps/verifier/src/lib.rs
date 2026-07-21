@@ -189,7 +189,8 @@ pub enum InitDataHash<'a> {
     NotProvided,
 }
 
-#[async_trait]
+#[cfg_attr(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"), async_trait(?Send))]
+#[cfg_attr(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")), async_trait)]
 pub trait Verifier {
     /// Verify the hardware signature.
     ///

@@ -80,7 +80,8 @@ struct TdxEvidence {
 #[derive(Debug, Default)]
 pub struct Tdx {}
 
-#[async_trait]
+#[cfg_attr(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"), async_trait(?Send))]
+#[cfg_attr(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")), async_trait)]
 impl Verifier for Tdx {
     async fn evaluate(
         &self,
