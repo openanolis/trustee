@@ -74,6 +74,7 @@ gpu-verifier = [
     "regex",
     "futures",
     "tokio/sync",
+    "tokio/macros",
 ]
 
 [dependencies]

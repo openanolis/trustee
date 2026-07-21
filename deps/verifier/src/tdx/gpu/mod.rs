@@ -10,6 +10,8 @@ mod opaque_data;
 mod report;
 mod rim;
 
+pub use rim::set_rim_service_url;
+
 use report::AttestationReport;
 use rim::{parse_rim_content, RimInfo};
 
