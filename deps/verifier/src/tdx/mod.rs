@@ -19,6 +19,9 @@ pub(crate) mod gpu;
 pub(crate) mod quote;
 pub(crate) mod verify;
 
+#[cfg(feature = "tdx-dcap-rust")]
+pub use verify::set_pccs_url;
+
 use crate::tdx::gpu::GpuEvidenceList;
 use crate::VerifierError;
 

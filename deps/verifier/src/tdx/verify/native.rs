@@ -98,20 +98,47 @@ const OID_SGX_TCB: &[u64] = &[1, 2, 840, 113741, 1, 13, 1, 2];
 const OID_SGX_PCESVN: &[u64] = &[1, 2, 840, 113741, 1, 13, 1, 2, 17];
 const OID_SGX_FMSPC: &[u64] = &[1, 2, 840, 113741, 1, 13, 1, 4];
 
-/// Resolve the PCCS base URL: `PCCS_URL` env var, then the QCNL config file,
-/// then the built-in default.
+use std::sync::RwLock;
+
+/// Injectable PCCS base URL override (pure-lib / wasm host). When set, takes
+/// precedence over env / config-file resolution. The verifier crate does not
+/// pull this from any config struct; whoever embeds the verifier calls
+/// [`set_pccs_url`] directly (e.g. a binary at startup, or the wasm host glue
+/// before invoking verification). A `RwLock<Option<String>>` (rather than
+/// `OnceLock`) so the caller can update it across tests / reconfiguration.
+static PCCS_URL_OVERRIDE: RwLock<Option<String>> = RwLock::new(None);
+
+/// Inject the PCCS base URL (pure-lib / wasm host). When set, takes precedence
+/// over env / config-file resolution. The embedder is expected to call this
+/// directly — the verifier crate itself never reads an AS config for it.
+pub fn set_pccs_url(url: Option<String>) {
+    *PCCS_URL_OVERRIDE.write().unwrap() = url;
+}
+
+/// Resolve the PCCS base URL: the injected override, then (on native) the
+/// `PCCS_URL` env var, then the QCNL config file, then the built-in default.
 fn resolve_pccs_url() -> String {
-    if let Ok(v) = std::env::var("PCCS_URL") {
-        if !v.is_empty() {
+    if let Some(u) = PCCS_URL_OVERRIDE.read().unwrap().clone() {
+        return u;
+    }
+    #[cfg(not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )))]
+    {
+        if let Ok(v) = std::env::var("PCCS_URL") {
+            if !v.is_empty() {
+                return v;
+            }
+        }
+        if let Some(v) = std::fs::read_to_string(QCNL_CONF_PATH)
+            .ok()
+            .and_then(|c| parse_qcnl_pccs_url(&c))
+        {
+            debug!("dcap-qvl backend: using PCCS URL from {QCNL_CONF_PATH}");
             return v;
         }
-    }
-    if let Some(v) = std::fs::read_to_string(QCNL_CONF_PATH)
-        .ok()
-        .and_then(|c| parse_qcnl_pccs_url(&c))
-    {
-        debug!("dcap-qvl backend: using PCCS URL from {QCNL_CONF_PATH}");
-        return v;
     }
     DEFAULT_PCCS_URL.to_string()
 }
@@ -1092,5 +1119,12 @@ mod tests {
             .unwrap();
         assert_eq!(result.pck_certificate_chain.as_deref(), Some("pck-chain-2"));
         assert_eq!(fetches.load(Ordering::SeqCst), 2);
+    }
+
+    fn pccs_override_wins() {
+        super::set_pccs_url(Some("https://my-pccs.example".into()));
+        assert_eq!(super::resolve_pccs_url(), "https://my-pccs.example");
+        // Clean up the shared global state so other tests are not polluted.
+        super::set_pccs_url(None);
     }
 }
