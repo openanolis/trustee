@@ -339,12 +339,15 @@ mod tests {
                             address: "http://127.0.0.1:50003".into(),
                         }),
                         attestation_token_broker: AttestationTokenConfig::Simple(simple::Configuration {
-                            duration_min: DEFAULT_TOKEN_DURATION,
-                            issuer_name: COCO_AS_ISSUER_NAME.into(),
+                            settings: simple::TokenBrokerSettings {
+                                duration_min: DEFAULT_TOKEN_DURATION,
+                                issuer_name: COCO_AS_ISSUER_NAME.into(),
+                            },
                             signer: None,
                             ..Default::default()
                         }),
                         challenge_key_path: None,
+                        ..Default::default()
                     }
                 ),
             timeout: crate::attestation::config::DEFAULT_TIMEOUT,
@@ -413,10 +416,14 @@ mod tests {
                             }),
                         }),
                         attestation_token_broker: AttestationTokenConfig::Simple(simple::Configuration{
-                            duration_min: 5,
+                            settings: simple::TokenBrokerSettings {
+                                duration_min: 5,
+                                ..Default::default()
+                            },
                             ..Default::default()
                         }),
                         challenge_key_path: None,
+                        ..Default::default()
                     }
                 ),
             timeout: crate::attestation::config::DEFAULT_TIMEOUT,
@@ -476,11 +483,15 @@ mod tests {
                         work_dir: "/opt/confidential-containers/attestation-service".into(),
                         rvps_config: RvpsConfig::BuiltIn(RvpsCrateConfig::default()),
                         attestation_token_broker: AttestationTokenConfig::Simple(simple::Configuration {
-                            duration_min: 5,
+                            settings: simple::TokenBrokerSettings {
+                                duration_min: 5,
+                                ..Default::default()
+                            },
                             policy_dir: "/opt/confidential-containers/attestation-service/simple-policies".into(),
                             ..Default::default()
                         }),
                         challenge_key_path: None,
+                        ..Default::default()
                     }
                 ),
             timeout: crate::attestation::config::DEFAULT_TIMEOUT,

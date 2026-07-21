@@ -604,7 +604,7 @@ impl AttestationService {
             token::AttestationTokenConfig::Simple(_) => Ok(None),
             token::AttestationTokenConfig::Ear(_) => Ok(None),
             token::AttestationTokenConfig::OIDC(cfg) => {
-                if let Some(oid_config) = &cfg.oid_config {
+                if let Some(oid_config) = &cfg.settings.oid_config {
                     let oid_info = json!({
                         "issuer": oid_config.issuer,
                         "jwks_uri": oid_config.jwks_uri,

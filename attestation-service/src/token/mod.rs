@@ -67,20 +67,21 @@ impl Default for AttestationTokenConfig {
 }
 
 impl AttestationTokenConfig {
+    #[cfg(feature = "fs")]
     pub fn to_token_broker(&self) -> Result<Box<dyn AttestationTokenBroker + Send + Sync>> {
         match self {
             AttestationTokenConfig::Simple(cfg) => Ok(Box::new(
-                simple::SimpleAttestationTokenBroker::new(cfg.clone())?,
+                simple::SimpleAttestationTokenBroker::from_config(cfg.clone())?,
             )
                 as Box<dyn AttestationTokenBroker + Send + Sync>),
             AttestationTokenConfig::Ear(cfg) => Ok(Box::new(
-                ear_broker::EarAttestationTokenBroker::new(cfg.clone())?,
+                ear_broker::EarAttestationTokenBroker::from_config(cfg.clone())?,
             )
                 as Box<dyn AttestationTokenBroker + Send + Sync>),
-            AttestationTokenConfig::OIDC(cfg) => Ok(
-                Box::new(oidc::OIDCAttestationTokenBroker::new(cfg.clone())?)
-                    as Box<dyn AttestationTokenBroker + Send + Sync>,
-            ),
+            AttestationTokenConfig::OIDC(cfg) => Ok(Box::new(
+                oidc::OIDCAttestationTokenBroker::from_config(cfg.clone())?,
+            )
+                as Box<dyn AttestationTokenBroker + Send + Sync>),
         }
     }
 }
