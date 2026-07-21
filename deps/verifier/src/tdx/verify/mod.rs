@@ -44,6 +44,8 @@ pub(crate) use ffi::ecdsa_quote_verification;
 mod native;
 #[cfg(feature = "tdx-dcap-rust")]
 pub(crate) use native::ecdsa_quote_verification;
+#[cfg(feature = "tdx-dcap-rust")]
+pub use native::set_pccs_url;
 
 #[cfg(test)]
 mod tests {
