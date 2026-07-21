@@ -68,6 +68,11 @@ Gateway 提供以下主要 API 端点：
 - `/api/kbs/v0/attestation-policy` - 证明策略管理
 - `/api/kbs/v0/resource-policy` - 资源策略管理
 - `/api/kbs/v0/resource/:repository/:type/:tag` - 资源管理
+- `/api/kbs/v0/resources` - 资源列表
+- `/api/kbs/v0/resource/pubkey` - 获取客户端加密公钥
+- `/api/kbs/v0/resource/reload` - 热加载托管密钥
+- `/api/kbs/v0/resource/rewrap` - 使用当前主密钥重包资源
+- `/api/kbs/v0/resource/rotate` - 一次性轮转托管密钥并重包资源
 
 ### RVPS 相关 API
 
@@ -131,4 +136,4 @@ docker logs trustee-gateway
 
 ## 许可证
 
-与 Trustee 项目其他组件一致，遵循 Apache 2.0 许可证。 
+与 Trustee 项目其他组件一致，遵循 Apache 2.0 许可证。
