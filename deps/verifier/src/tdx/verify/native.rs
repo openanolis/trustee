@@ -335,10 +335,14 @@ fn pccs_http_client() -> Result<reqwest::Client> {
     static CLIENT: OnceLock<std::result::Result<reqwest::Client, String>> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
-            reqwest::Client::builder()
-                .timeout(Duration::from_secs(60))
-                .build()
-                .map_err(|e| e.to_string())
+            let builder = reqwest::Client::builder();
+            #[cfg(not(all(
+                target_arch = "wasm32",
+                target_vendor = "unknown",
+                target_os = "unknown"
+            )))]
+            let builder = builder.timeout(Duration::from_secs(60));
+            builder.build().map_err(|e| e.to_string())
         })
         .as_ref()
         .cloned()

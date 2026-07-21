@@ -47,8 +47,10 @@ pub fn set_rim_service_url(url: Option<String>) {
 /// on the injected override (or fails closed).
 #[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
 async fn get_region_id() -> Result<String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(METADATA_TIMEOUT))
+    let client = reqwest::Client::builder();
+    #[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
+    let client = client.timeout(std::time::Duration::from_secs(METADATA_TIMEOUT));
+    let client = client
         .build()
         .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
 
@@ -108,8 +110,10 @@ async fn get_rim_service_url() -> Result<String> {
             info!("Constructed RIM service URL: {}", url);
 
             // Send a HEAD request to the URL for testing
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(METADATA_TIMEOUT))
+            let client = reqwest::Client::builder();
+            #[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
+            let client = client.timeout(std::time::Duration::from_secs(METADATA_TIMEOUT));
+            let client = client
                 .build()
                 .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
 
@@ -498,8 +502,10 @@ async fn fetch_rim_file(base_url: &str, file_id: &str) -> Result<String> {
     }
 
     // Create async HTTP client with timeout
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(MAX_NETWORK_TIME_DELAY))
+    let client = reqwest::Client::builder();
+    #[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
+    let client = client.timeout(std::time::Duration::from_secs(MAX_NETWORK_TIME_DELAY));
+    let client = client
         .build()
         .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
 
