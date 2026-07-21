@@ -19,8 +19,16 @@ pub struct FetchedProvenanceMaterial {
     pub raw_bytes: Vec<u8>,
 }
 
-#[async_trait]
-pub trait ProvenanceFetcher: Send + Sync {
+#[cfg_attr(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"), async_trait(?Send))]
+#[cfg_attr(
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )),
+    async_trait
+)]
+pub trait ProvenanceFetcher {
     async fn fetch(&self, source: &ProvenanceSource) -> Result<FetchedProvenanceMaterial>;
 }
 
@@ -65,7 +73,15 @@ struct BearerTokenResponse {
     access_token: Option<String>,
 }
 
-#[async_trait]
+#[cfg_attr(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"), async_trait(?Send))]
+#[cfg_attr(
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )),
+    async_trait
+)]
 impl ProvenanceFetcher for OciProvenanceFetcher {
     async fn fetch(&self, source: &ProvenanceSource) -> Result<FetchedProvenanceMaterial> {
         let reference = parse_oci_reference(&source.uri)?;
@@ -248,12 +264,18 @@ fn parse_oci_reference(uri: &str) -> Result<OciReference> {
 }
 
 fn infer_registry_scheme(registry: &str) -> String {
-    if registry.starts_with("127.0.0.1")
-        || registry.starts_with("localhost")
-        || std::env::var("TRUSTEE_OCI_INSECURE")
+    let insecure = registry.starts_with("127.0.0.1") || registry.starts_with("localhost");
+    #[cfg(not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )))]
+    let insecure = insecure
+        | std::env::var("TRUSTEE_OCI_INSECURE")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-    {
+            .unwrap_or(false);
+
+    if insecure {
         "http".to_string()
     } else {
         "https".to_string()
