@@ -56,8 +56,8 @@ pub trait AttestationTokenBroker: Send + Sync {
     /// `None` if the broker has no local signer cert. The service uses this to
     /// answer its "get token broker certificate" endpoint — it no longer holds
     /// a `Config` to read these from, so the broker self-reports. Default: none.
-    async fn signer_cert_content(&self) -> Result<Option<Vec<u8>>> {
-        Ok(None)
+    async fn signer_cert_content(&self) -> Option<Result<Vec<u8>>> {
+        None
     }
 
     /// The signer certificate URL (x5u) the broker publishes, if any. The
