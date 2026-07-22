@@ -614,6 +614,7 @@ dependencies = [
  "reqwest 0.12.12",
  "rsa",
  "rstest",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_variant",
