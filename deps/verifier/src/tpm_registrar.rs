@@ -16,6 +16,7 @@
 //!     TLS sessions are pooled instead of re-established on every call,
 //!   * caching the registrar API version per registrar URL, and
 //!   * caching the per-UUID registrar `results` object with a TTL,
+//!   * canonicalizing UUIDs before building the registrar request path,
 //!
 //! so repeated attestations for the same agent no longer touch the registrar.
 //!
@@ -31,6 +32,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 pub const DEFAULT_KEYLIME_REGISTRAR_URL: &str = "https://127.0.0.1:8991";
 const DEFAULT_CACHE_TTL_SECS: u64 = 120;
@@ -41,6 +43,12 @@ const CACHE_TTL_ENV: &str = "KEYLIME_REGISTRAR_CACHE_TTL_SECS";
 pub fn registrar_url() -> String {
     std::env::var("KEYLIME_REGISTRAR_URL")
         .unwrap_or_else(|_| DEFAULT_KEYLIME_REGISTRAR_URL.to_string())
+}
+
+fn canonical_agent_id(agent_id: &str) -> String {
+    Uuid::parse_str(agent_id)
+        .map(|uuid| uuid.to_string())
+        .unwrap_or_else(|_| agent_id.to_string())
 }
 
 fn cache_ttl() -> Duration {
@@ -107,6 +115,10 @@ fn store<T>(cache: &Mutex<HashMap<String, Timed<T>>>, key: String, value: T) {
 /// against the evidence being verified.
 pub async fn get_agent_results(registrar: &str, uuid: &str) -> Result<Value> {
     let ttl = cache_ttl();
+    // Keylime canonicalizes configured UUIDs with `Uuid::to_string()` before
+    // registration. Match that behavior so uppercase UUIDs from older evidence
+    // do not query a different, non-existent registrar path.
+    let uuid = canonical_agent_id(uuid);
     let key = format!("{registrar}|{uuid}");
 
     if let Some(results) = cached(results_cache(), &key, ttl) {
@@ -118,6 +130,8 @@ pub async fn get_agent_results(registrar: &str, uuid: &str) -> Result<Value> {
         .get(format!("{registrar}/v{version}/agents/{uuid}"))
         .send()
         .await
+        .map_err(|e| anyhow!("fetch agent info: {e}"))?
+        .error_for_status()
         .map_err(|e| anyhow!("fetch agent info: {e}"))?
         .json::<Value>()
         .await
@@ -142,6 +156,8 @@ async fn get_version(registrar: &str, ttl: Duration) -> Result<String> {
         .send()
         .await
         .map_err(|e| anyhow!("fetch registrar version: {e}"))?
+        .error_for_status()
+        .map_err(|e| anyhow!("fetch registrar version: {e}"))?
         .json::<Value>()
         .await
         .map_err(|e| anyhow!("parse registrar version json: {e}"))?;
@@ -158,4 +174,22 @@ async fn get_version(registrar: &str, ttl: Duration) -> Result<String> {
 
     store(version_cache(), registrar.to_string(), version.clone());
     Ok(version)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_agent_id;
+
+    #[test]
+    fn canonical_agent_id_normalizes_uuid_case() {
+        assert_eq!(
+            canonical_agent_id("D432FBB3-D2F1-4A97-9EF7-75BD81C00000"),
+            "d432fbb3-d2f1-4a97-9ef7-75bd81c00000"
+        );
+    }
+
+    #[test]
+    fn canonical_agent_id_preserves_non_uuid_ids() {
+        assert_eq!(canonical_agent_id("custom-agent"), "custom-agent");
+    }
 }
