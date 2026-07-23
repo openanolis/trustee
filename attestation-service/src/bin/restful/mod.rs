@@ -194,6 +194,20 @@ impl Error {
                     Some(format!("verification_requests[{request_index}].tee")),
                 )),
                 AttestationError::Verification { .. } => None,
+                AttestationError::InvalidChallengeToken {
+                    request_index,
+                    challenge_token,
+                    ..
+                } => Some((
+                    ErrorKind::Unauthorized,
+                    "AS.CHALLENGE.INVALID_TOKEN",
+                    "Invalid challenge token",
+                    "The challenge token is invalid or expired.".to_string(),
+                    false,
+                    Some(format!(
+                        "verification_requests[{request_index}].runtime_data.challenge_token"
+                    )),
+                )),
             }
         });
 
@@ -502,23 +516,6 @@ pub async fn attestation(
 
         let runtime_data = match attestation_request.runtime_data {
             Some(RuntimeData::Structured(v)) => {
-                if let Some(jwt) = v.get("challenge_token").and_then(|x| x.as_str()) {
-                    // 验证 token，但不修改 runtime_data 内容
-                    let _ = cocoas
-                        .read()
-                        .await
-                        .challenger()
-                        .verify_challenge_and_extract_nonce_b64url(jwt)
-                        .await
-                        .map_err(|source| {
-                            Error::unauthorized(
-                                "AS.CHALLENGE.INVALID_TOKEN",
-                                "Invalid challenge token",
-                                "The challenge token is invalid or expired.",
-                                source,
-                            )
-                        })?;
-                }
                 Some(parse_runtime_data(RuntimeData::Structured(v))?)
             }
             Some(RuntimeData::Raw(raw)) => Some(parse_runtime_data(RuntimeData::Raw(raw))?),

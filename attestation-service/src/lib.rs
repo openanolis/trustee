@@ -161,6 +161,16 @@ pub enum AttestationError {
         #[source]
         source: anyhow::Error,
     },
+
+    #[error(
+        "verification request {request_index} uses invalid challenge token `{challenge_token}`"
+    )]
+    InvalidChallengeToken {
+        request_index: usize,
+        challenge_token: String,
+        #[source]
+        source: anyhow::Error,
+    },
 }
 
 /// Initdata defined in
@@ -351,6 +361,21 @@ impl AttestationService {
         composite::verify_composite_bindings(&verification_requests)?;
 
         for (request_index, verification_request) in verification_requests.into_iter().enumerate() {
+            if let Some(RuntimeData::Structured(v)) = &verification_request.runtime_data {
+                if let Some(jwt) = v.get("challenge_token").and_then(|x| x.as_str()) {
+                    // Verify the token, but do not modify the runtime_data content
+                    let _ = self
+                        .challenger
+                        .verify_challenge_and_extract_nonce_b64url(jwt)
+                        .await
+                        .map_err(|source| AttestationError::InvalidChallengeToken {
+                            request_index,
+                            challenge_token: jwt.to_owned(),
+                            source,
+                        })?;
+                }
+            }
+
             let verifier = verifier::to_verifier(&verification_request.tee).map_err(|source| {
                 AttestationError::UnsupportedTee {
                     request_index,
