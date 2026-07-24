@@ -50,7 +50,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 cfg-if.workspace = true
-chrono = { workspace = true, features = [ "serde" ] }
+chrono = { workspace = true, features = [ "serde", "wasmbind" ] }
 clap = { workspace = true, optional = true }
 config = { workspace = true, optional = true }
 env_logger = { workspace = true, optional = true }
@@ -71,6 +71,9 @@ strum.workspace = true
 tempfile = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["sync"] }
 tonic = { workspace = true, optional = true }
+
+[target.'cfg(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"))'.dependencies]
+web-time.workspace = true
 
 [build-dependencies]
 shadow-rs.workspace = true

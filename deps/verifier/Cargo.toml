@@ -160,6 +160,7 @@ uuid = { version = "1.0", features = ["v4"], optional = true }
 [target.'cfg(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"))'.dependencies]
 uuid = { version = "1.0", features = ["v4", "js"], optional = true }
 getrandom = { version = "0.2", features = ["js"] }
+web-time.workspace = true
 
 [build-dependencies]
 shadow-rs.workspace = true

@@ -69,3 +69,5 @@ tonic = "0.12"
 tonic-build = "0.12"
 serde_yaml = "0.9"
 zeroize = { version = "1.7", features = ["derive"] }
+rustls-pki-types = "1.14.0"
+web-time = "1.1.0"

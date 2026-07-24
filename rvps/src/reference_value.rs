@@ -9,7 +9,6 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use std::time::SystemTime;
 
 /// Default version of ReferenceValue
 pub const REFERENCE_VALUE_VERSION: &str = "0.1.0";
@@ -175,7 +174,7 @@ impl ReferenceValue {
 
     /// Check whether reference value is expired
     pub fn expired(&self) -> bool {
-        let now: DateTime<Utc> = DateTime::from(SystemTime::now());
+        let now: DateTime<Utc> = Utc::now();
 
         now > self.expiration
     }

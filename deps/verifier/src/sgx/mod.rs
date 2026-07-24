@@ -3,10 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-use std::{
-    mem,
-    time::{Duration, SystemTime},
-};
+use std::{mem, time::Duration};
 
 use anyhow::*;
 use async_trait::async_trait;
@@ -25,6 +22,19 @@ use crate::{regularize_data, InitDataHash, ReportData};
 use self::types::sgx_quote3_t;
 
 use super::{TeeClass, TeeEvidence, TeeEvidenceParsedClaim, Verifier};
+
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
+use std::time::SystemTime;
+#[cfg(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+))]
+use web_time::SystemTime;
 
 #[allow(non_camel_case_types)]
 mod types;
