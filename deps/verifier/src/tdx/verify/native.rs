@@ -44,10 +44,23 @@ use log::{debug, warn};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tokio::sync::Mutex;
 use x509_parser::pem::Pem;
 use x509_parser::prelude::*;
+
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+#[cfg(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+))]
+use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::tdx::quote::{parse_tdx_quote, TcbVerificationResult};
 use crate::VerifierError;

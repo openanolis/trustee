@@ -632,6 +632,7 @@ dependencies = [
  "tonic-build",
  "uuid",
  "verifier",
+ "web-time",
  "x509-cert",
 ]
 
@@ -5090,6 +5091,7 @@ dependencies = [
  "tonic",
  "tonic-build",
  "walkdir",
+ "web-time",
 ]
 
 [[package]]
@@ -7563,6 +7565,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "veraison-apiclient",
+ "web-time",
  "x509-parser",
 ]
 

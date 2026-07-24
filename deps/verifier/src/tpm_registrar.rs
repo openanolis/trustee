@@ -31,8 +31,21 @@ use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use uuid::Uuid;
+
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
+use std::time::Instant;
+#[cfg(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+))]
+use web_time::Instant;
 
 pub const DEFAULT_KEYLIME_REGISTRAR_URL: &str = "https://127.0.0.1:8991";
 const DEFAULT_CACHE_TTL_SECS: u64 = 120;

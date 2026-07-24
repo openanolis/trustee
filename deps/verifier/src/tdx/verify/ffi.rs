@@ -10,7 +10,7 @@
 use anyhow::{anyhow, Result};
 use log::{debug, warn};
 use std::mem;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use intel_tee_quote_verification_rs as qvl;
 use qvl::{
@@ -56,6 +56,19 @@ fn classify_qvl_error(stage: &'static str, error: quote3_error_t) -> VerifierErr
         _ => VerifierError::Internal { source },
     }
 }
+
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
+use std::time::SystemTime;
+#[cfg(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+))]
+use web_time::SystemTime;
 
 /// Human-readable TCB verification status string.
 fn qv_result_to_str(result: sgx_ql_qv_result_t) -> &'static str {
