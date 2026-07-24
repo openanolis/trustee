@@ -360,22 +360,31 @@ impl AttestationService {
 
         composite::verify_composite_bindings(&verification_requests)?;
 
-        for (request_index, verification_request) in verification_requests.into_iter().enumerate() {
+        // Verify challenge token
+        let mut challenge_tokens = HashMap::new();
+        for (request_index, verification_request) in verification_requests.iter().enumerate() {
             if let Some(RuntimeData::Structured(v)) = &verification_request.runtime_data {
-                if let Some(jwt) = v.get("challenge_token").and_then(|x| x.as_str()) {
-                    // Verify the token, but do not modify the runtime_data content
-                    let _ = self
-                        .challenger
-                        .verify_challenge_and_extract_nonce_b64url(jwt)
-                        .await
-                        .map_err(|source| AttestationError::InvalidChallengeToken {
-                            request_index,
-                            challenge_token: jwt.to_owned(),
-                            source,
-                        })?;
+                if let Some(challenge_token) = v.get("challenge_token").and_then(|x| x.as_str()) {
+                    if challenge_tokens.get(challenge_token).is_none() {
+                        challenge_tokens.insert(challenge_token, request_index);
+                    }
                 }
             }
+        }
+        for (challenge_token, request_index) in challenge_tokens {
+            // Verify the token, but do not modify the runtime_data content
+            let _ = self
+                .challenger
+                .verify_challenge_and_extract_nonce_b64url(challenge_token)
+                .await
+                .map_err(|source| AttestationError::InvalidChallengeToken {
+                    request_index,
+                    challenge_token: challenge_token.to_owned(),
+                    source,
+                })?;
+        }
 
+        for (request_index, verification_request) in verification_requests.into_iter().enumerate() {
             let verifier = verifier::to_verifier(&verification_request.tee).map_err(|source| {
                 AttestationError::UnsupportedTee {
                     request_index,
