@@ -36,22 +36,20 @@ pub trait AttestationTokenBroker: Send + Sync {
         reference_value_resolver: Arc<ReferenceValueResolver>,
     ) -> Result<String>;
 
-    async fn set_policy(&self, _policy_id: String, _policy: String) -> Result<()> {
-        bail!("Set Policy not support")
-    }
+    /// Set a policy for the given `policy_id`.
+    /// The `policy` string is encoded in URL-safe base64 (no padding, i.e. URL_SAFE_NO_PAD).
+    async fn set_policy(&self, policy_id: String, policy: String) -> Result<()>;
 
-    async fn list_policies(&self) -> Result<HashMap<String, String>> {
-        bail!("List Policies not support")
-    }
+    /// List all policies. The returned map's values are encoded in URL-safe base64 (no padding,
+    /// i.e. URL_SAFE_NO_PAD).
+    async fn list_policies(&self) -> Result<HashMap<String, String>>;
 
-    async fn get_policy(&self, _policy_id: String) -> Result<String> {
-        bail!("Get Policy not support")
-    }
+    /// Get the policy for the given `policy_id`.
+    /// The returned string is encoded in URL-safe base64 (no padding, i.e. URL_SAFE_NO_PAD).
+    async fn get_policy(&self, policy_id: String) -> Result<String>;
 
-    async fn delete_policy(&self, _policy_id: String) -> Result<()> {
-        bail!("Delete Policy not support")
-    }
-
+    /// Delete the policy for the given `policy_id`.
+    async fn delete_policy(&self, policy_id: String) -> Result<()>;
     /// The signer's certificate-chain PEM bytes this broker already holds
     /// (loaded from an inline `cert_pem` or a `cert_path` at construction).
     /// `None` if the broker has no local signer cert. The service uses this to
