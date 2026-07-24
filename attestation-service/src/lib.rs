@@ -12,7 +12,7 @@ pub mod token;
 mod composite;
 
 use crate::{rvps::ReferenceValueResolver, token::AttestationTokenBroker};
-pub use challenge::{Challenger, EphemeralJwtChallenger};
+pub use challenge::{Challenger, EphemeralJwtChallenger, LocalNonceChallenger};
 
 use anyhow::{anyhow, Context, Result};
 use canon_json::CanonicalFormatter;
