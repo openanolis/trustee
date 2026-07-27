@@ -18,14 +18,8 @@ use tokio::sync::RwLock;
 use super::ReferenceValueStorage;
 use crate::ReferenceValue;
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct Config {}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 pub struct InMemory {
     map: Arc<RwLock<HashMap<String, ReferenceValue>>>,
