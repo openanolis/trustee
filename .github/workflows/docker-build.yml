@@ -12,37 +12,36 @@ on:
   create:
 
 jobs:
-  basic_ci:
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
-    name: Check
+  build-image:
+    name: Build ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      matrix:
+        include:
+          - name: gRPC AS
+            dockerfile: Dockerfile.as-grpc
+            image: attestation-service:latest
+          - name: RESTful AS
+            dockerfile: Dockerfile.as-restful
+            image: attestation-service:latest
+          - name: RVPS
+            dockerfile: Dockerfile.rvps
+            image: rvps:latest
+          - name: KBS
+            dockerfile: Dockerfile.kbs
+            image: kbs:latest
+          - name: Trustee Gateway
+            dockerfile: Dockerfile.trustee-gateway
+            image: trustee-gateway:latest
+          - name: Trustee Frontend
+            dockerfile: Dockerfile.frontend
+            image: trustee-frontend:latest
 
     steps:
     - name: Code checkout
       uses: actions/checkout@v5
-    
-    - name: Build gRPC AS Container Image
-      run: |
-        DOCKER_BUILDKIT=1 docker build -t attestation-service:latest . -f Dockerfile.as-grpc
-    
-    - name: Build RESTful AS Container Image
-      run: |
-        DOCKER_BUILDKIT=1 docker build -t attestation-service:latest . -f Dockerfile.as-restful
 
-    - name: Build RVPS Container Image
+    - name: Build ${{ matrix.name }} Container Image
       run: |
-        Docker_BUILDKIT=1 docker build -t rvps:latest . -f Dockerfile.rvps
-
-    - name: Build KBS Container Image
-      run: |
-        Docker_BUILDKIT=1 docker build -t kbs:latest . -f Dockerfile.kbs
-
-    - name: Build Trustee Gateway Container Image
-      run: |
-        Docker_BUILDKIT=1 docker build -t trustee-gateway:latest . -f Dockerfile.trustee-gateway
-    
-    - name: Build Trustee Frontend Container Image
-      run: |
-        Docker_BUILDKIT=1 docker build -t trustee-frontend:latest . -f Dockerfile.frontend
+        DOCKER_BUILDKIT=1 docker build -t ${{ matrix.image }} . -f ${{ matrix.dockerfile }}
