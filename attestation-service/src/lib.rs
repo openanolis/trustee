@@ -405,6 +405,7 @@ impl AttestationService {
 
     /// Get token broker certificate content
     /// Returns the binary content of the certificate
+    #[cfg(feature = "fs")]
     pub async fn get_token_broker_cert_config(&self) -> Result<Option<Vec<u8>>> {
         match &self._config.attestation_token_broker {
             token::AttestationTokenConfig::Simple(cfg) => {
