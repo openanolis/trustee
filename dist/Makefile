@@ -46,7 +46,7 @@ build:
 	cargo build --bin grpc-as --release --features grpc-bin --locked
 	cargo build --bin rvps --release
 	cargo build --bin rvps-tool --release
-	cargo build --bin attestation-challenge-client --release
+	cargo build --bin attestation-challenge-client --release --features attestation-challenge-client --locked
 	@echo "编译 trustee-gateway..."
 	@echo "编译完成"
 
