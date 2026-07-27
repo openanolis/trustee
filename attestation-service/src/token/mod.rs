@@ -16,6 +16,7 @@ use crate::config::DEFAULT_WORK_DIR;
 
 pub mod ear_broker;
 pub mod oidc;
+pub mod signer;
 pub mod signer_transparency;
 pub mod simple;
 

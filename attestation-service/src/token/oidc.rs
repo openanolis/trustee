@@ -13,17 +13,11 @@ use base64::Engine;
 use const_format::concatcp;
 use log::info;
 use rand::distributions::Alphanumeric;
-use rand::rngs::OsRng;
 use rand::{thread_rng, Rng};
-use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::{Signature, SigningKey};
-use rsa::pkcs8::DecodePrivateKey;
 use rsa::signature::Signer;
 use rsa::traits::PublicKeyParts;
 use rsa::RsaPrivateKey;
-#[cfg(feature = "fs")]
-use rustls_pki_types::pem::PemObject;
-use rustls_pki_types::CertificateDer;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use serde_variant::to_variant_name;
@@ -37,11 +31,11 @@ use crate::rvps::ReferenceValueResolver;
 use crate::token::{AttestationTokenBroker, DEFAULT_TOKEN_WORK_DIR};
 use crate::TeeClaims;
 
+use super::signer::{EphemeralSigner, FsSigner, SignKeyProvider};
 #[cfg(feature = "fs")]
 use super::signer_transparency;
 use super::{COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
 
-const RSA_KEY_BITS: u32 = 2048;
 const OIDC_TOKEN_ALG: &str = "RS256";
 const DEFAULT_OIDC_AUDIENCE: &str = "sigstore";
 
@@ -49,17 +43,7 @@ const DEFAULT_POLICY_DIR: &str = concatcp!(DEFAULT_TOKEN_WORK_DIR, "/oidc/polici
 pub const DEFAULT_POLICY: &str = include_str!("oidc_default_policy.rego");
 pub const DEFAULT_POLICY_ID: &str = "default.rego";
 
-/// Part 2 — signer resolution spec (native/serde path only). Renamed from
-/// `TokenSignerConfig`; field set unchanged.
-#[derive(Deserialize, Debug, Clone, PartialEq)]
-pub struct SignerConfig {
-    pub key_path: String,
-
-    pub cert_url: Option<String>,
-
-    // PEM format certificate chain.
-    pub cert_path: Option<String>,
-}
+pub use super::signer::SignerConfig;
 
 /// Part 1 — fs-free token-issuance metadata (incl. `oid_config`). The only
 /// part the broker holds.
@@ -157,111 +141,9 @@ impl Default for Configuration {
     }
 }
 
-pub trait SignerProvider: Send + Sync {
-    fn private_key(&self) -> &RsaPrivateKey;
-    fn cert_chain(&self) -> Option<Result<Vec<CertificateDer<'static>>>>;
-    fn cert_url(&self) -> Option<&str>;
-    /// The signer's certificate-chain raw PEM bytes, read lazily from the
-    /// configured `cert_path` on each call (not cached at construction).
-    /// `None` when no `cert_path` is configured. Ephemeral signers return
-    /// `None`. The broker forwards this through `signer_cert_content`.
-    fn cert_pem_raw(&self) -> Option<Result<Vec<u8>>>;
-}
-
-/// Signer resolved from a `SignerConfig` (native/serde path). Reads
-/// `key_path`/`cert_path` under the `fs` feature; `key_pem`/`cert_pem` work
-/// without fs.
-#[cfg(feature = "fs")]
-struct ConfigSigner {
-    private_key: RsaPrivateKey,
-    cert_url: Option<String>,
-    // Kept so `cert_pem_raw` can re-read the file lazily; not the cached PEM.
-    cert_path: Option<String>,
-}
-
-#[cfg(feature = "fs")]
-impl ConfigSigner {
-    fn from_signer_config(signer: SignerConfig) -> Result<Self> {
-        let pem_data = std::fs::read_to_string(&signer.key_path)
-            .context("Read Token Signer private key failed")?;
-        let private_key = RsaPrivateKey::from_pkcs8_pem(&pem_data)
-            .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&pem_data))
-            .context("Parse Token Signer private key failed")?;
-
-        Ok(Self {
-            private_key,
-            cert_url: signer.cert_url,
-            cert_path: signer.cert_path,
-        })
-    }
-}
-
-#[cfg(feature = "fs")]
-impl SignerProvider for ConfigSigner {
-    fn private_key(&self) -> &RsaPrivateKey {
-        &self.private_key
-    }
-    fn cert_chain(&self) -> Option<Result<Vec<Certificate>>> {
-        self.cert_path
-            .as_ref()
-            .map(|cert_path| -> Result<Vec<CertificateDer<'static>>> {
-                let pem_cert_chain = std::fs::read_to_string(cert_path)
-                    .context("Read Token Signer cert file failed")?;
-                let chain: Result<Vec<_>, rustls_pki_types::pem::Error> =
-                    CertificateDer::pem_slice_iter(pem_cert_chain.as_bytes()).collect();
-                chain.context("Invalid PEM certificate chain")
-            })
-    }
-    fn cert_url(&self) -> Option<&str> {
-        self.cert_url.as_deref()
-    }
-    fn cert_pem_raw(&self) -> Option<Result<Vec<u8>>> {
-        self.cert_path.as_ref().map(|path| {
-            use std::io::Read as _;
-            // Read certificate from file
-            let mut file = std::fs::File::open(path)
-                .map_err(|e| anyhow!("Failed to open certificate file: {}", e))?;
-            let mut content = Vec::new();
-            file.read_to_end(&mut content)
-                .map_err(|e| anyhow!("Failed to read certificate file: {}", e))?;
-            Ok(content)
-        })
-    }
-}
-
-/// Ephemeral signer: generates a fresh RSA key. Used when no signer is
-/// configured (both `from_config` and `from_components`).
-pub struct EphemeralSigner {
-    private_key: RsaPrivateKey,
-}
-
-impl EphemeralSigner {
-    pub fn new() -> Result<Self> {
-        let mut rng = OsRng;
-        Ok(Self {
-            private_key: RsaPrivateKey::new(&mut rng, RSA_KEY_BITS as usize)?,
-        })
-    }
-}
-
-impl SignerProvider for EphemeralSigner {
-    fn private_key(&self) -> &RsaPrivateKey {
-        &self.private_key
-    }
-    fn cert_chain(&self) -> Option<Result<Vec<CertificateDer<'static>>>> {
-        None
-    }
-    fn cert_url(&self) -> Option<&str> {
-        None
-    }
-    fn cert_pem_raw(&self) -> Option<Result<Vec<u8>>> {
-        None
-    }
-}
-
 pub struct OIDCAttestationTokenBroker {
     settings: TokenBrokerSettings,
-    signer: Arc<dyn SignerProvider>,
+    signer: Arc<dyn SignKeyProvider<RsaPrivateKey>>,
     policy_engine: Arc<dyn PolicyEngine>,
 }
 
@@ -275,13 +157,13 @@ impl OIDCAttestationTokenBroker {
         )?;
         info!("Loading default AS policy \"oidc_default_policy.rego\"");
 
-        let signer: Arc<dyn SignerProvider> = match config.signer {
-            Some(sc) => Arc::new(ConfigSigner::from_signer_config(sc)?),
+        let signer: Arc<dyn SignKeyProvider<RsaPrivateKey>> = match config.signer {
+            Some(sc) => Arc::new(FsSigner::<RsaPrivateKey>::from_config(sc)?),
             None => {
                 log::info!(
                     "No Token Signer key in config file, create an ephemeral key and without CA pubkey cert"
                 );
-                Arc::new(EphemeralSigner::new()?)
+                Arc::new(EphemeralSigner::<RsaPrivateKey>::new()?)
             }
         };
 
@@ -294,7 +176,7 @@ impl OIDCAttestationTokenBroker {
 
     pub fn from_components(
         settings: TokenBrokerSettings,
-        signer: Arc<dyn SignerProvider>,
+        signer: Arc<dyn SignKeyProvider<RsaPrivateKey>>,
         policy_engine: Arc<dyn PolicyEngine>,
     ) -> Self {
         Self {

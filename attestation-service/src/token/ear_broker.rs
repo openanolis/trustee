@@ -16,12 +16,8 @@ use jsonwebtoken::{jwk, EncodingKey};
 use kbs_types::Tee;
 use log::{debug, info, warn};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
-use p256::pkcs8::{DecodePrivateKey, EncodePrivateKey, LineEnding};
+use p256::pkcs8::{EncodePrivateKey, LineEnding};
 use p256::SecretKey;
-use rand::rngs::OsRng;
-#[cfg(feature = "fs")]
-use rustls_pki_types::pem::PemObject;
-use rustls_pki_types::CertificateDer;
 use serde::Deserialize;
 #[cfg(test)]
 use serde_json::json;
@@ -37,6 +33,7 @@ use crate::rvps::ReferenceValueResolver;
 use crate::token::DEFAULT_TOKEN_WORK_DIR;
 use crate::{AttestationTokenBroker, TeeClaims};
 
+use super::signer::{EphemeralSigner, FsSigner, SignKeyProvider};
 #[cfg(feature = "fs")]
 use super::signer_transparency;
 use super::{COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
@@ -48,19 +45,7 @@ const DEFAULT_POLICY_DIR: &str = concatcp!(DEFAULT_TOKEN_WORK_DIR, "/ear/policie
 pub const DEFAULT_POLICY: &str = include_str!("ear_default_policy_cpu.rego");
 pub const DEFAULT_POLICY_ID: &str = "default.rego";
 
-/// Part 2 — signer resolution spec (native/serde path only). Renamed from
-/// `TokenSignerConfig`; field set unchanged.
-#[derive(Deserialize, Debug, Clone, PartialEq)]
-pub struct SignerConfig {
-    pub key_path: String,
-
-    #[serde(default = "Option::default")]
-    pub cert_url: Option<String>,
-
-    // PEM format certificate chain.
-    #[serde(default = "Option::default")]
-    pub cert_path: Option<String>,
-}
+pub use super::signer::SignerConfig;
 
 /// Part 1 — fs-free token-issuance metadata. This is the *only* part of the
 /// config the broker holds at runtime.
@@ -163,121 +148,15 @@ impl Default for Configuration {
     }
 }
 
-/// Injected signer for the EAR broker. Returns already-resolved crypto
-/// material (borrowed) so the broker holds no PEM/path/fs knowledge.
-/// Resolution is eager, in the provider's constructor.
-pub trait SignerProvider: Send + Sync {
-    fn private_key(&self) -> &SecretKey;
-    fn cert_chain(&self) -> Option<Result<Vec<CertificateDer<'static>>>>;
-    fn cert_url(&self) -> Option<&str>;
-    /// The signer's certificate-chain raw PEM bytes, read lazily from the
-    /// configured `cert_path` on each call (not cached at construction).
-    /// `None` when no `cert_path` is configured. Ephemeral signers return
-    /// `None`. The broker forwards this through `signer_cert_content`.
-    fn cert_pem_raw(&self) -> Option<Result<Vec<u8>>>;
-}
-
-/// Signer resolved from a `SignerConfig` (native/serde path). Reads
-/// `key_path`/`cert_path` under the `fs` feature; `key_pem`/`cert_pem` work
-/// without fs.
-#[cfg(feature = "fs")]
-struct ConfigSigner {
-    private_key: SecretKey,
-    cert_url: Option<String>,
-    // Kept so `cert_pem_raw` can re-read the file lazily; not the cached PEM.
-    cert_path: Option<String>,
-}
-
-#[cfg(feature = "fs")]
-impl ConfigSigner {
-    fn from_signer_config(signer: SignerConfig) -> Result<Self> {
-        let pem_data =
-            std::fs::read(&signer.key_path).context("Read Token Signer private key failed")?;
-        let pem_str = std::str::from_utf8(&pem_data).context("Token Signer key not UTF-8")?;
-        let private_key = SecretKey::from_sec1_pem(pem_str)
-            .or_else(|_| SecretKey::from_pkcs8_pem(pem_str))
-            .context("Parse Token Signer private key failed")?;
-
-        Ok(Self {
-            private_key,
-            cert_url: signer.cert_url,
-            cert_path: signer.cert_path,
-        })
-    }
-}
-
-#[cfg(feature = "fs")]
-impl SignerProvider for ConfigSigner {
-    fn private_key(&self) -> &SecretKey {
-        &self.private_key
-    }
-    fn cert_chain(&self) -> Option<Result<Vec<Certificate>>> {
-        self.cert_path
-            .as_ref()
-            .map(|cert_path| -> Result<Vec<CertificateDer<'static>>> {
-                let pem_cert_chain = std::fs::read_to_string(cert_path)
-                    .context("Read Token Signer cert file failed")?;
-                let chain: Result<Vec<_>, rustls_pki_types::pem::Error> =
-                    CertificateDer::pem_slice_iter(pem_cert_chain.as_bytes()).collect();
-                chain.context("Invalid PEM certificate chain")
-            })
-    }
-    fn cert_url(&self) -> Option<&str> {
-        self.cert_url.as_deref()
-    }
-    fn cert_pem_raw(&self) -> Option<Result<Vec<u8>>> {
-        self.cert_path.as_ref().map(|path| {
-            use std::io::Read as _;
-            // Read certificate from file
-            let mut file = std::fs::File::open(path)
-                .map_err(|e| anyhow!("Failed to open certificate file: {}", e))?;
-            let mut content = Vec::new();
-            file.read_to_end(&mut content)
-                .map_err(|e| anyhow!("Failed to read certificate file: {}", e))?;
-            Ok(content)
-        })
-    }
-}
-
-/// Ephemeral signer: generates a fresh EC key. Used when no signer is
-/// configured (both `from_config` and `from_components`).
-pub struct EphemeralSigner {
-    private_key: SecretKey,
-}
-
-impl EphemeralSigner {
-    pub fn new() -> Self {
-        let mut rng = OsRng;
-        Self {
-            private_key: SecretKey::random(&mut rng),
-        }
-    }
-}
-
-impl SignerProvider for EphemeralSigner {
-    fn private_key(&self) -> &SecretKey {
-        &self.private_key
-    }
-    fn cert_chain(&self) -> Option<Result<Vec<CertificateDer<'static>>>> {
-        None
-    }
-    fn cert_url(&self) -> Option<&str> {
-        None
-    }
-    fn cert_pem_raw(&self) -> Option<Result<Vec<u8>>> {
-        None
-    }
-}
-
 pub struct EarAttestationTokenBroker {
     settings: TokenBrokerSettings,
-    signer: Arc<dyn SignerProvider>,
+    signer: Arc<dyn SignKeyProvider<SecretKey>>,
     policy_engine: Arc<dyn PolicyEngine>,
 }
 
 impl EarAttestationTokenBroker {
     /// Native / serde path. Resolves the signer from `SignerConfig`
-    /// (`key_pem` | `key_path`, fs-gated) and builds the `PolicyEngine` from
+    /// (`key_path`, fs-gated) and builds the `PolicyEngine` from
     /// `policy_dir` (OPA fs / InMemory). Replaces the old `new(config)`.
     #[cfg(feature = "fs")]
     pub fn from_config(config: Configuration) -> Result<Self> {
@@ -288,13 +167,13 @@ impl EarAttestationTokenBroker {
         )?;
         info!("Loading default AS policy \"default.rego\"");
 
-        let signer: Arc<dyn SignerProvider> = match config.signer {
-            Some(sc) => Arc::new(ConfigSigner::from_signer_config(sc)?),
+        let signer: Arc<dyn SignKeyProvider<SecretKey>> = match config.signer {
+            Some(sc) => Arc::new(FsSigner::<SecretKey>::from_config(sc)?),
             None => {
                 log::info!(
                     "No Token Signer key in config file, create an ephemeral key and without CA pubkey cert"
                 );
-                Arc::new(EphemeralSigner::new())
+                Arc::new(EphemeralSigner::<SecretKey>::new())
             }
         };
 
@@ -307,7 +186,7 @@ impl EarAttestationTokenBroker {
 
     pub fn from_components(
         settings: TokenBrokerSettings,
-        signer: Arc<dyn SignerProvider>,
+        signer: Arc<dyn SignKeyProvider<SecretKey>>,
         policy_engine: Arc<dyn PolicyEngine>,
     ) -> Self {
         Self {
@@ -551,7 +430,7 @@ impl EarAttestationTokenBroker {
 fn generate_ec_keys() -> Result<(SecretKey, Vec<u8>, Vec<u8>)> {
     use rsa::pkcs8::EncodePublicKey as _;
 
-    let mut rng = OsRng;
+    let mut rng = rand::rngs::OsRng;
     let secret = SecretKey::random(&mut rng);
     let priv_pem = secret
         .to_pkcs8_pem(LineEnding::LF)
