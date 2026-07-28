@@ -103,8 +103,8 @@ RVPS can be launched with a specified configuration file by `-c` flag. A configu
     }
 }
 ```
-- `storage.type`: backend storage type to store reference values. Currently `LocalFs` and `LocalJson` are supported.
-- `storage.*`: Each different type of storage has its own associated configuration parameters. This is also a JSON map object.
+- `storage.type`: backend storage type to store reference values. Currently `InMemory`, `LocalFs`, and `LocalJson` are supported.
+- `storage.*`: Each different type of storage has its own associated configuration parameters. This is also a JSON map object. `InMemory` takes no extra parameters.
 
 ## Integrate RVPS into the Attestation Service
 
