@@ -75,9 +75,9 @@ If `type` is set to `BuiltIn`, the following extra properties can be set
 
 | Property       | Type                    | Description                                                           | Required | Default  |
 |----------------|-------------------------|-----------------------------------------------------------------------|----------|----------|
-| `storage`   | ReferenceValueStorageConfig | Configuration of storage for reference values (`LocalFs` or `LocalJson`)       | No       | `LocalFs`|
+| `storage`   | ReferenceValueStorageConfig | Configuration of storage for reference values (`LocalFs`, `LocalJson`, or `InMemory`)       | No       | `LocalFs`|
 
-`ReferenceValueStorageConfig` can contain either a `LocalFs` configuration or a `LocalJson` configuration.
+`ReferenceValueStorageConfig` can contain a `LocalFs`, `LocalJson`, or `InMemory` configuration.
 
 For `LocalFs`, the following properties can be set
 
@@ -90,6 +90,8 @@ For `LocalJson`, the following properties can be set
 | Property       | Type                    | Description                                              | Required | Default  |
 |----------------|-------------------------|----------------------------------------------------------|----------|----------|
 | `file_path`    | String                  | The path to the file that storing reference values       | No       | `/opt/confidential-containers/attestation-service/reference_values.json`|
+
+For `InMemory`, no additional properties can be set. Reference values are kept in memory without an on-disk database.
 
 ##### Remote RVPS
 
