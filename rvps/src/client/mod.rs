@@ -22,8 +22,15 @@ pub async fn register(address: String, message: String) -> Result<()> {
 }
 
 pub async fn query(address: String) -> Result<String> {
+    Ok(query_by_id(address, String::new())
+        .await?
+        .unwrap_or_else(|| "{}".to_string()))
+}
+
+/// Query one reference value. A missing or expired value returns `None`.
+pub async fn query_by_id(address: String, reference_value_id: String) -> Result<Option<String>> {
     let mut client = ReferenceValueProviderServiceClient::connect(address).await?;
-    let req = tonic::Request::new(ReferenceValueQueryRequest {});
+    let req = tonic::Request::new(ReferenceValueQueryRequest { reference_value_id });
 
     let rvs = client
         .query_reference_value(req)
@@ -31,7 +38,7 @@ pub async fn query(address: String) -> Result<String> {
         .into_inner()
         .reference_value_results;
 
-    Ok(rvs)
+    Ok((!rvs.is_empty()).then_some(rvs))
 }
 
 pub async fn delete(address: String, name: String) -> Result<()> {

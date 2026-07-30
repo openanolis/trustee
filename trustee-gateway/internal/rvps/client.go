@@ -35,7 +35,15 @@ func NewClient(cfg *config.RVPSConfig) (*GrpcClient, error) {
 
 // QueryReferenceValue queries reference values from RVPS
 func (c *GrpcClient) QueryReferenceValue(ctx context.Context) (string, error) {
-	resp, err := c.client.QueryReferenceValue(ctx, &protos.ReferenceValueQueryRequest{})
+	return c.QueryReferenceValueByID(ctx, "")
+}
+
+// QueryReferenceValueByID queries one reference value. An empty ID preserves
+// the legacy bulk-query behavior.
+func (c *GrpcClient) QueryReferenceValueByID(ctx context.Context, referenceValueID string) (string, error) {
+	resp, err := c.client.QueryReferenceValue(ctx, &protos.ReferenceValueQueryRequest{
+		ReferenceValueId: referenceValueID,
+	})
 	if err != nil {
 		logrus.Errorf("Failed to query reference values: %v", err)
 		return "", err

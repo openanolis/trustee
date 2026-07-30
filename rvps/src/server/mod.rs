@@ -31,18 +31,31 @@ impl RvpsServer {
 impl ReferenceValueProviderService for RvpsServer {
     async fn query_reference_value(
         &self,
-        _request: Request<ReferenceValueQueryRequest>,
+        request: Request<ReferenceValueQueryRequest>,
     ) -> Result<Response<ReferenceValueQueryResponse>, Status> {
-        let rvs = self
-            .rvps
-            .read()
-            .await
-            .get_digests()
-            .await
-            .map_err(|e| Status::aborted(format!("Query reference value: {e}")))?;
+        let reference_value_id = request.into_inner().reference_value_id;
+        let rvps = self.rvps.read().await;
 
-        let reference_value_results = serde_json::to_string(&rvs)
-            .map_err(|e| Status::aborted(format!("Serde reference value: {e}")))?;
+        let reference_value_results = if reference_value_id.is_empty() {
+            let rvs = rvps
+                .get_reference_values()
+                .await
+                .map_err(|e| Status::aborted(format!("Query reference values: {e}")))?;
+
+            serde_json::to_string(&rvs)
+                .map_err(|e| Status::aborted(format!("Serialize reference values: {e}")))?
+        } else {
+            let value = rvps
+                .query_reference_value(&reference_value_id)
+                .await
+                .map_err(|e| Status::aborted(format!("Query reference value: {e}")))?;
+
+            value
+                .map(|value| serde_json::to_string(&value))
+                .transpose()
+                .map_err(|e| Status::aborted(format!("Serialize reference value: {e}")))?
+                .unwrap_or_default()
+        };
         info!("Reference values: {}", reference_value_results);
 
         let res = ReferenceValueQueryResponse {

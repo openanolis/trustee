@@ -67,6 +67,7 @@ mod tests {
             name: name.to_string(),
             expiration: chrono::Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap(),
             hash_value: vec![],
+            value: None,
             audit_proof: None,
         }
     }

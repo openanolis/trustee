@@ -80,10 +80,24 @@ fn merge_reference_values(old: ReferenceValue, new: ReferenceValue) -> Reference
     // Expiration: keep the later one (more permissive, avoids accidentally expiring).
     merged.expiration = std::cmp::max(old.expiration, new.expiration);
 
-    // Hashes: union (dedupe).
-    for hv in new.hash_value.into_iter() {
-        if !merged.hash_value.contains(&hv) {
-            merged.hash_value.push(hv);
+    match (&old.value, &new.value) {
+        // Preserve the Anolis hash-list merge behavior.
+        (None, None) => {
+            for hv in new.hash_value.into_iter() {
+                if !merged.hash_value.contains(&hv) {
+                    merged.hash_value.push(hv);
+                }
+            }
+        }
+        // Flexible JSON values are atomic and replace the old payload.
+        (_, Some(value)) => {
+            merged.hash_value.clear();
+            merged.value = Some(value.clone());
+        }
+        // Switching back to a hash-list value replaces a flexible value.
+        (Some(_), None) => {
+            merged.hash_value = new.hash_value;
+            merged.value = None;
         }
     }
 
@@ -98,6 +112,14 @@ fn hash_set(rv: &ReferenceValue) -> HashSet<(String, String)> {
         .iter()
         .map(|h| (h.alg().clone(), h.value().clone()))
         .collect()
+}
+
+fn reference_payload_eq(old: &ReferenceValue, new: &ReferenceValue) -> bool {
+    match (&old.value, &new.value) {
+        (Some(old), Some(new)) => old == new,
+        (None, None) => hash_set(old) == hash_set(new),
+        _ => false,
+    }
 }
 
 impl Rvps {
@@ -138,8 +160,8 @@ impl Rvps {
         for v in rv.iter() {
             let name = v.name().to_string();
             if let Some(old) = self.storage.get(&name).await? {
-                // Requirement: if hashes are identical, skip and do not replace.
-                if hash_set(&old) == hash_set(v) {
+                // If the policy-facing payload is identical, skip and do not replace.
+                if reference_payload_eq(&old, v) {
                     info!(
                         "Reference value of {} unchanged (same hashes); skip update.",
                         name
@@ -314,6 +336,40 @@ impl Rvps {
             rv_map.insert(rv.name().to_string(), hash_values);
         }
         Ok(rv_map)
+    }
+
+    /// Query all non-expired policy-facing reference values.
+    ///
+    /// This keeps the legacy bulk API available while allowing flexible JSON
+    /// values to be represented without converting them to digest lists.
+    pub async fn get_reference_values(&self) -> Result<HashMap<String, Value>> {
+        let mut rv_map = HashMap::new();
+        let reference_values = self.storage.get_values().await?;
+
+        for rv in reference_values {
+            if rv.expired() {
+                warn!("Reference value of {} is expired.", rv.name());
+                continue;
+            }
+
+            rv_map.insert(rv.name().to_string(), rv.policy_value());
+        }
+
+        Ok(rv_map)
+    }
+
+    /// Query one policy-facing reference value by identifier.
+    pub async fn query_reference_value(&self, reference_value_id: &str) -> Result<Option<Value>> {
+        let Some(reference_value) = self.storage.get(reference_value_id).await? else {
+            return Ok(None);
+        };
+
+        if reference_value.expired() {
+            warn!("Reference value of {} is expired.", reference_value.name());
+            return Ok(None);
+        }
+
+        Ok(Some(reference_value.policy_value()))
     }
 
     pub async fn delete_reference_value(&mut self, name: &str) -> Result<bool> {
@@ -561,7 +617,9 @@ fn unique_docs(docs: Vec<String>) -> Vec<String> {
 mod tests {
     use super::*;
     #[cfg(feature = "fs")]
-    use crate::storage::{local_json, ReferenceValueStorageConfig};
+    use crate::storage::local_json;
+    use crate::storage::{in_memory, ReferenceValueStorageConfig};
+    use chrono::Duration;
 
     #[test]
     fn parse_direct_statement() {
@@ -580,6 +638,76 @@ mod tests {
         let docs = parse_slsa_documents_from_material(dsse.as_bytes()).unwrap();
         assert_eq!(docs.len(), 1);
         assert!(docs[0].contains("predicateType"));
+    }
+
+    fn in_memory_rvps() -> Rvps {
+        Rvps::new(Config {
+            storage: ReferenceValueStorageConfig::InMemory(in_memory::Config::default()),
+        })
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn keyed_query_supports_legacy_and_flexible_values() {
+        let mut rvps = in_memory_rvps();
+        let payload = serde_json::json!({
+            "legacy": ["digest-a", "digest-b"],
+            "minimum_svn": 7,
+            "constraints": {
+                "debug": false,
+                "products": ["alpha", "beta"]
+            }
+        });
+        let message = serde_json::json!({
+            "version": MESSAGE_VERSION,
+            "type": "sample",
+            "payload": base64::engine::general_purpose::STANDARD.encode(payload.to_string())
+        });
+
+        rvps.verify_and_extract(&message.to_string()).await.unwrap();
+
+        assert_eq!(
+            rvps.query_reference_value("legacy").await.unwrap(),
+            Some(serde_json::json!(["digest-a", "digest-b"]))
+        );
+        assert_eq!(
+            rvps.query_reference_value("minimum_svn").await.unwrap(),
+            Some(serde_json::json!(7))
+        );
+        assert_eq!(
+            rvps.query_reference_value("constraints").await.unwrap(),
+            Some(serde_json::json!({
+                "debug": false,
+                "products": ["alpha", "beta"]
+            }))
+        );
+        assert_eq!(rvps.query_reference_value("missing").await.unwrap(), None);
+
+        let bulk = rvps.get_reference_values().await.unwrap();
+        assert_eq!(bulk.len(), 3);
+        assert_eq!(bulk.get("minimum_svn"), Some(&serde_json::json!(7)));
+    }
+
+    #[tokio::test]
+    async fn keyed_and_bulk_queries_filter_expired_values() {
+        let rvps = in_memory_rvps();
+        let expired = ReferenceValue::new()
+            .unwrap()
+            .set_name("expired")
+            .set_expiration(Utc::now() - Duration::seconds(1))
+            .set_value(serde_json::json!("must-not-be-returned"));
+
+        rvps.storage
+            .set("expired".to_string(), expired)
+            .await
+            .unwrap();
+
+        assert_eq!(rvps.query_reference_value("expired").await.unwrap(), None);
+        assert!(!rvps
+            .get_reference_values()
+            .await
+            .unwrap()
+            .contains_key("expired"));
     }
 
     #[cfg(feature = "fs")]

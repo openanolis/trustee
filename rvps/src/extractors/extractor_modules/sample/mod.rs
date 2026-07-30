@@ -12,6 +12,7 @@ use base64::Engine;
 use chrono::{Months, Timelike, Utc};
 use log::warn;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
     reference_value::{HashValuePair, REFERENCE_VALUE_VERSION},
@@ -23,7 +24,7 @@ use super::Extractor;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provenance {
     #[serde(flatten)]
-    pub rvs: HashMap<String, Vec<String>>,
+    pub rvs: HashMap<String, Value>,
 }
 
 #[derive(Default)]
@@ -46,24 +47,42 @@ impl Extractor for SampleExtractor {
         let res = payload
             .rvs
             .iter()
-            .filter_map(|(name, rvalues)| {
-                let rvs = rvalues
-                    .iter()
-                    .map(|rv| HashValuePair::new(DEFAULT_ALG.into(), rv.to_string()))
-                    .collect();
-
+            .filter_map(|(name, policy_value)| {
                 let time = Utc::now()
                     .with_nanosecond(0)
                     .and_then(|t| t.checked_add_months(Months::new(MONTHS_BEFORE_EXPIRATION)));
 
                 match time {
-                    Some(expiration) => Some(ReferenceValue {
-                        version: REFERENCE_VALUE_VERSION.into(),
-                        name: name.to_string(),
-                        expiration,
-                        hash_value: rvs,
-                        audit_proof: None,
-                    }),
+                    Some(expiration) => {
+                        let legacy_hashes = policy_value.as_array().and_then(|values| {
+                            values
+                                .iter()
+                                .map(|value| value.as_str())
+                                .collect::<Option<Vec<_>>>()
+                        });
+
+                        let (hash_value, value) = match legacy_hashes {
+                            Some(values) => (
+                                values
+                                    .into_iter()
+                                    .map(|value| {
+                                        HashValuePair::new(DEFAULT_ALG.into(), value.to_string())
+                                    })
+                                    .collect(),
+                                None,
+                            ),
+                            None => (Vec::new(), Some(policy_value.clone())),
+                        };
+
+                        Some(ReferenceValue {
+                            version: REFERENCE_VALUE_VERSION.into(),
+                            name: name.to_string(),
+                            expiration,
+                            hash_value,
+                            value,
+                            audit_proof: None,
+                        })
+                    }
                     None => {
                         warn!("Expired time calculated overflowed for reference value of {name}.");
                         None
