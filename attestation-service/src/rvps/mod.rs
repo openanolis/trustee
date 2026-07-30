@@ -156,14 +156,43 @@ pub async fn initialize_rvps_client(config: &RvpsConfig) -> Result<Arc<dyn RvpsA
 }
 
 #[cfg(test)]
-pub(crate) fn empty_test_resolver() -> Arc<ReferenceValueResolver> {
-    use reference_value_provider_service::storage::{in_memory, ReferenceValueStorageConfig};
+struct StaticTestRvps {
+    values: HashMap<String, Value>,
+}
 
-    let config = RvpsCrateConfig {
-        storage: ReferenceValueStorageConfig::InMemory(in_memory::Config::default()),
-    };
-    let rvps = Arc::new(builtin::BuiltinRvps::new(config).unwrap()) as Arc<dyn RvpsApi>;
+#[cfg(test)]
+#[async_trait::async_trait]
+impl RvpsApi for StaticTestRvps {
+    async fn verify_and_extract(&self, _message: &str) -> Result<()> {
+        unreachable!()
+    }
+
+    async fn set_reference_value_list(&self, _payload: &str) -> Result<()> {
+        unreachable!()
+    }
+
+    async fn query_reference_value(&self, reference_value_id: &str) -> Result<Option<Value>> {
+        Ok(self.values.get(reference_value_id).cloned())
+    }
+
+    async fn get_reference_values(&self) -> Result<HashMap<String, Value>> {
+        Ok(self.values.clone())
+    }
+
+    async fn delete_reference_value(&self, _name: &str) -> Result<bool> {
+        unreachable!()
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_resolver(values: HashMap<String, Value>) -> Arc<ReferenceValueResolver> {
+    let rvps = Arc::new(StaticTestRvps { values }) as Arc<dyn RvpsApi>;
     Arc::new(ReferenceValueResolver::new(rvps))
+}
+
+#[cfg(test)]
+pub(crate) fn empty_test_resolver() -> Arc<ReferenceValueResolver> {
+    test_resolver(HashMap::new())
 }
 
 #[cfg(test)]
