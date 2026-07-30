@@ -159,7 +159,7 @@ impl OPA {
         let policy_hash = {
             let mut hasher = sha2::Sha384::new();
             hasher.update(&policy);
-            hex::encode(hasher.finalize().to_vec())
+            hex::encode(hasher.finalize())
         };
 
         engine
