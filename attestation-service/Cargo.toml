@@ -122,6 +122,7 @@ tonic-build.workspace = true
 [dev-dependencies]
 assert-json-diff.workspace = true
 hex.workspace = true
+reference-value-provider-service = { path = "../rvps", features = ["bin"] }
 rstest.workspace = true
 serial_test.workspace = true
 sha2.workspace = true
