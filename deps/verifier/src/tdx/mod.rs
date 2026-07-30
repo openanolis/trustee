@@ -254,28 +254,70 @@ async fn verify_evidence(
                 }
             }
         } else {
-            // Evaluate each GPU concurrently without `tokio::spawn`: the RIM
-            // fetches are I/O-bound, so cooperative polling (`join_all`) is
-            // sufficient and works on both the native multi-threaded runtime
-            // and the single-threaded wasm target (where `tokio::spawn` is
-            // unavailable).
-            let futs = gpu_evidence.evidence_list.iter().enumerate().map(
-                |(index, single_gpu_evidence)| {
+            // Evaluate each GPU concurrently. On native (multi-threaded
+            // runtime) `tokio::spawn` lets the I/O-bound RIM fetches run in
+            // parallel across cores; on the single-threaded wasm target
+            // `tokio::spawn` is unavailable, so cooperative polling via
+            // `futures::future::join_all` is used instead.
+            #[cfg(not(all(
+                target_arch = "wasm32",
+                target_vendor = "unknown",
+                target_os = "unknown"
+            )))]
+            {
+                // Create tasks for parallel GPU processing
+                let mut tasks = Vec::new();
+                for (index, single_gpu_evidence) in gpu_evidence.evidence_list.iter().enumerate() {
                     let gpu_evidence = single_gpu_evidence.clone();
-                    async move {
+                    let task = tokio::spawn(async move {
                         let result = gpu::GpuEvidence::evaluate(&gpu_evidence).await;
                         (index, result)
+                    });
+                    tasks.push(task);
+                }
+
+                // Wait for all tasks to complete
+                for task in tasks {
+                    match task.await {
+                        std::result::Result::Ok((
+                            index,
+                            std::result::Result::Ok(gpu_evidence_claims),
+                        )) => {
+                            gpu_claims.insert(format!("nvidia_gpu.{}", index), gpu_evidence_claims);
+                        }
+                        std::result::Result::Ok((index, std::result::Result::Err(e))) => {
+                            warn!("GPU {} evaluation failed: {}", index, e);
+                        }
+                        std::result::Result::Err(e) => {
+                            warn!("GPU task failed: {}", e);
+                        }
                     }
-                },
-            );
-            let results = futures::future::join_all(futs).await;
-            for (index, result) in results {
-                match result {
-                    std::result::Result::Ok(gpu_evidence_claims) => {
-                        gpu_claims.insert(format!("nvidia_gpu.{}", index), gpu_evidence_claims);
-                    }
-                    std::result::Result::Err(e) => {
-                        warn!("GPU {} evaluation failed: {}", index, e);
+                }
+            }
+            #[cfg(all(
+                target_arch = "wasm32",
+                target_vendor = "unknown",
+                target_os = "unknown"
+            ))]
+            {
+                let futs = gpu_evidence.evidence_list.iter().enumerate().map(
+                    |(index, single_gpu_evidence)| {
+                        let gpu_evidence = single_gpu_evidence.clone();
+                        async move {
+                            let result = gpu::GpuEvidence::evaluate(&gpu_evidence).await;
+                            (index, result)
+                        }
+                    },
+                );
+                let results = futures::future::join_all(futs).await;
+                for (index, result) in results {
+                    match result {
+                        std::result::Result::Ok(gpu_evidence_claims) => {
+                            gpu_claims.insert(format!("nvidia_gpu.{}", index), gpu_evidence_claims);
+                        }
+                        std::result::Result::Err(e) => {
+                            warn!("GPU {} evaluation failed: {}", index, e);
+                        }
                     }
                 }
             }
