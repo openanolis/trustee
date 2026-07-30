@@ -20,7 +20,9 @@ use p256::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey, LineEndin
 use p256::SecretKey;
 use rand::rngs::OsRng;
 use serde::Deserialize;
-use serde_json::{json, Value};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 use serde_variant::to_variant_name;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -216,15 +218,6 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
     ) -> Result<String> {
         debug!("all_tee_claims: {:#?}", all_tee_claims);
 
-        let reference_data_map = reference_value_resolver
-            .get_reference_values()
-            .await
-            .context("query reference values")?;
-        let reference_data = json!({
-            "reference": reference_data_map,
-        });
-        let reference_data = serde_json::to_string(&reference_data)?;
-
         if policy_ids.len() > 1 {
             warn!("EAR token only accepts the first policy. The rest will be ignored.");
         }
@@ -258,11 +251,18 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
             // The cpu tee class is loaded as the default.
             let policy_results = self
                 .policy_engine
-                .evaluate(&reference_data, &tcb_claims_json, &policy_ids[0], rules)
+                .evaluate(
+                    &tcb_claims_json,
+                    &policy_ids[0],
+                    rules,
+                    Arc::clone(&reference_value_resolver),
+                )
                 .await?;
 
             for (k, v) in &policy_results.rules_result {
-                let claim_value = v.as_i8().context("Policy claim value not i8")?;
+                let claim_value =
+                    i8::try_from(v.as_i64().context("Policy claim value is not an integer")?)
+                        .context("Policy claim value is outside the i8 range")?;
                 debug!("Policy claim: {}: {}", k, claim_value);
 
                 // The definition of Trustworthiness Claims in AR4SI

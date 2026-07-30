@@ -221,14 +221,6 @@ impl AttestationTokenBroker for SimpleAttestationTokenBroker {
             flattened_claims.append(&mut flatten_claims(tee_claims.tee, &tee_claims.claims)?);
         }
 
-        let reference_data_map = reference_value_resolver
-            .get_reference_values()
-            .await
-            .context("query reference values")?;
-        let reference_data = json!({
-            "reference": reference_data_map,
-        });
-        let reference_data = serde_json::to_string(&reference_data)?;
         let tcb_claims = serde_json::to_string(&flattened_claims)?;
 
         let rules = vec!["allow".to_string()];
@@ -237,7 +229,12 @@ impl AttestationTokenBroker for SimpleAttestationTokenBroker {
         for policy_id in policy_ids {
             let policy_results = self
                 .policy_engine
-                .evaluate(&reference_data, &tcb_claims, &policy_id, rules.clone())
+                .evaluate(
+                    &tcb_claims,
+                    &policy_id,
+                    rules.clone(),
+                    Arc::clone(&reference_value_resolver),
+                )
                 .await?;
 
             // TODO add policy allowlist

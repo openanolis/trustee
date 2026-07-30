@@ -1,7 +1,8 @@
+use crate::rvps::ReferenceValueResolver;
 use anyhow::Result;
 use async_trait::async_trait;
-use regorus::Value;
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
@@ -88,21 +89,19 @@ pub trait PolicyEngine: Send + Sync {
     /// into three parts:
     /// - `policy id`: indicates the policy id that will be used to perform policy
     /// enforcement
-    /// - `data`: static data that will help to enforce the policy.
     /// - `input`: dynamic data that will help to enforce the policy.
     /// - `rules`: the decision statement to be executed by the policy engine
     /// to determine the final output.
+    /// - `reference_value_resolver`: the per-attestation RVPS snapshot. Policies
+    /// can query it through `query_reference_value(key)`. Legacy
+    /// `data.reference` policies are populated lazily by the engine.
     ///
-    /// In CoCoAS scenarios, `data` is recommended to carry reference values as
-    /// it is relatively static. `input` is recommended to carry `tcb_claims`
-    /// returned by `verifier` module. Concrete implementation can be different
-    /// due to different needs.
     async fn evaluate(
         &self,
-        data: &str,
         input: &str,
         policy_id: &str,
         evaluation_rules: Vec<String>,
+        reference_value_resolver: Arc<ReferenceValueResolver>,
     ) -> Result<EvaluationResult, PolicyError>;
 
     async fn set_policy(&self, policy_id: String, policy: String) -> Result<(), PolicyError>;

@@ -18,6 +18,7 @@ use canon_json::CanonicalFormatter;
 use config::Config;
 pub use kbs_types::{Attestation, Tee};
 use log::info;
+#[cfg(feature = "fs")]
 use reqwest::Client;
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs8::DecodePrivateKey;
