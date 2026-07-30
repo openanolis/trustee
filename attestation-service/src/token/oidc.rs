@@ -32,6 +32,7 @@ use x509_cert::der::{DecodePem, Encode};
 use x509_cert::Certificate;
 
 use crate::policy_engine::{PolicyEngine, PolicyEngineType};
+use crate::rvps::ReferenceValueResolver;
 use crate::token::{AttestationTokenBroker, DEFAULT_TOKEN_WORK_DIR};
 use crate::TeeClaims;
 
@@ -243,7 +244,7 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
         &self,
         all_tee_claims: Vec<TeeClaims>,
         policy_ids: Vec<String>,
-        reference_data_map: HashMap<String, Vec<String>>,
+        reference_value_resolver: Arc<ReferenceValueResolver>,
     ) -> Result<String> {
         let mut collected_claims: Map<String, Value> = Map::new();
         for tee_claims in &all_tee_claims {
@@ -256,6 +257,10 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
             );
         }
 
+        let reference_data_map = reference_value_resolver
+            .get_reference_values()
+            .await
+            .context("query reference values")?;
         let reference_data = json!({
             "reference": reference_data_map,
         });
@@ -501,8 +506,6 @@ pub fn collect_claims(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use crate::TeeClaims;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
@@ -535,7 +538,7 @@ mod tests {
                     additional_data: Some(json!({"additional_data": "111"})),
                 }],
                 vec!["default".into()],
-                HashMap::new(),
+                crate::rvps::empty_test_resolver(),
             )
             .await
             .unwrap();

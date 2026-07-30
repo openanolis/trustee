@@ -32,6 +32,7 @@ use x509_cert::der::{DecodePem, Encode};
 use x509_cert::Certificate;
 
 use crate::policy_engine::{PolicyEngine, PolicyEngineType};
+use crate::rvps::ReferenceValueResolver;
 use crate::token::{AttestationTokenBroker, DEFAULT_TOKEN_WORK_DIR};
 use crate::{TeeClaims, TeeEvidenceParsedClaim};
 
@@ -212,7 +213,7 @@ impl AttestationTokenBroker for SimpleAttestationTokenBroker {
         &self,
         all_tee_claims: Vec<TeeClaims>,
         policy_ids: Vec<String>,
-        reference_data_map: HashMap<String, Vec<String>>,
+        reference_value_resolver: Arc<ReferenceValueResolver>,
     ) -> Result<String> {
         // Take claims from all verifiers, flatten them and add them to one map.
         let mut flattened_claims: Map<String, Value> = Map::new();
@@ -220,6 +221,10 @@ impl AttestationTokenBroker for SimpleAttestationTokenBroker {
             flattened_claims.append(&mut flatten_claims(tee_claims.tee, &tee_claims.claims)?);
         }
 
+        let reference_data_map = reference_value_resolver
+            .get_reference_values()
+            .await
+            .context("query reference values")?;
         let reference_data = json!({
             "reference": reference_data_map,
         });
@@ -440,8 +445,6 @@ fn flatten_helper(parent: &mut Map<String, Value>, child: &serde_json::Value, pr
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use crate::TeeClaims;
     use assert_json_diff::assert_json_eq;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -477,7 +480,7 @@ mod tests {
                     additional_data: None,
                 }],
                 vec!["default".into()],
-                HashMap::new(),
+                crate::rvps::empty_test_resolver(),
             )
             .await
             .unwrap();

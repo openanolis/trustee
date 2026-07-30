@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
+use crate::rvps::ReferenceValueResolver;
 use crate::TeeClaims;
 use anyhow::*;
 use const_format::concatcp;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 use strum::Display;
 
 use crate::config::DEFAULT_WORK_DIR;
@@ -30,7 +32,7 @@ pub trait AttestationTokenBroker: Send + Sync {
         &self,
         tee_claims: Vec<TeeClaims>,
         policy_ids: Vec<String>,
-        reference_data_map: HashMap<String, Vec<String>>,
+        reference_value_resolver: Arc<ReferenceValueResolver>,
     ) -> Result<String>;
 
     async fn set_policy(&self, _policy_id: String, _policy: String) -> Result<()> {

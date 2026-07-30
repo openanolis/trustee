@@ -17,13 +17,13 @@ use base64::Engine;
 use canon_json::CanonicalFormatter;
 use config::Config;
 pub use kbs_types::{Attestation, Tee};
-use log::{debug, info};
+use log::info;
 use reqwest::Client;
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs8::DecodePrivateKey;
 use rsa::traits::PublicKeyParts;
 use rsa::RsaPrivateKey;
-use rvps::{RvpsApi, RvpsError};
+use rvps::{ReferenceValueResolver, RvpsApi, RvpsError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 pub use serde_json::Value;
@@ -32,6 +32,7 @@ use sm3::Sm3;
 use std::collections::HashMap;
 #[cfg(feature = "fs")]
 use std::io::Read;
+use std::sync::Arc;
 use strum::{AsRefStr, Display, EnumString};
 use thiserror::Error;
 #[cfg(feature = "fs")]
@@ -185,7 +186,7 @@ pub struct VerificationRequest {
 
 pub struct AttestationService {
     _config: Config,
-    rvps: Box<dyn RvpsApi + Send + Sync>,
+    rvps: Arc<dyn RvpsApi>,
     token_broker: Box<dyn AttestationTokenBroker + Send + Sync>,
 }
 
@@ -314,22 +315,18 @@ impl AttestationService {
             });
         }
 
-        let reference_data_map = self
-            .rvps
-            .get_digests()
-            .await
-            .map_err(|e| anyhow!("Generate reference data failed: {:?}", e))?;
-        debug!("reference_data_map: {:#?}", reference_data_map);
+        let reference_value_resolver =
+            Arc::new(ReferenceValueResolver::new(Arc::clone(&self.rvps)));
 
         let attestation_results_token = self
             .token_broker
-            .issue(tee_claims, policy_ids, reference_data_map)
+            .issue(tee_claims, policy_ids, reference_value_resolver)
             .await?;
         Ok(attestation_results_token)
     }
 
     /// Registry a new reference value
-    pub async fn register_reference_value(&mut self, message: &str) -> Result<()> {
+    pub async fn register_reference_value(&self, message: &str) -> Result<()> {
         self.rvps
             .verify_and_extract(message)
             .await
@@ -337,7 +334,7 @@ impl AttestationService {
     }
 
     /// Set reference value list via RVPS
-    pub async fn set_reference_value_list(&mut self, payload: &str) -> Result<()> {
+    pub async fn set_reference_value_list(&self, payload: &str) -> Result<()> {
         self.rvps
             .set_reference_value_list(payload)
             .await
@@ -345,7 +342,7 @@ impl AttestationService {
     }
 
     /// Delete a reference value by name
-    pub async fn delete_reference_value(&mut self, name: String) -> Result<bool> {
+    pub async fn delete_reference_value(&self, name: String) -> Result<bool> {
         self.rvps
             .delete_reference_value(&name)
             .await
@@ -354,18 +351,18 @@ impl AttestationService {
 
     /// Query Reference Values
     pub async fn query_reference_values(&self) -> Result<HashMap<String, Value>> {
-        let rvs = self
-            .rvps
-            .get_digests()
+        self.rvps
+            .get_reference_values()
             .await
-            .context("query reference values")?;
-        let mut converted_rvs: HashMap<String, Value> = HashMap::new();
-        for (key, value) in rvs {
-            let value_as_value: Value = serde_json::to_value(value)
-                .map_err(|e| anyhow!("convert reference values to Value failed: {:?}", e))?;
-            converted_rvs.insert(key, value_as_value);
-        }
-        Ok(converted_rvs)
+            .context("query reference values")
+    }
+
+    /// Query one Reference Value by identifier.
+    pub async fn query_reference_value(&self, reference_value_id: &str) -> Result<Option<Value>> {
+        self.rvps
+            .query_reference_value(reference_value_id)
+            .await
+            .context("query reference value")
     }
 
     pub async fn generate_supplemental_challenge(
