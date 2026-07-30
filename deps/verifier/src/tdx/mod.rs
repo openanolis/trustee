@@ -1,7 +1,11 @@
 use ::eventlog::{ccel::tcg_enum::TcgAlgorithm, CcEventLog, ReferenceMeasurement};
 use anyhow::anyhow;
 use log::{debug, error, info, warn};
-#[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
 use std::env;
 use std::sync::RwLock;
 
@@ -47,7 +51,11 @@ pub fn set_skip_gpu_verify(skip: Option<bool>) {
 /// Default GPU-verify skip resolution when no override is injected (native):
 /// the `TRUSTEE_SKIP_NVGPU_VERIFY` env var, opt-in. Wasm has no env and
 /// defaults to `false` (verify) — see the wasm variant below.
-#[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
 fn default_skip_gpu_verify() -> bool {
     env::var("TRUSTEE_SKIP_NVGPU_VERIFY")
         .map(|value| value.eq_ignore_ascii_case("true"))
@@ -57,7 +65,11 @@ fn default_skip_gpu_verify() -> bool {
 /// On wasm there is no `TRUSTEE_SKIP_NVGPU_VERIFY` env var; default to
 /// verifying (a host that cannot supply a RIM URL may call
 /// `set_skip_gpu_verify(Some(true))` explicitly).
-#[cfg(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"))]
+#[cfg(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+))]
 fn default_skip_gpu_verify() -> bool {
     false
 }
@@ -81,7 +93,14 @@ struct TdxEvidence {
 pub struct Tdx {}
 
 #[cfg_attr(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"), async_trait(?Send))]
-#[cfg_attr(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")), async_trait)]
+#[cfg_attr(
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )),
+    async_trait
+)]
 impl Verifier for Tdx {
     async fn evaluate(
         &self,
@@ -219,11 +238,8 @@ async fn verify_evidence(
         // target-specific default (native: `TRUSTEE_SKIP_NVGPU_VERIFY` env;
         // wasm: `false`, i.e. verify). A wasm host that cannot supply a RIM
         // URL should call set_skip_gpu_verify(Some(true)) explicitly.
-        let skip_gpu_verify = SKIP_GPU_VERIFY_OVERRIDE
-            .read()
-            .unwrap()
-            .clone()
-            .unwrap_or_else(default_skip_gpu_verify);
+        let skip_gpu_verify =
+            (*SKIP_GPU_VERIFY_OVERRIDE.read().unwrap()).unwrap_or_else(default_skip_gpu_verify);
 
         if skip_gpu_verify {
             info!("Skipping GPU evidence verification per TRUSTEE_SKIP_NVGPU_VERIFY.");
@@ -243,17 +259,15 @@ async fn verify_evidence(
             // sufficient and works on both the native multi-threaded runtime
             // and the single-threaded wasm target (where `tokio::spawn` is
             // unavailable).
-            let futs = gpu_evidence
-                .evidence_list
-                .iter()
-                .enumerate()
-                .map(|(index, single_gpu_evidence)| {
+            let futs = gpu_evidence.evidence_list.iter().enumerate().map(
+                |(index, single_gpu_evidence)| {
                     let gpu_evidence = single_gpu_evidence.clone();
                     async move {
                         let result = gpu::GpuEvidence::evaluate(&gpu_evidence).await;
                         (index, result)
                     }
-                });
+                },
+            );
             let results = futures::future::join_all(futs).await;
             for (index, result) in results {
                 match result {
