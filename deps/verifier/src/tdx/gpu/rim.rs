@@ -45,10 +45,18 @@ pub fn set_rim_service_url(url: Option<String>) {
 /// On wasm the metadata endpoint is a cloud-VPC IP unreachable from a
 /// browser, so this probe is compiled out; `get_rim_service_url` then relies
 /// on the injected override (or fails closed).
-#[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
 async fn get_region_id() -> Result<String> {
     let client = reqwest::Client::builder();
-    #[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
+    #[cfg(not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )))]
     let client = client.timeout(std::time::Duration::from_secs(METADATA_TIMEOUT));
     let client = client
         .build()
@@ -85,7 +93,11 @@ async fn get_region_id() -> Result<String> {
 
 /// Get RIM service URL (native): injected override → `NV_RIM_URL` env →
 /// Aliyun metadata `region_id` probe → built-in default.
-#[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
 async fn get_rim_service_url() -> Result<String> {
     if let Some(url) = RIM_SERVICE_URL_OVERRIDE.read().unwrap().clone() {
         if !url.is_empty() {
@@ -111,7 +123,11 @@ async fn get_rim_service_url() -> Result<String> {
 
             // Send a HEAD request to the URL for testing
             let client = reqwest::Client::builder();
-            #[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
+            #[cfg(not(all(
+                target_arch = "wasm32",
+                target_vendor = "unknown",
+                target_os = "unknown"
+            )))]
             let client = client.timeout(std::time::Duration::from_secs(METADATA_TIMEOUT));
             let client = client
                 .build()
@@ -154,7 +170,11 @@ async fn get_rim_service_url() -> Result<String> {
 /// browser can meaningfully reach. Rather than silently fetching the wrong
 /// endpoint or skipping verification, return `Err` so the caller's
 /// `evaluate()` surfaces a warning and inserts no claims for that GPU.
-#[cfg(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"))]
+#[cfg(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+))]
 async fn get_rim_service_url() -> Result<String> {
     if let Some(url) = RIM_SERVICE_URL_OVERRIDE.read().unwrap().clone() {
         if !url.is_empty() {
@@ -503,7 +523,11 @@ async fn fetch_rim_file(base_url: &str, file_id: &str) -> Result<String> {
 
     // Create async HTTP client with timeout
     let client = reqwest::Client::builder();
-    #[cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))]
+    #[cfg(not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )))]
     let client = client.timeout(std::time::Duration::from_secs(MAX_NETWORK_TIME_DELAY));
     let client = client
         .build()
