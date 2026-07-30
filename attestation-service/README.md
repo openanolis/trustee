@@ -155,5 +155,10 @@ The [Reference Value Provider Service](../rvps/README.md) (RVPS) is a module int
 store and provide reference values. RVPS receives and verifies the provenance input from the software supply chain,
 stores the measurement values, and generates reference value claims for the AS according to the evidence content when the AS verifies the evidence.
 
+Rego policies query only the values they need with
+`query_reference_value("key")`. Existing `data.reference` policies remain
+supported through a lazily loaded bulk compatibility map. See the
+[policy guide](docs/policy.md#policy-input-and-rvps-queries).
+
 The Reference Value Provider Service supports different deployment modes,
 please refer to [the doc](../rvps/README.md#run-mode) for more details.

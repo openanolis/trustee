@@ -28,7 +28,7 @@ by RVPS, then RVPS will generate a Reference Value if working correctly.
 {
     "version": <VERSION-NUMBER-STRING>,
     "type": <TYPE-OF-THE-PROVENANCE-STRING>,
-    "provenance": #provenance,
+    "payload": <BASE64-ENCODED-PROVENANCE-STRING>
 }
 ```
 
@@ -36,12 +36,41 @@ The `"version"` field is the version of this message, making extensibility possi
 
 The `"type"` field specifies the concrete type of the provenance the message carries.
 
-The `"provenance"` field is the main content passed to RVPS. This field contains the payload to be decrypted by RVPS. 
-The meaning of the provenance depends on the type and concrete Extractor which process this.
+The `"payload"` field is the Base64-encoded content passed to RVPS. Its format
+depends on the selected extractor.
 
 ### Trust Digests
 
 It is the reference values really requested and used by Attestation Service to compare with the gathered evidence generated from HW TEE. They are usually digests. To avoid ambiguity, they are named `trust digests` rather than `reference values`.
+
+### Query semantics
+
+The `QueryReferenceValue` gRPC request has an optional-by-convention
+`reference_value_id` string:
+
+- a non-empty ID returns one JSON-encoded value;
+- an empty ID returns the legacy JSON map of every non-expired value;
+- a missing or expired keyed value returns an empty response.
+
+The empty request remains wire compatible with clients built against the old
+empty request message. The response string also remains compatible with CoCo's
+optional response field.
+
+Existing digest records are exposed as JSON arrays of strings. The sample
+extractor additionally accepts arbitrary JSON values, for example:
+
+```json
+{
+    "allowed-digests": ["sha384-a", "sha384-b"],
+    "minimum-svn": 7,
+    "platform": {
+        "debug": false,
+        "products": ["alpha", "beta"]
+    }
+}
+```
+
+Both keyed and bulk queries exclude expired records.
 
 ## Run RVPS
 
@@ -180,9 +209,24 @@ rvps-tool query --addr http://$RVPS_ADDR
 
 The output should display something like the following:
 ```
-[2025-01-24T06:04:41Z INFO  rvps_tool] Get reference values succeeded:
+[2025-01-24T06:04:41Z INFO  rvps_tool] Get reference value(s) succeeded:
      {"test-binary-1":["reference-value-1","reference-value-2"],
       "test-binary-2":["reference-value-3","reference-value-4"]}
+```
+
+Query only one value:
+
+```bash
+rvps-tool query \
+  --reference-value-id test-binary-1 \
+  --addr http://$RVPS_ADDR
+```
+
+The result is the JSON value itself:
+
+```text
+[2025-01-24T06:04:45Z INFO  rvps_tool] Get reference value(s) succeeded:
+ ["reference-value-1","reference-value-2"]
 ```
 
 Finally, let's delete a reference value
@@ -202,6 +246,6 @@ rvps-tool query --addr http://$RVPS_ADDR
 
 The output should now show that "test-binary-1" has been removed:
 ```
-[2025-01-24T06:05:30Z INFO  rvps_tool] Get reference values succeeded:
+[2025-01-24T06:05:30Z INFO  rvps_tool] Get reference value(s) succeeded:
      {"test-binary-2":["reference-value-3","reference-value-4"]}
 ```
