@@ -124,9 +124,20 @@ jobs:
 
       - name: OPA policy.rego check
         run: |
+          capabilities_file=$(mktemp)
+          trap 'rm -f "$capabilities_file"' EXIT
+          opa capabilities --current | jq \
+            '.builtins += [{
+              "name": "query_reference_value",
+              "decl": {
+                "type": "function",
+                "args": [{"type": "string"}],
+                "result": {"type": "any"}
+              }
+            }]' > "$capabilities_file"
           for file in attestation-service/src/token/*.rego;
           do
-            opa check $file
+            opa check --capabilities "$capabilities_file" "$file"
           done
 
       - name: Install protoc

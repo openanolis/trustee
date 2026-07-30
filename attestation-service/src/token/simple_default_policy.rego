@@ -11,20 +11,16 @@
 #		...
 #	}
 #
-# - The format of reference data required by this default policy is defined as follows:
+# - RVPS values queried by this default policy can be arrays or arbitrary JSON:
 #
 #	{
-#		"reference": {
-#			"sample1": ["112233", "223311"],
-#			"sample2": "332211",
-#			"sample3": [],
-#			...
-#		}
+#		"sample1": ["112233", "223311"],
+#		"sample2": "332211",
+#		"sample3": [],
+#		...
 #	}
 #
-# If the default policy is used for verification, the reference meeting the above format
-# needs to be provided in the attestation request, otherwise the Attestation Service will
-# automatically generate a reference data meeting the above format.
+# The policy obtains each value from RVPS with query_reference_value(input_key).
 package policy
 
 import future.keywords.every
@@ -37,17 +33,17 @@ allow if {
 		# `judge_field`: Traverse each key value pair in the input and make policy judgments on it.
 		#
 		# For each key value pair:
-		#	* If there isn't a corresponding key in the reference:
+		# * If there isn't a corresponding key in RVPS:
 		#		It is considered that the current key value pair has passed the verification.
-		#	* If there is a corresponding key in the reference:
+		# * If there is a corresponding key in RVPS:
 		#		Call `match_value` to further judge the value in input with the value in reference.
 		judge_field(k, v)
 	}
 }
 
 judge_field(input_key, input_value) if {
-	has_key(data.reference, input_key)
-	reference_value := data.reference[input_key]
+	reference_value := query_reference_value(input_key)
+	reference_value != null
 
 	# `match_value`: judge the value in input with the value in reference.
 	#
@@ -58,8 +54,8 @@ judge_field(input_key, input_value) if {
 	match_value(reference_value, input_value)
 }
 
-judge_field(input_key, input_value) if {
-	not has_key(data.reference, input_key)
+judge_field(input_key, _) if {
+	query_reference_value(input_key) == null
 }
 
 match_value(reference_value, input_value) if {
@@ -87,8 +83,4 @@ array_include(reference_value_array, input_value) if {
 	reference_value_array != []
 	some i
 	reference_value_array[i] == input_value
-}
-
-has_key(m, k) if {
-	_ = m[k]
 }

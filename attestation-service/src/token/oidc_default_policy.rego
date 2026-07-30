@@ -38,7 +38,7 @@ validate_boot_measurements(measurements_data) if {
 	components := ["grub", "shim", "initrd", "kernel"]
 	every component in components {
 		measurement_key := sprintf("measurement.%s.%s", [component, algorithm])
-		measurements_data[measurement_key] in data.reference[measurement_key]
+		measurements_data[measurement_key] in query_reference_value(measurement_key)
 	}
 }
 
@@ -46,7 +46,7 @@ validate_boot_measurements(measurements_data) if {
 validate_kernel_cmdline(measurements_data, cmdline_data) if {
 	some algorithm in {"SHA1", "SHA256", "SHA384", "SM3", "SM-3"}
 	measurement_key := sprintf("measurement.kernel_cmdline.%s", [algorithm])
-	measurements_data[measurement_key] in data.reference[measurement_key]
+	measurements_data[measurement_key] in query_reference_value(measurement_key)
 }
 
 ### The following functions are for parsing UEFI event logs
@@ -112,7 +112,7 @@ validate_boot_measurements_uefi_event_log(uefi_event_logs) if {
 	]
 	every component in components {
 		measurement_key := sprintf("measurement.%s.%s", [component.name, component.alg])
-		component.value in data.reference[measurement_key]
+		component.value in query_reference_value(measurement_key)
 	}
 }
 
@@ -123,7 +123,7 @@ validate_kernel_cmdline_uefi(uefi_event_logs) if {
 	uefi_event_logs[i].type_name == "EV_IPL"
 	startswith(uefi_event_logs[i].details.string, prefix)
 	measurement_key := sprintf("measurement.kernel_cmdline.%s", [uefi_event_logs[i].digests[0].alg])
-	uefi_event_logs[i].digests[0].digest in data.reference[measurement_key]
+	uefi_event_logs[i].digests[0].digest in query_reference_value(measurement_key)
 }
 
 # Function to check the cryptpilot load config
@@ -133,7 +133,7 @@ validate_cryptpilot_config(uefi_event_logs) if {
 	uefi_event_logs[i].details.unicode_name == "AAEL"
 	uefi_event_logs[i].details.data.domain == "cryptpilot.alibabacloud.com"
 	uefi_event_logs[i].details.data.operation == "load_config"
-	uefi_event_logs[i].details.data.content in data.reference["AA.eventlog.cryptpilot.alibabacloud.com.load_config"]
+	uefi_event_logs[i].details.data.content in query_reference_value("AA.eventlog.cryptpilot.alibabacloud.com.load_config")
 }
 
 # Function to check the cryptpilot fde rootfs integrity
@@ -143,7 +143,7 @@ validate_cryptpilot_fde(uefi_event_logs) if {
 	uefi_event_logs[i].details.unicode_name == "AAEL"
 	uefi_event_logs[i].details.data.domain == "cryptpilot.alibabacloud.com"
 	uefi_event_logs[i].details.data.operation == "fde_rootfs_hash"
-	uefi_event_logs[i].details.data.content in data.reference["AA.eventlog.cryptpilot.alibabacloud.com.fde_rootfs_hash"]
+	uefi_event_logs[i].details.data.content in query_reference_value("AA.eventlog.cryptpilot.alibabacloud.com.fde_rootfs_hash")
 }
 
 # Function to check the file measurements from Measurement_tool integrity
@@ -156,7 +156,7 @@ validate_aael_file_measurements(uefi_event_logs) if {
 	]
 	every e in aael {
 		key := sprintf("measurement.%s.%s", [e.details.data.domain, e.details.data.operation])
-		e.details.data.content in data.reference[key]
+		e.details.data.content in query_reference_value(key)
 	}
 }
 
@@ -172,15 +172,15 @@ hardware := 2 if {
 	input.tdx.quote.header.tee_type == "81000000"
 	input.tdx.quote.header.vendor_id == "939a7233f79c4ca9940a0db3957f0607"
 	# Check TDX Module version and its hash. Also check OVMF code hash.
-	# input.tdx.quote.body.mr_seam in data.reference["tdx.mr_seam"]
-	# input.tdx.quote.body.tcb_svn in data.reference["tdx.tcb_svn"]
-	# input.tdx.quote.body.mr_td in data.reference["tdx.mr_td"]
+	# input.tdx.quote.body.mr_seam in query_reference_value("tdx.mr_seam")
+	# input.tdx.quote.body.tcb_svn in query_reference_value("tdx.tcb_svn")
+	# input.tdx.quote.body.mr_td in query_reference_value("tdx.mr_td")
 }
 
 configuration := 2 if {
 	# Check the TD has the expected attributes (e.g., debug not enabled) and features.
 	# input.tdx.td_attributes.debug == false
-	input.tdx.quote.body.xfam in data.reference["tdx.xfam"]
+	input.tdx.quote.body.xfam in query_reference_value("tdx.xfam")
 
 	# Check kernel command line parameters have the expected value for any supported algorithm
 	validate_kernel_cmdline_uefi(input.tdx.uefi_event_logs)
@@ -211,10 +211,10 @@ hardware := 2 if {
 	# Placeholder to avoid empty body. Remove when enabling checks below.
 	input.tpm
 	# Check TPM EK cert issuer
-	# input.tpm.EK_cert_issuer.OU in data.reference["tpm_ek_issuer_ou"]
+	# input.tpm.EK_cert_issuer.OU in query_reference_value("tpm_ek_issuer_ou")
 
 	# Check TPM firmware version
-	# input.tpm["quote.firmware_version"] in data.reference["tpm.firmware_version"]
+	# input.tpm["quote.firmware_version"] in query_reference_value("tpm.firmware_version")
 }
 
 configuration := 2 if {
@@ -244,8 +244,8 @@ executables := 3 if {
 
 hardware := 2 if {
 	input.hygontpm
-	# input.hygontpm.EK_cert_issuer.OU in data.reference["hygontpm.ek_cert_issuer_ou"]
-	# input.hygontpm["quote.firmware_version"] in data.reference["hygontpm.firmware_version"]
+	# input.hygontpm.EK_cert_issuer.OU in query_reference_value("hygontpm.ek_cert_issuer_ou")
+	# input.hygontpm["quote.firmware_version"] in query_reference_value("hygontpm.firmware_version")
 }
 
 configuration := 2 if {
@@ -289,27 +289,27 @@ executables := 3 if {
 # Check cryptpilot config. Uncomment this due to your need
 hardware := 2 if {
 	input.csv.version in ["2", "1"]
-	# input.csv.vm_id in data.reference["csv.vm_id"]
-	# input.csv.vm_version in data.reference["csv.vm_version"]
-	# input.csv.serial_number in data.reference["csv.serial_number"]
-	# input.csv.measurement in data.reference["csv.measurement"]
+	# input.csv.vm_id in query_reference_value("csv.vm_id")
+	# input.csv.vm_version in query_reference_value("csv.vm_version")
+	# input.csv.serial_number in query_reference_value("csv.serial_number")
+	# input.csv.measurement in query_reference_value("csv.measurement")
 }
 
 # Check cryptpilot config. Uncomment this due to your need
 configuration := 2 if {
-	# input.csv.policy.nodbg in data.reference["csv.policy.nodbg"]
-	# input.csv.policy.noks in data.reference["csv.policy.noks"]
-	# input.csv.policy.es in data.reference["csv.policy.es"]
-	# input.csv.policy.nosend in data.reference["csv.policy.nosend"]
-	# input.csv.policy.domain in data.reference["csv.policy.domain"]
-	# input.csv.policy.csv in data.reference["csv.policy.csv"]
-	# input.csv.policy.csv3 in data.reference["csv.policy.csv3"]
-	# input.csv.policy.asid_reuse in data.reference["csv.policy.asid_reuse"]
-	# input.csv.policy.hsk_version in data.reference["csv.policy.hsk_version"]
-	# input.csv.policy.cek_version in data.reference["csv.policy.cek_version"]
-	# input.csv.policy.api_major in data.reference["csv.policy.api_major"]
-	# input.csv.policy.api_minor in data.reference["csv.policy.api_minor"]
-	# input.csv.user_pubkey_digest in data.reference["csv.user_pubkey_digest"]
+	# input.csv.policy.nodbg in query_reference_value("csv.policy.nodbg")
+	# input.csv.policy.noks in query_reference_value("csv.policy.noks")
+	# input.csv.policy.es in query_reference_value("csv.policy.es")
+	# input.csv.policy.nosend in query_reference_value("csv.policy.nosend")
+	# input.csv.policy.domain in query_reference_value("csv.policy.domain")
+	# input.csv.policy.csv in query_reference_value("csv.policy.csv")
+	# input.csv.policy.csv3 in query_reference_value("csv.policy.csv3")
+	# input.csv.policy.asid_reuse in query_reference_value("csv.policy.asid_reuse")
+	# input.csv.policy.hsk_version in query_reference_value("csv.policy.hsk_version")
+	# input.csv.policy.cek_version in query_reference_value("csv.policy.cek_version")
+	# input.csv.policy.api_major in query_reference_value("csv.policy.api_major")
+	# input.csv.policy.api_minor in query_reference_value("csv.policy.api_minor")
+	# input.csv.user_pubkey_digest in query_reference_value("csv.user_pubkey_digest")
 
 	# Check kernel command line parameters have the expected value for any supported algorithm
 	validate_kernel_cmdline_uefi(input.csv.uefi_event_logs)
