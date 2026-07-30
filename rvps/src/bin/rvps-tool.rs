@@ -21,9 +21,16 @@ async fn register(addr: &str, provenance_path: &str) -> Result<()> {
     Ok(())
 }
 
-async fn query(addr: &str) -> Result<()> {
-    let rvs = client::query(addr.to_string()).await?;
-    info!("Get reference values succeeded:\n {rvs}");
+async fn query(addr: &str, reference_value_id: Option<&str>) -> Result<()> {
+    let rvs = match reference_value_id {
+        Some(reference_value_id) => {
+            client::query_by_id(addr.to_string(), reference_value_id.to_string())
+                .await?
+                .unwrap_or_else(|| "null".to_string())
+        }
+        None => client::query(addr.to_string()).await?,
+    };
+    info!("Get reference value(s) succeeded:\n {rvs}");
     Ok(())
 }
 
@@ -67,6 +74,10 @@ struct QueryArgs {
     /// The address of target RVPS
     #[arg(short, long, default_value = DEFAULT_ADDR)]
     addr: String,
+
+    /// Optional reference value identifier. Omit it for the legacy bulk query.
+    #[arg(short = 'i', long)]
+    reference_value_id: Option<String>,
 }
 
 #[derive(Args)]
@@ -98,7 +109,7 @@ async fn main() -> Result<()> {
 
     match cli {
         Cli::Register(para) => register(&para.addr, &para.path).await,
-        Cli::Query(para) => query(&para.addr).await,
+        Cli::Query(para) => query(&para.addr, para.reference_value_id.as_deref()).await,
         Cli::Delete(para) => delete(&para.addr, &para.name).await,
     }
 }

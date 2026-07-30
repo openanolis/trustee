@@ -270,7 +270,9 @@ impl Attest for GrpcClientPool {
     }
 
     async fn query_reference_values(&self) -> anyhow::Result<HashMap<String, serde_json::Value>> {
-        let req = tonic::Request::new(ReferenceValueQueryRequest {});
+        let req = tonic::Request::new(ReferenceValueQueryRequest {
+            reference_value_id: String::new(),
+        });
 
         let mut client = { self.pool.lock().await.get().await? };
 

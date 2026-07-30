@@ -8,6 +8,7 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 use std::time::SystemTime;
 
 /// Default version of ReferenceValue
@@ -105,6 +106,11 @@ pub struct ReferenceValue {
     pub expiration: DateTime<Utc>,
     #[serde(rename = "hash-value")]
     pub hash_value: Vec<HashValuePair>,
+    /// Optional policy-facing value. Existing hash-list records omit this
+    /// field and are exposed to policies as an array of digest strings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub value: Option<Value>,
     /// Optional audit proof pointing to immutable ledger evidence.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
@@ -143,6 +149,7 @@ impl ReferenceValue {
                 .with_nanosecond(0)
                 .ok_or_else(|| anyhow!("set nanosecond failed."))?,
             hash_value: Vec::new(),
+            value: None,
             audit_proof: None,
         })
     }
@@ -175,6 +182,7 @@ impl ReferenceValue {
 
     /// Set hash value of the ReferenceValue.
     pub fn add_hash_value(mut self, alg: String, value: String) -> Self {
+        self.value = None;
         self.hash_value.push(HashValuePair::new(alg, value));
         self
     }
@@ -187,6 +195,7 @@ impl ReferenceValue {
         artifact_version: Option<String>,
         audit_proof: Option<AuditProof>,
     ) -> Self {
+        self.value = None;
         self.hash_value.push(HashValuePair::new_with_meta(
             alg,
             value,
@@ -205,6 +214,25 @@ impl ReferenceValue {
     /// Get hash value of the ReferenceValue.
     pub fn hash_values(&self) -> &Vec<HashValuePair> {
         &self.hash_value
+    }
+
+    /// Set an arbitrary JSON value for policy evaluation.
+    pub fn set_value(mut self, value: Value) -> Self {
+        self.hash_value.clear();
+        self.value = Some(value);
+        self
+    }
+
+    /// Return the value exposed by RVPS to an attestation policy.
+    pub fn policy_value(&self) -> Value {
+        self.value.clone().unwrap_or_else(|| {
+            Value::Array(
+                self.hash_value
+                    .iter()
+                    .map(|pair| Value::String(pair.value().to_owned()))
+                    .collect(),
+            )
+        })
     }
 
     /// Set artifact name for Reference Value
@@ -285,5 +313,35 @@ mod test {
         }"#;
         let deserialized_rf: ReferenceValue = serde_json::from_str(&rv_json).unwrap();
         assert_eq!(deserialized_rf, rv);
+    }
+
+    #[test]
+    fn flexible_policy_value_round_trip() {
+        let value = json!({
+            "minimum": 3,
+            "allowed": ["a", "b"],
+            "enforced": true
+        });
+        let rv = ReferenceValue::new()
+            .unwrap()
+            .set_name("policy-value")
+            .set_value(value.clone());
+
+        assert!(rv.hash_values().is_empty());
+        assert_eq!(rv.policy_value(), value);
+
+        let serialized = serde_json::to_string(&rv).unwrap();
+        let deserialized: ReferenceValue = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized, rv);
+    }
+
+    #[test]
+    fn legacy_hash_list_is_exposed_as_json_array() {
+        let rv = ReferenceValue::new()
+            .unwrap()
+            .add_hash_value("sha384".into(), "digest-a".into())
+            .add_hash_value("sha384".into(), "digest-b".into());
+
+        assert_eq!(rv.policy_value(), json!(["digest-a", "digest-b"]));
     }
 }

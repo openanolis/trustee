@@ -4,7 +4,11 @@ package reference;
 
 option go_package = "github.com/openanolis/trustee/gateway/internal/rvps/protos";
 
-message ReferenceValueQueryRequest {}
+message ReferenceValueQueryRequest {
+    // Empty keeps the legacy bulk-query behavior. A non-empty value selects
+    // one reference value for policy evaluation.
+    string reference_value_id = 1;
+}
 
 message ReferenceValueQueryResponse {
     string reference_value_results = 1;
