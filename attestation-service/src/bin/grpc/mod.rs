@@ -320,20 +320,32 @@ impl AttestationService for Arc<RwLock<AttestationServer>> {
 impl ReferenceValueProviderService for Arc<RwLock<AttestationServer>> {
     async fn query_reference_value(
         &self,
-        _request: Request<ReferenceValueQueryRequest>,
+        request: Request<ReferenceValueQueryRequest>,
     ) -> Result<Response<ReferenceValueQueryResponse>, Status> {
         info!("QueryReferenceValue API called.");
 
-        let reference_values = self
-            .read()
-            .await
-            .attestation_service
-            .query_reference_values()
-            .await
-            .map_err(|e| Status::aborted(format!("Query reference values: {e}")))?;
-
-        let reference_value_results = serde_json::to_string(&reference_values)
-            .map_err(|e| Status::aborted(format!("Serialize reference values: {e}")))?;
+        let reference_value_id = request.into_inner().reference_value_id;
+        let service = self.read().await;
+        let reference_value_results = if reference_value_id.is_empty() {
+            let values = service
+                .attestation_service
+                .query_reference_values()
+                .await
+                .map_err(|e| Status::aborted(format!("Query reference values: {e}")))?;
+            serde_json::to_string(&values)
+                .map_err(|e| Status::aborted(format!("Serialize reference values: {e}")))?
+        } else {
+            let value = service
+                .attestation_service
+                .query_reference_value(&reference_value_id)
+                .await
+                .map_err(|e| Status::aborted(format!("Query reference value: {e}")))?;
+            value
+                .map(|value| serde_json::to_string(&value))
+                .transpose()
+                .map_err(|e| Status::aborted(format!("Serialize reference value: {e}")))?
+                .unwrap_or_default()
+        };
 
         let res = ReferenceValueQueryResponse {
             reference_value_results,

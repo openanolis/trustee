@@ -30,6 +30,7 @@ use x509_cert::der::{DecodePem, Encode};
 use x509_cert::Certificate;
 
 use crate::policy_engine::{PolicyEngine, PolicyEngineType};
+use crate::rvps::ReferenceValueResolver;
 use crate::token::DEFAULT_TOKEN_WORK_DIR;
 use crate::{AttestationTokenBroker, TeeClaims};
 
@@ -211,10 +212,14 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
         &self,
         all_tee_claims: Vec<TeeClaims>,
         policy_ids: Vec<String>,
-        reference_data_map: HashMap<String, Vec<String>>,
+        reference_value_resolver: Arc<ReferenceValueResolver>,
     ) -> Result<String> {
         debug!("all_tee_claims: {:#?}", all_tee_claims);
 
+        let reference_data_map = reference_value_resolver
+            .get_reference_values()
+            .await
+            .context("query reference values")?;
         let reference_data = json!({
             "reference": reference_data_map,
         });
@@ -528,7 +533,7 @@ mod tests {
                     additional_data: None,
                 }],
                 vec!["default".into()],
-                HashMap::new(),
+                crate::rvps::empty_test_resolver(),
             )
             .await
             .unwrap();
@@ -561,7 +566,7 @@ mod tests {
                     additional_data: None,
                 }],
                 vec!["default".into()],
-                HashMap::new(),
+                crate::rvps::empty_test_resolver(),
             )
             .await
             .unwrap();

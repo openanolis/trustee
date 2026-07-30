@@ -1,7 +1,7 @@
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use thiserror::Error;
-use tokio::sync::Mutex;
 
 use self::rvps_api::{
     reference_value_provider_service_client::ReferenceValueProviderServiceClient,
@@ -37,66 +37,72 @@ pub enum GrpcRvpsError {
 }
 
 pub struct Agent {
-    client: Mutex<ReferenceValueProviderServiceClient<tonic::transport::Channel>>,
+    client: ReferenceValueProviderServiceClient<tonic::transport::Channel>,
 }
 
 impl Agent {
     pub async fn new(addr: &str) -> Result<Self> {
         Ok(Self {
-            client: Mutex::new(
-                ReferenceValueProviderServiceClient::connect(addr.to_string()).await?,
-            ),
+            client: ReferenceValueProviderServiceClient::connect(addr.to_string()).await?,
         })
     }
 }
 #[async_trait::async_trait]
 impl RvpsApi for Agent {
-    async fn verify_and_extract(&mut self, message: &str) -> Result<()> {
+    async fn verify_and_extract(&self, message: &str) -> Result<()> {
         let req = tonic::Request::new(ReferenceValueRegisterRequest {
             message: message.to_string(),
         });
-        let _ = self
-            .client
-            .lock()
-            .await
-            .register_reference_value(req)
-            .await?;
+        self.client.clone().register_reference_value(req).await?;
         Ok(())
     }
 
-    async fn set_reference_value_list(&mut self, payload: &str) -> Result<()> {
+    async fn set_reference_value_list(&self, payload: &str) -> Result<()> {
         let req = tonic::Request::new(ReferenceValueListRequest {
             payload: payload.to_string(),
         });
-        let _ = self
-            .client
-            .lock()
-            .await
-            .set_reference_value_list(req)
-            .await?;
+        self.client.clone().set_reference_value_list(req).await?;
         Ok(())
     }
 
-    async fn get_digests(&self) -> Result<HashMap<String, Vec<String>>> {
+    async fn query_reference_value(&self, reference_value_id: &str) -> Result<Option<Value>> {
+        let req = tonic::Request::new(ReferenceValueQueryRequest {
+            reference_value_id: reference_value_id.to_string(),
+        });
+        let response = self
+            .client
+            .clone()
+            .query_reference_value(req)
+            .await?
+            .into_inner()
+            .reference_value_results;
+
+        if response.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(serde_json::from_str(&response)?))
+    }
+
+    async fn get_reference_values(&self) -> Result<HashMap<String, Value>> {
         let req = tonic::Request::new(ReferenceValueQueryRequest {
             reference_value_id: String::new(),
         });
-        let res = self
+        let response = self
             .client
-            .lock()
-            .await
+            .clone()
             .query_reference_value(req)
             .await?
-            .into_inner();
-        let trust_digest = serde_json::from_str(&res.reference_value_results)?;
-        Ok(trust_digest)
+            .into_inner()
+            .reference_value_results;
+        Ok(serde_json::from_str(&response)?)
     }
 
-    async fn delete_reference_value(&mut self, name: &str) -> Result<bool> {
+    async fn delete_reference_value(&self, name: &str) -> Result<bool> {
         let req = tonic::Request::new(ReferenceValueDeleteRequest {
             name: name.to_string(),
         });
-        let _ = self.client.lock().await.delete_reference_value(req).await?;
+        self.client.clone().delete_reference_value(req).await?;
         Ok(true)
     }
 }
