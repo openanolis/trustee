@@ -523,16 +523,16 @@ fi
 if [ "$provenance_store_artifact" = "bundle" ]; then
   if [ -f "$rekor_v2_output_file" ]; then
     jq -n \
-      --argfile releasePayload "$payload_file" \
-      --argfile dsse "$envelope_file" \
-      --argfile rekor "$rekor_v2_output_file" \
-      '{releasePayload: $releasePayload, dsseEnvelope: $dsse, rekorEntryV2: $rekor}' > "$trustee_bundle_file"
+      --rawfile releasePayload "$payload_file" \
+      --rawfile dsse "$envelope_file" \
+      --rawfile rekor "$rekor_v2_output_file" \
+      '{releasePayload: ($releasePayload|fromjson), dsseEnvelope: ($dsse|fromjson), rekorEntryV2: ($rekor|fromjson)}' > "$trustee_bundle_file"
   else
     jq -n \
-      --argfile releasePayload "$payload_file" \
-      --argfile dsse "$envelope_file" \
+      --rawfile releasePayload "$payload_file" \
+      --rawfile dsse "$envelope_file" \
       --argfile rekor "$rekor_v1_output_file" \
-      '{releasePayload: $releasePayload, dsseEnvelope: $dsse, rekorEntryV1: $rekor}' > "$trustee_bundle_file"
+      '{releasePayload: ($releasePayload|fromjson), dsseEnvelope: ($dsse|fromjson), rekorEntryV1: ($rekor|fromjson)}' > "$trustee_bundle_file"
   fi
 fi
 
