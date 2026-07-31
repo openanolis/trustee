@@ -1138,10 +1138,20 @@ mod tests {
         assert_eq!(fetches.load(Ordering::SeqCst), 2);
     }
 
+    #[test]
+    #[serial_test::serial]
     fn pccs_override_wins() {
+        // The injected override is returned in preference to the default/env
+        // resolution. (`PCCS_URL` env is deliberately not set here, to avoid
+        // polluting other tests' env state; the override wins regardless.)
         super::set_pccs_url(Some("https://my-pccs.example".into()));
         assert_eq!(super::resolve_pccs_url(), "https://my-pccs.example");
-        // Clean up the shared global state so other tests are not polluted.
+
+        // Clearing the override restores default resolution, and confirms the
+        // shared global was reset so it cannot leak into other tests. The
+        // `#[serial_test::serial]` attribute above serializes this test against
+        // any other test that touches the same global PCCS override.
         super::set_pccs_url(None);
+        assert_ne!(super::resolve_pccs_url(), "https://my-pccs.example");
     }
 }
