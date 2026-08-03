@@ -50,6 +50,29 @@ use x509_parser::pem::Pem;
 use x509_parser::prelude::*;
 
 use crate::tdx::quote::{parse_tdx_quote, TcbVerificationResult};
+use crate::VerifierError;
+
+fn pccs_unavailable<E>(source: E) -> anyhow::Error
+where
+    E: Into<anyhow::Error>,
+{
+    VerifierError::DependencyUnavailable {
+        dependency: "PCCS",
+        source: source.into(),
+    }
+    .into()
+}
+
+fn pccs_bad_response<E>(source: E) -> anyhow::Error
+where
+    E: Into<anyhow::Error>,
+{
+    VerifierError::DependencyBadResponse {
+        dependency: "PCCS",
+        source: source.into(),
+    }
+    .into()
+}
 
 /// Default PCCS base URL, used only when neither `PCCS_URL` nor the QCNL config
 /// file provide one.
@@ -292,7 +315,7 @@ fn pccs_http_client() -> Result<reqwest::Client> {
         })
         .as_ref()
         .cloned()
-        .map_err(|e| anyhow!("failed to build HTTP client for PCCS: {e}"))
+        .map_err(|e| pccs_unavailable(anyhow!("failed to build HTTP client for PCCS: {e}")))
 }
 
 pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationResult> {
@@ -301,9 +324,20 @@ pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationRes
     // The PCK certificate chain is embedded in the quote's certification data
     // (PCK cert type 5). Extract it and derive FMSPC / CA type for collateral.
     let pck_chain = extract_pck_chain_pem(quote)
-        .context("failed to extract embedded PCK certificate chain from quote")?;
-    let leaf_der = first_cert_der(&pck_chain)?;
-    let (fmspc, ca) = extract_fmspc_and_ca(&leaf_der)?;
+        .context("failed to extract embedded PCK certificate chain from quote")
+        .map_err(|source| VerifierError::InvalidQuote {
+            field: "quote",
+            source,
+        })?;
+    let leaf_der = first_cert_der(&pck_chain).map_err(|source| VerifierError::InvalidQuote {
+        field: "quote",
+        source,
+    })?;
+    let (fmspc, ca) =
+        extract_fmspc_and_ca(&leaf_der).map_err(|source| VerifierError::InvalidQuote {
+            field: "quote",
+            source,
+        })?;
     debug!("dcap-qvl backend: fmspc={fmspc}, ca={ca}, pccs={pccs_url}");
 
     let pccs_base_url = normalize_pccs_base_url(&pccs_url);
@@ -324,7 +358,7 @@ pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationRes
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
 
-    let dates = CollateralDates::parse(&collateral)?;
+    let dates = CollateralDates::parse(&collateral).map_err(pccs_bad_response)?;
     let collateral_expired = real_now >= dates.earliest_expiration_date;
     debug!(
         "dcap-qvl backend: fmspc={fmspc} now={real_now} tcb_next={} expired={collateral_expired}",
@@ -346,7 +380,9 @@ pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationRes
         .allow_service_td(true)
         .allow_expired(true)
         .verify(quote, &collateral, real_now as u64)
-        .map_err(|e| anyhow!("dcap-qvl quote verification failed: {e:#}"))?;
+        .map_err(|source| VerifierError::VerificationFailed {
+            source: anyhow!("dcap-qvl quote verification failed: {source:#}"),
+        })?;
 
     build_result(quote, &leaf_der, &report, &dates, collateral_expired)
 }
@@ -474,37 +510,45 @@ async fn fetch_collateral(pccs_base_url: &str, fmspc: &str, ca: &str) -> Result<
     let tcb_url = format!("{pccs_base_url}/tdx/certification/v4/tcb?fmspc={fmspc}");
     let (tcb_info_issuer_chain, tcb_body) =
         get_with_header(&client, &tcb_url, "TCB-Info-Issuer-Chain").await?;
-    let tcb_json: serde_json::Value =
-        serde_json::from_slice(&tcb_body).context("TCB info is not valid JSON")?;
+    let tcb_json: serde_json::Value = serde_json::from_slice(&tcb_body)
+        .context("TCB info is not valid JSON")
+        .map_err(pccs_bad_response)?;
     let tcb_info = tcb_json
         .get("tcbInfo")
-        .context("TCB info response missing tcbInfo")?
+        .context("TCB info response missing tcbInfo")
+        .map_err(pccs_bad_response)?
         .to_string();
     let tcb_info_signature = hex::decode(
         tcb_json
             .get("signature")
             .and_then(|v| v.as_str())
-            .context("TCB info response missing signature")?,
+            .context("TCB info response missing signature")
+            .map_err(pccs_bad_response)?,
     )
-    .context("TCB info signature is not valid hex")?;
+    .context("TCB info signature is not valid hex")
+    .map_err(pccs_bad_response)?;
 
     // QE identity (tdx path for TDX).
     let qe_url = format!("{pccs_base_url}/tdx/certification/v4/qe/identity?update=standard");
     let (qe_identity_issuer_chain, qe_body) =
         get_with_header(&client, &qe_url, "SGX-Enclave-Identity-Issuer-Chain").await?;
-    let qe_json: serde_json::Value =
-        serde_json::from_slice(&qe_body).context("QE identity is not valid JSON")?;
+    let qe_json: serde_json::Value = serde_json::from_slice(&qe_body)
+        .context("QE identity is not valid JSON")
+        .map_err(pccs_bad_response)?;
     let qe_identity = qe_json
         .get("enclaveIdentity")
-        .context("QE identity response missing enclaveIdentity")?
+        .context("QE identity response missing enclaveIdentity")
+        .map_err(pccs_bad_response)?
         .to_string();
     let qe_identity_signature = hex::decode(
         qe_json
             .get("signature")
             .and_then(|v| v.as_str())
-            .context("QE identity response missing signature")?,
+            .context("QE identity response missing signature")
+            .map_err(pccs_bad_response)?,
     )
-    .context("QE identity signature is not valid hex")?;
+    .context("QE identity signature is not valid hex")
+    .map_err(pccs_bad_response)?;
 
     // Root CA CRL. PCCS serves it hex-encoded under the sgx path.
     let rootcacrl_url = format!("{pccs_base_url}/sgx/certification/v4/rootcacrl");
@@ -513,10 +557,12 @@ async fn fetch_collateral(pccs_base_url: &str, fmspc: &str, ca: &str) -> Result<
         .send()
         .await
         .and_then(|r| r.error_for_status())
-        .context("failed to fetch root CA CRL")?
+        .context("failed to fetch root CA CRL")
+        .map_err(pccs_unavailable)?
         .bytes()
         .await
-        .context("failed to read root CA CRL body")?;
+        .context("failed to read root CA CRL body")
+        .map_err(pccs_unavailable)?;
     let root_ca_crl = match std::str::from_utf8(&root_ca_crl_raw)
         .ok()
         .and_then(|s| hex::decode(s.trim()).ok())
@@ -549,23 +595,29 @@ async fn get_with_header(
         .get(url)
         .send()
         .await
-        .with_context(|| format!("failed to GET {url}"))?
+        .with_context(|| format!("failed to GET {url}"))
+        .map_err(pccs_unavailable)?
         .error_for_status()
-        .with_context(|| format!("PCCS returned an error for {url}"))?;
+        .with_context(|| format!("PCCS returned an error for {url}"))
+        .map_err(pccs_unavailable)?;
     let hdr = resp
         .headers()
         .get(header)
-        .with_context(|| format!("PCCS response for {url} missing header {header}"))?
+        .with_context(|| format!("PCCS response for {url} missing header {header}"))
+        .map_err(pccs_bad_response)?
         .to_str()
-        .context("issuer-chain header is not valid ASCII")?
+        .context("issuer-chain header is not valid ASCII")
+        .map_err(pccs_bad_response)?
         .to_string();
     let hdr = urlencoding::decode(&hdr)
-        .context("failed to url-decode issuer-chain header")?
+        .context("failed to url-decode issuer-chain header")
+        .map_err(pccs_bad_response)?
         .into_owned();
     let body = resp
         .bytes()
         .await
-        .with_context(|| format!("failed to read body of {url}"))?
+        .with_context(|| format!("failed to read body of {url}"))
+        .map_err(pccs_unavailable)?
         .to_vec();
     Ok((hdr, body))
 }

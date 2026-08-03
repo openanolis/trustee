@@ -7,7 +7,7 @@
 //! `libsgx_dcap_quoteverify` shared object at run time and dynamically load
 //! the platform quote provider (PCCS collateral) and, optionally, the QvE.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use log::{debug, warn};
 use std::mem;
 use std::time::{Duration, SystemTime};
@@ -20,6 +20,42 @@ use qvl::{
 };
 
 use crate::tdx::quote::TcbVerificationResult;
+use crate::VerifierError;
+
+fn classify_qvl_error(stage: &'static str, error: quote3_error_t) -> VerifierError {
+    let source = anyhow!("{stage} failed with DCAP QVL error {:#04x}", error as u32);
+
+    match error {
+        quote3_error_t::SGX_QL_NETWORK_ERROR
+        | quote3_error_t::SGX_QL_NO_QUOTE_COLLATERAL_DATA
+        | quote3_error_t::SGX_QL_UNABLE_TO_GET_COLLATERAL
+        | quote3_error_t::SGX_QL_SERVICE_UNAVAILABLE
+        | quote3_error_t::SGX_QL_NETWORK_FAILURE
+        | quote3_error_t::SGX_QL_SERVICE_TIMEOUT
+        | quote3_error_t::SGX_QL_ERROR_BUSY
+        | quote3_error_t::SGX_QL_CERTS_UNAVAILABLE => VerifierError::DependencyUnavailable {
+            dependency: "PCCS",
+            source,
+        },
+        quote3_error_t::SGX_QL_TCBINFO_UNSUPPORTED_FORMAT
+        | quote3_error_t::SGX_QL_QEIDENTITY_UNSUPPORTED_FORMAT
+        | quote3_error_t::SGX_QL_CRL_UNSUPPORTED_FORMAT
+        | quote3_error_t::SGX_QL_ERROR_MESSAGE_PARSING_ERROR
+        | quote3_error_t::SGX_QL_UNKNOWN_MESSAGE_RESPONSE => VerifierError::DependencyBadResponse {
+            dependency: "PCCS",
+            source,
+        },
+        quote3_error_t::SGX_QL_ERROR_INVALID_PARAMETER
+        | quote3_error_t::SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED
+        | quote3_error_t::SGX_QL_QUOTE_FORMAT_UNSUPPORTED
+        | quote3_error_t::SGX_QL_PCK_CERT_UNSUPPORTED_FORMAT
+        | quote3_error_t::SGX_QL_PCK_CERT_CHAIN_ERROR => VerifierError::InvalidQuote {
+            field: "quote",
+            source,
+        },
+        _ => VerifierError::Internal { source },
+    }
+}
 
 /// Human-readable TCB verification status string.
 fn qv_result_to_str(result: sgx_ql_qv_result_t) -> &'static str {
@@ -81,10 +117,9 @@ pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationRes
                 warn!("Quote supplemental data size is different between DCAP QVL and QvE, please make sure you installed DCAP QVL and QvE from same release.")
             }
         }
-        Err(e) => bail!(
-            "tee_get_quote_supplemental_data_size failed: {:#04x}",
-            e as u32
-        ),
+        Err(error) => {
+            return Err(classify_qvl_error("tee_get_quote_supplemental_data_size", error).into())
+        }
     }
 
     // get collateral
@@ -119,7 +154,7 @@ pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationRes
         None,
         p_supplemental_data,
     )
-    .map_err(|e| anyhow!("tee_verify_quote failed: {:#04x}", e as u32))?;
+    .map_err(|error| classify_qvl_error("tee_verify_quote", error))?;
 
     debug!("tee_verify_quote successfully returned.");
 
@@ -145,10 +180,13 @@ pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationRes
             );
         }
         _ => {
-            bail!(
-                "Verification completed with Terminal result: {:x}",
-                quote_verification_result as u32
-            );
+            return Err(VerifierError::VerificationFailed {
+                source: anyhow!(
+                    "DCAP QVL returned terminal verification result {:#04x}",
+                    quote_verification_result as u32
+                ),
+            }
+            .into());
         }
     }
 

@@ -7,7 +7,7 @@ use crate::tdx::claims::generate_parsed_claim;
 
 use super::*;
 use async_trait::async_trait;
-use base64::Engine;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use quote::parse_tdx_quote;
 use serde::{Deserialize, Serialize};
 use verify::ecdsa_quote_verification;
@@ -20,6 +20,7 @@ pub(crate) mod quote;
 pub(crate) mod verify;
 
 use crate::tdx::gpu::GpuEvidenceList;
+use crate::VerifierError;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TdxEvidence {
@@ -47,12 +48,16 @@ impl Verifier for Tdx {
         expected_report_data: &ReportData,
         expected_init_data_hash: &InitDataHash,
     ) -> Result<(TeeEvidenceParsedClaim, TeeClass)> {
-        let tdx_evidence = serde_json::from_value::<TdxEvidence>(evidence)
-            .context("Deserialize TDX Evidence failed.")?;
+        let tdx_evidence = serde_json::from_value::<TdxEvidence>(evidence).map_err(|source| {
+            VerifierError::InvalidEvidenceFormat {
+                field: "evidence",
+                source: source.into(),
+            }
+        })?;
 
         let claims = verify_evidence(expected_report_data, expected_init_data_hash, tdx_evidence)
             .await
-            .map_err(|e| anyhow!("TDX Verifier: {:?}", e))?;
+            .context("TDX verifier")?;
 
         Ok((claims, "cpu".to_string()))
     }
@@ -64,11 +69,24 @@ async fn verify_evidence(
     evidence: TdxEvidence,
 ) -> Result<TeeEvidenceParsedClaim> {
     if evidence.quote.is_empty() {
-        bail!("TDX Quote is empty.");
+        return Err(VerifierError::InvalidEvidenceFormat {
+            field: "quote",
+            source: anyhow!("TDX quote is empty"),
+        }
+        .into());
     }
 
+    let quote_bin = decode_base64(&evidence.quote, "quote")?;
+
+    // Parse before accessing the quote verification backend. Besides producing
+    // a precise client error, this avoids contacting collateral services for a
+    // structurally invalid quote.
+    let quote = parse_tdx_quote(&quote_bin).map_err(|source| VerifierError::InvalidQuote {
+        field: "quote",
+        source,
+    })?;
+
     // Verify TD quote ECDSA signature.
-    let quote_bin = base64::engine::general_purpose::STANDARD.decode(evidence.quote)?;
     let tcb_verification_result = ecdsa_quote_verification(quote_bin.as_slice()).await?;
 
     info!(
@@ -76,16 +94,17 @@ async fn verify_evidence(
         tcb_verification_result.tcb_status
     );
 
-    // Parse quote and Compare report data
-    let quote = parse_tdx_quote(&quote_bin)?;
-
     debug!("{quote}");
 
     if let ReportData::Value(expected_report_data) = expected_report_data {
         debug!("Check the binding of REPORT_DATA.");
         let expected_report_data = regularize_data(expected_report_data, 64, "REPORT_DATA", "TDX");
         if expected_report_data != quote.report_data() {
-            bail!("REPORT_DATA is different from that in TDX Quote");
+            return Err(VerifierError::BindingMismatch {
+                field: "quote.report_data",
+                source: anyhow!("REPORT_DATA differs from the value in the TDX quote"),
+            }
+            .into());
         }
     }
 
@@ -95,7 +114,11 @@ async fn verify_evidence(
             regularize_data(expected_init_data_hash, 48, "MRCONFIGID", "TDX");
         if expected_init_data_hash != quote.mr_config_id() {
             error!("MRCONFIGID (Initdata) verification failed.");
-            bail!("MRCONFIGID is different from that in TDX Quote");
+            return Err(VerifierError::BindingMismatch {
+                field: "quote.mr_config_id",
+                source: anyhow!("MRCONFIGID differs from the value in the TDX quote"),
+            }
+            .into());
         }
     }
 
@@ -104,9 +127,13 @@ async fn verify_evidence(
     // Verify Integrity of CC Eventlog
     let mut ccel_option = Option::default();
     if let Some(el) = &evidence.cc_eventlog {
-        let ccel_data = base64::engine::general_purpose::STANDARD.decode(el)?;
-        let ccel = CcEventLog::try_from(ccel_data)
-            .map_err(|e| anyhow!("Parse CC Eventlog failed: {:?}", e))?;
+        let ccel_data = decode_base64(el, "cc_eventlog")?;
+        let ccel = CcEventLog::try_from(ccel_data).map_err(|source| {
+            VerifierError::InvalidEvidenceFormat {
+                field: "cc_eventlog",
+                source: anyhow!("{source:?}"),
+            }
+        })?;
         ccel_option = Some(ccel.clone());
         let compare_obj: Vec<ReferenceMeasurement> = vec![
             ReferenceMeasurement {
@@ -131,7 +158,11 @@ async fn verify_evidence(
             },
         ];
 
-        ccel.replay_and_match(compare_obj)?;
+        ccel.replay_and_match(compare_obj)
+            .map_err(|source| VerifierError::BindingMismatch {
+                field: "cc_eventlog",
+                source: anyhow!("{source:?}"),
+            })?;
         info!("EventLog integrity check succeeded.");
     } else {
         warn!("No Eventlog included inside the TDX evidence.");
@@ -207,11 +238,83 @@ async fn verify_evidence(
     Ok(tdx_attestation_claims as TeeEvidenceParsedClaim)
 }
 
+fn decode_base64(value: &str, field: &'static str) -> Result<Vec<u8>> {
+    STANDARD
+        .decode(value)
+        .map_err(|source| VerifierError::InvalidEvidenceEncoding {
+            field,
+            source: source.into(),
+        })
+        .map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
+    use serde_json::json;
     use std::fs;
+
+    fn classified_error(error: &anyhow::Error) -> &VerifierError {
+        error
+            .downcast_ref::<VerifierError>()
+            .expect("error should retain its verifier classification")
+    }
+
+    #[tokio::test]
+    async fn invalid_quote_encoding_is_classified() {
+        let error = Tdx::default()
+            .evaluate(
+                json!({ "quote": "AAAAA_A" }),
+                &ReportData::NotProvided,
+                &InitDataHash::NotProvided,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            classified_error(&error),
+            VerifierError::InvalidEvidenceEncoding { field: "quote", .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn missing_quote_is_classified() {
+        let error = Tdx::default()
+            .evaluate(
+                json!({}),
+                &ReportData::NotProvided,
+                &InitDataHash::NotProvided,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            classified_error(&error),
+            VerifierError::InvalidEvidenceFormat {
+                field: "evidence",
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn malformed_quote_is_classified_before_verification() {
+        let quote = STANDARD.encode([0_u8; 4]);
+        let error = Tdx::default()
+            .evaluate(
+                json!({ "quote": quote }),
+                &ReportData::NotProvided,
+                &InitDataHash::NotProvided,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            classified_error(&error),
+            VerifierError::InvalidQuote { field: "quote", .. }
+        ));
+    }
 
     #[test]
     fn test_generate_parsed_claim() {

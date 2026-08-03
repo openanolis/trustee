@@ -104,6 +104,7 @@ fn configure_cors(allowed_origin: &[String]) -> Cors {
     let mut cors = Cors::default()
         .allowed_methods(vec!["POST", "GET", "OPTIONS"])
         .allowed_headers(vec![header::CONTENT_TYPE, header::AUTHORIZATION])
+        .expose_headers(vec![header::HeaderName::from_static("x-request-id")])
         .max_age(86400);
 
     // Parse origin
@@ -161,6 +162,7 @@ async fn main() -> Result<(), RestfulError> {
     let server = HttpServer::new(move || {
         App::new()
             .wrap(configure_cors(&allowed_origin))
+            .app_data(restful::json_config())
             .service(web::resource(WebApi::Attestation.as_ref()).route(web::post().to(attestation)))
             .service(
                 web::resource(WebApi::Policy.as_ref())
