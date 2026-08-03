@@ -17,6 +17,7 @@ use openssl::{
 use serde_json::json;
 use sev::firmware::guest::AttestationReport;
 use sev::firmware::host::{CertTableEntry, CertType};
+use sha2::{Digest, Sha512};
 #[cfg(test)]
 use std::sync::OnceLock;
 use x509_parser::prelude::*;
@@ -25,6 +26,10 @@ use x509_parser::prelude::*;
 pub struct SnpEvidence {
     attestation_report: AttestationReport,
     cert_chain: Option<Vec<CertTableEntry>>,
+    /// Base64-encoded SVSM service manifest. When present, REPORT_DATA must
+    /// contain SHA-512(padded nonce || manifest), as defined by the SVSM ABI.
+    #[serde(default)]
+    svsm_manifest: Option<String>,
 }
 
 const HW_ID_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .3704 .1 .4);
@@ -247,6 +252,7 @@ impl Verifier for Snp {
         let SnpEvidence {
             attestation_report: report,
             cert_chain,
+            svsm_manifest,
         } = serde_json::from_value(evidence).context("Deserialize Quote failed.")?;
 
         // Faithful raw bytes of the report; sev 4.x round-trips v2..=5 reports
@@ -282,8 +288,22 @@ impl Verifier for Snp {
 
         if let ReportData::Value(expected_report_data) = expected_report_data {
             debug!("Check the binding of REPORT_DATA.");
-            let expected_report_data =
-                regularize_data(expected_report_data, 64, "REPORT_DATA", "SNP");
+            let nonce = regularize_data(expected_report_data, 64, "REPORT_DATA", "SNP");
+            let expected_report_data = if let Some(encoded_manifest) = &svsm_manifest {
+                let manifest = base64::engine::general_purpose::STANDARD
+                    .decode(encoded_manifest)
+                    .context("Decode SVSM manifest")?;
+                if manifest.is_empty() {
+                    bail!("SVSM vTPM manifest is empty");
+                }
+
+                let mut hasher = Sha512::new();
+                hasher.update(&nonce);
+                hasher.update(&manifest);
+                hasher.finalize().to_vec()
+            } else {
+                nonce
+            };
 
             if expected_report_data != report.report_data {
                 warn!(
@@ -304,7 +324,14 @@ impl Verifier for Snp {
             }
         }
 
-        let claims_map = parse_tee_evidence(&report, &raw, proc_gen)?;
+        let mut claims_map = parse_tee_evidence(&report, &raw, proc_gen)?;
+        if let Some(manifest) = svsm_manifest {
+            let claims = claims_map
+                .as_object_mut()
+                .context("SNP claims must be a JSON object")?;
+            claims.insert("svsm_manifest".to_string(), json!(manifest));
+            claims.insert("svsm_attestation".to_string(), json!(true));
+        }
         let json = json!(claims_map);
         Ok((json, "cpu".to_string()))
     }
