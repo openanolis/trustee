@@ -89,6 +89,18 @@ OpenAnolis提供了一个简单易用的工具[cryptpilot](https://github.com/op
 
 如果本地不存在可复用的 AK，`Hygon TPM attester` 会回退为临时生成新的 SM2 AK，仅完成主链路 quote 证明，不执行 registrar 绑定校验。
 
+### SEV-SNP + SVSM vTPM 动态度量
+
+当 SNP guest 使用 Coconut SVSM vTPM，且 guest 内核提供 `tpm_svsm` 与 TSM SVSM attestation ABI 时，Attestation Agent 会把 SNP 作为主证据、TPM Quote 作为附加设备证据，并把 AA 动态事件扩展到 vTPM PCR。
+
+Trustee 按以下顺序验证这组组合证据：
+
+1. 验证 VMPL0 SNP report 的签名、证书链和 challenge 绑定；其中 `REPORT_DATA = SHA-512(nonce || vTPM manifest)`。
+2. 验证 manifest 中的 EK `TPMT_PUBLIC` 与 TPM evidence 携带的 EK 完全一致，阻止宿主注入 swtpm 或跨 guest 拼接证据。
+3. 验证 TPM Quote 的签名、nonce、PCR digest，并回放 UEFI 启动日志和 AA 动态事件日志，逐项比对 Quote 中的 PCR。
+
+Keylime 是可选增强：没有 `keylime_agent_uuid` 时，上述主链路仍会完整执行；只有 evidence 提供 UUID 时，TPM verifier 才查询 registrar，并额外验证已激活 AK 与 EK 的绑定关系。SVSM vTPM 的 EK 通常没有厂商证书，因此该路径优先比较 registrar 的 `ek_tpm` 与 evidence 的 EK 公钥；物理 TPM 仍兼容 EK 证书比较。
+
 ### 平台特定
 
 平台特定的证据字段内容已经在Trustee内部验证硬件证书和硬件签名时做过了一轮验证，确保其真实可信，如果想要在远程证明策略中对关注的字段再次做一次自定义的验证，就需要设置对应的参考值。
