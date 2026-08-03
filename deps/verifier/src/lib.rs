@@ -5,6 +5,9 @@ use async_trait::async_trait;
 use kbs_types::Tee;
 use log::debug;
 
+mod error;
+pub use error::Error as VerifierError;
+
 pub mod sample;
 pub mod sample_device;
 
@@ -49,8 +52,8 @@ pub mod tpm_registrar;
 
 pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
     match tee {
-        Tee::Sev => todo!(),
-        Tee::Nvidia => todo!(),
+        Tee::Sev => bail!("TEE `sev` verifier is not implemented."),
+        Tee::Nvidia => bail!("TEE `nvidia` verifier is not implemented."),
         Tee::AzSnpVtpm => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "az-snp-vtpm-verifier")] {
@@ -131,7 +134,7 @@ pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
         //         }
         //     }
         // }
-        Tee::Cca => todo!(),
+        Tee::Cca => bail!("TEE `cca` verifier is not implemented."),
 
         Tee::Se => {
             cfg_if::cfg_if! {
@@ -251,6 +254,18 @@ fn regularize_data(data: &[u8], len: usize, data_name: &str, arch: &str) -> Vec<
         Ordering::Greater => {
             debug!("The input {data_name} of {arch} is longer than {len} bytes, will be truncated to {len} bytes.");
             data[..len].to_vec()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unimplemented_tees_return_errors_instead_of_panicking() {
+        for tee in [Tee::Sev, Tee::Nvidia, Tee::Cca] {
+            assert!(to_verifier(&tee).is_err(), "{tee:?} must be rejected");
         }
     }
 }

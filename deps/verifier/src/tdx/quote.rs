@@ -371,7 +371,12 @@ impl fmt::Display for Quote {
 }
 
 pub fn parse_tdx_quote(quote_bin: &[u8]) -> Result<Quote> {
-    let quote_header = &quote_bin[..QUOTE_HEADER_SIZE];
+    let quote_header = quote_bin.get(..QUOTE_HEADER_SIZE).ok_or_else(|| {
+        anyhow!(
+            "TD quote is too short for its header: expected at least {QUOTE_HEADER_SIZE} bytes, got {}",
+            quote_bin.len()
+        )
+    })?;
     let header = quote_header
         .pread::<QuoteHeader>(0)
         .map_err(|e| anyhow!("Parse TD quote header failed: {:?}", e))?;
@@ -384,22 +389,26 @@ pub fn parse_tdx_quote(quote_bin: &[u8]) -> Result<Quote> {
             Ok(Quote::V4 { header, body })
         }
         [5, 0] => {
-            let r#type = QuoteV5Type::from_bytes(
-                &quote_bin
-                    [QUOTE_HEADER_SIZE..QUOTE_HEADER_SIZE + std::mem::size_of::<QuoteV5Type>()],
-            )?;
+            let type_end = QUOTE_HEADER_SIZE + std::mem::size_of::<QuoteV5Type>();
+            let type_bytes = quote_bin.get(QUOTE_HEADER_SIZE..type_end).ok_or_else(|| {
+                anyhow!(
+                    "TD quote v5 is too short for its type field: got {} bytes",
+                    quote_bin.len()
+                )
+            })?;
+            let r#type = QuoteV5Type::from_bytes(type_bytes)?;
             let mut size: [u8; 4] = [0; 4];
-            size.copy_from_slice(
-                &quote_bin[QUOTE_HEADER_SIZE + std::mem::size_of::<QuoteV5Type>()
-                    ..QUOTE_HEADER_SIZE
-                        + std::mem::size_of::<QuoteV5Type>()
-                        + std::mem::size_of::<[u8; 4]>()],
-            );
+            let size_end = type_end + std::mem::size_of::<[u8; 4]>();
+            let size_bytes = quote_bin.get(type_end..size_end).ok_or_else(|| {
+                anyhow!(
+                    "TD quote v5 is too short for its size field: got {} bytes",
+                    quote_bin.len()
+                )
+            })?;
+            size.copy_from_slice(size_bytes);
             match r#type {
                 QuoteV5Type::TDX10 => {
-                    let offset = QUOTE_HEADER_SIZE
-                        + std::mem::size_of::<QuoteV5Type>()
-                        + std::mem::size_of::<[u8; 4]>();
+                    let offset = size_end;
                     let body: ReportBody2 = quote_bin
                         .pread::<ReportBody2>(offset)
                         .map_err(|e| anyhow!("Parse TD quote v5 TDX1.0 body failed: {:?}", e))?;
@@ -411,9 +420,7 @@ pub fn parse_tdx_quote(quote_bin: &[u8]) -> Result<Quote> {
                     })
                 }
                 QuoteV5Type::TDX15 => {
-                    let offset = QUOTE_HEADER_SIZE
-                        + std::mem::size_of::<QuoteV5Type>()
-                        + std::mem::size_of::<[u8; 4]>();
+                    let offset = size_end;
                     let body: ReportBody2v15 = quote_bin
                         .pread::<ReportBody2v15>(offset)
                         .map_err(|e| anyhow!("Parse TD quote v5 TDX1.5 body failed: {:?}", e))?;
@@ -448,5 +455,13 @@ mod tests {
         let parsed_quote = format!("{}", quote.unwrap());
 
         let _ = fs::write(format!("{quote_path}.txt"), parsed_quote);
+    }
+
+    #[test]
+    fn short_quote_returns_error_instead_of_panicking() {
+        let result = std::panic::catch_unwind(|| parse_tdx_quote(&[0_u8; 4]));
+
+        assert!(result.is_ok(), "short quote must not panic");
+        assert!(result.unwrap().is_err(), "short quote must be rejected");
     }
 }

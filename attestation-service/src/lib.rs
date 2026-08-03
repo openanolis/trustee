@@ -11,7 +11,7 @@ pub mod token;
 
 use crate::token::AttestationTokenBroker;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use canon_json::CanonicalFormatter;
@@ -136,6 +136,39 @@ pub enum ServiceError {
     Rvps(#[source] RvpsError),
     #[error(transparent)]
     Anyhow(#[from] anyhow::Error),
+}
+
+/// Errors whose request context must survive from the service layer to a
+/// transport such as REST or gRPC.
+///
+/// The public `evaluate` API remains `anyhow::Result` for compatibility. These
+/// values are inserted into its error chain so transports can downcast them
+/// and classify failures without matching display strings.
+#[derive(Error, Debug)]
+pub enum AttestationError {
+    #[error("invalid attestation request field `{field}`")]
+    InvalidRequest {
+        request_index: Option<usize>,
+        field: &'static str,
+        #[source]
+        source: anyhow::Error,
+    },
+
+    #[error("verification request {request_index} uses unsupported TEE {tee:?}")]
+    UnsupportedTee {
+        request_index: usize,
+        tee: Tee,
+        #[source]
+        source: anyhow::Error,
+    },
+
+    #[error("verification request {request_index} ({tee:?}) failed")]
+    Verification {
+        request_index: usize,
+        tee: Tee,
+        #[source]
+        source: anyhow::Error,
+    },
 }
 
 /// Initdata defined in
@@ -265,25 +298,46 @@ impl AttestationService {
         let mut tee_claims: Vec<TeeClaims> = vec![];
 
         if verification_requests.is_empty() {
-            bail!("No verification requests provided.")
+            return Err(AttestationError::InvalidRequest {
+                request_index: None,
+                field: "verification_requests",
+                source: anyhow!("no verification requests provided"),
+            }
+            .into());
         }
 
-        for verification_request in verification_requests {
-            let verifier = verifier::to_verifier(&verification_request.tee)?;
+        for (request_index, verification_request) in verification_requests.into_iter().enumerate() {
+            let verifier = verifier::to_verifier(&verification_request.tee).map_err(|source| {
+                AttestationError::UnsupportedTee {
+                    request_index,
+                    tee: verification_request.tee,
+                    source,
+                }
+            })?;
 
             let (report_data, runtime_data_claims) = parse_runtime_data(
                 verification_request.runtime_data,
                 &verification_request.runtime_data_hash_algorithm,
             )
-            .context("parse runtime data")?;
+            .context("parse runtime data")
+            .map_err(|source| AttestationError::InvalidRequest {
+                request_index: Some(request_index),
+                field: "runtime_data",
+                source,
+            })?;
 
             let report_data = match &report_data {
                 Some(data) => ReportData::Value(data),
                 None => ReportData::NotProvided,
             };
 
-            let (init_data, init_data_claims) =
-                parse_init_data(verification_request.init_data).context("parse init data")?;
+            let (init_data, init_data_claims) = parse_init_data(verification_request.init_data)
+                .context("parse init data")
+                .map_err(|source| AttestationError::InvalidRequest {
+                    request_index: Some(request_index),
+                    field: "init_data",
+                    source,
+                })?;
 
             let init_data_hash = match &init_data {
                 Some(data) => InitDataHash::Value(data),
@@ -293,7 +347,11 @@ impl AttestationService {
             let (claims_from_tee_evidence, tee_class) = verifier
                 .evaluate(verification_request.evidence, &report_data, &init_data_hash)
                 .await
-                .map_err(|e| anyhow!("Verifier evaluate failed: {e:?}"))?;
+                .map_err(|source| AttestationError::Verification {
+                    request_index,
+                    tee: verification_request.tee,
+                    source,
+                })?;
             info!(
                 "{:?} Verifier/endorsement check passed.",
                 verification_request.tee
