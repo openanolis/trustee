@@ -104,7 +104,6 @@ fn configure_cors(allowed_origin: &[String]) -> Cors {
     let mut cors = Cors::default()
         .allowed_methods(vec!["POST", "GET", "OPTIONS"])
         .allowed_headers(vec![header::CONTENT_TYPE, header::AUTHORIZATION])
-        .expose_headers(vec![header::HeaderName::from_static("x-request-id")])
         .max_age(86400);
 
     // Parse origin

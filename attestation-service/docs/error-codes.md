@@ -5,9 +5,10 @@ with the media type `application/problem+json`. Successful responses are
 unchanged.
 
 Clients should branch on `code` and use the HTTP status as a fallback. The
-human-readable `detail` can change and must not be parsed. `request_id` is also
-returned in the `x-request-id` response header and can be used to correlate the
-response with the full server-side error chain.
+human-readable `detail` can change and must not be parsed. The full source error
+chain is logged by RESTful AS and is not returned to clients. RESTful AS does
+not synthesize a request or correlation identifier; clients should use their
+own tracing context when one is required.
 
 ```json
 {
@@ -17,8 +18,7 @@ response with the full server-side error chain.
   "code": "AS.EVIDENCE.INVALID_ENCODING",
   "detail": "An evidence field uses an invalid encoding.",
   "retryable": false,
-  "field": "verification_requests[0].evidence.quote",
-  "request_id": "b08e8f11-0000-4000-8000-000000000000"
+  "field": "verification_requests[0].evidence.quote"
 }
 ```
 

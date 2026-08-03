@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
 use tokio::sync::RwLock;
-use uuid::Uuid;
 
 const ERROR_TYPE_PREFIX: &str =
     "https://github.com/confidential-containers/attestation-service/errors";
@@ -87,7 +86,6 @@ struct ProblemDetails {
     retryable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     field: Option<String>,
-    request_id: String,
 }
 
 impl Error {
@@ -296,10 +294,8 @@ impl ResponseError for Error {
 
     fn error_response(&self) -> HttpResponse {
         let status = self.status_code();
-        let request_id = Uuid::new_v4().to_string();
         error!(
-            "request_id={} code={} status={} error={:#}",
-            request_id,
+            "code={} status={} error={:#}",
             self.code,
             status.as_u16(),
             self.source
@@ -313,11 +309,9 @@ impl ResponseError for Error {
             detail: self.detail.clone(),
             retryable: self.retryable,
             field: self.field.clone(),
-            request_id: request_id.clone(),
         };
 
         HttpResponse::build(status)
-            .insert_header(("x-request-id", request_id))
             .content_type("application/problem+json")
             .json(problem)
     }
@@ -790,8 +784,11 @@ mod tests {
         let response = error.error_response();
         let status = response.status();
         let headers = response.headers().clone();
+        assert!(headers.get("x-request-id").is_none());
         let body = to_bytes(response.into_body()).await.unwrap();
-        let problem: ProblemDetails = serde_json::from_slice(&body).unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert!(body.get("request_id").is_none());
+        let problem: ProblemDetails = serde_json::from_value(body).unwrap();
         let mut response = HttpResponse::build(status).finish();
         *response.headers_mut() = headers;
         (response, problem)
@@ -829,15 +826,6 @@ mod tests {
         );
         assert!(!problem.retryable);
         assert!(!problem.detail.contains(source_detail));
-        assert_eq!(
-            response
-                .headers()
-                .get("x-request-id")
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            problem.request_id
-        );
     }
 
     #[actix_web::test]
@@ -883,16 +871,11 @@ mod tests {
         let response = test::call_service(&app, request).await;
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let request_id = response
-            .headers()
-            .get("x-request-id")
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-        let problem: ProblemDetails = test::read_body_json(response).await;
+        assert!(response.headers().get("x-request-id").is_none());
+        let body: Value = test::read_body_json(response).await;
+        assert!(body.get("request_id").is_none());
+        let problem: ProblemDetails = serde_json::from_value(body).unwrap();
         assert_eq!(problem.code, "AS.REQUEST.INVALID_JSON");
         assert_eq!(problem.field.as_deref(), Some("body"));
-        assert_eq!(problem.request_id, request_id);
     }
 }
