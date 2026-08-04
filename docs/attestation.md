@@ -93,11 +93,21 @@ OpenAnolis提供了一个简单易用的工具[cryptpilot](https://github.com/op
 
 当 SNP guest 使用 Coconut SVSM vTPM，且 guest 内核提供 `tpm_svsm` 与 TSM SVSM attestation ABI 时，Attestation Agent 会把 SNP 作为主证据、TPM Quote 作为附加设备证据，并把 AA 动态事件扩展到 vTPM PCR。
 
-Trustee 按以下顺序验证这组组合证据：
+Trustee 在 Attestation Service 核心层验证这组组合证据，因此经 KBS、
+直接访问 RESTful AS 或直接访问 gRPC AS 都遵循相同的安全语义：
 
 1. 验证 VMPL0 SNP report 的签名、证书链和 challenge 绑定；其中 `REPORT_DATA = SHA-512(nonce || vTPM manifest)`。
-2. 验证 manifest 中的 EK `TPMT_PUBLIC` 与 TPM evidence 携带的 EK 完全一致，阻止宿主注入 swtpm 或跨 guest 拼接证据。
-3. 验证 TPM Quote 的签名、nonce、PCR digest，并回放 UEFI 启动日志和 AA 动态事件日志，逐项比对 Quote 中的 PCR。
+2. 验证 SNP runtime data 覆盖的 TPM evidence 与本次提交给 AS 的 TPM evidence 完全一致，并确认两者使用相同的基础 runtime data，阻止替换或跨 guest 拼接证据。
+3. 验证 manifest 中的 EK `TPMT_PUBLIC` 与 TPM evidence 携带的 EK 完全一致。
+4. 验证 TPM Quote 的签名、nonce、PCR digest，并回放 UEFI 启动日志和 AA 动态事件日志，逐项比对 Quote 中的 PCR。
+
+直连 RESTful AS 或 gRPC AS 时，应在同一个请求中提交 SNP、TPM 两条
+`verification_requests`。SNP 的 structured runtime data 使用
+`additional-evidence` 携带序列化后的 TPM evidence；TPM 的 structured runtime
+data 则是去掉 `additional-evidence` 后的同一组基础字段。单独提交 SNP 或 TPM
+证据的既有用法不受影响；只有同一次 evaluation 同时包含二者时才强制上述组合绑定。
+生产环境应先通过 AS challenge API 获取签名 challenge，并把其中的 JWT 作为
+`challenge_token` 放入这组基础 runtime data，使 AS 同时校验 challenge 的签名和有效期。
 
 Keylime 是可选增强：没有 `keylime_agent_uuid` 时，上述主链路仍会完整执行；只有 evidence 提供 UUID 时，TPM verifier 才查询 registrar，并额外验证已激活 AK 与 EK 的绑定关系。SVSM vTPM 的 EK 通常没有厂商证书，因此该路径优先比较 registrar 的 `ek_tpm` 与 evidence 的 EK 公钥；物理 TPM 仍兼容 EK 证书比较。
 

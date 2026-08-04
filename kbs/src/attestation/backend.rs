@@ -57,45 +57,6 @@ pub struct CompositeEvidence {
     additional_evidence: String,
 }
 
-/// Bind an SNP guest's additional TPM evidence to the vTPM service manifest
-/// covered by its VMPL0 SVSM report. This rejects host-injected swtpm evidence
-/// and cross-guest evidence splicing before the individual verifiers run.
-fn verify_snp_svsm_vtpm_binding(
-    primary_tee: Tee,
-    primary_evidence: &TeeEvidence,
-    additional_evidence: &str,
-) -> anyhow::Result<()> {
-    if primary_tee != Tee::Snp || additional_evidence.is_empty() {
-        return Ok(());
-    }
-
-    let additional: HashMap<Tee, TeeEvidence> = serde_json::from_str(additional_evidence)
-        .context("parse additional evidence for SNP/SVSM binding")?;
-    let Some(tpm_evidence) = additional.get(&Tee::Tpm) else {
-        return Ok(());
-    };
-
-    let manifest = primary_evidence
-        .get("svsm_manifest")
-        .and_then(serde_json::Value::as_str)
-        .context("SNP evidence contains TPM evidence without an SVSM vTPM manifest")?;
-    let ek_public = tpm_evidence
-        .get("ek_pubkey")
-        .and_then(serde_json::Value::as_str)
-        .context("TPM evidence is missing the EK public key")?;
-    let manifest = STANDARD
-        .decode(manifest)
-        .context("decode SVSM vTPM manifest")?;
-    let ek_public = STANDARD
-        .decode(ek_public)
-        .context("decode TPM EK public key")?;
-    if manifest.is_empty() || manifest != ek_public {
-        bail!("TPM EK public key does not match the vTPM manifest bound by the VMPL0 SNP report");
-    }
-
-    Ok(())
-}
-
 #[derive(Deserialize)]
 pub struct RuntimeData {
     pub nonce: String,
@@ -433,11 +394,6 @@ impl AttestationService {
         let composite_evidence: CompositeEvidence =
             serde_json::from_value(attestation.tee_evidence)
                 .context("failed to parse composite evidence")?;
-        verify_snp_svsm_vtpm_binding(
-            tee,
-            &composite_evidence.primary_evidence,
-            &composite_evidence.additional_evidence,
-        )?;
         let mut evidence_to_verify: Vec<IndependentEvidence> = vec![];
 
         let runtime_data: RuntimeData = serde_json::from_value(attestation.runtime_data)
@@ -549,36 +505,6 @@ impl AttestationService {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn snp_svsm_manifest_binds_tpm_ek() {
-        let ek = STANDARD.encode(b"marshalled-ek-public");
-        let primary = json!({ "svsm_manifest": ek.clone() });
-        let additional =
-            serde_json::to_string(&HashMap::from([(Tee::Tpm, json!({ "ek_pubkey": ek }))]))
-                .unwrap();
-
-        verify_snp_svsm_vtpm_binding(Tee::Snp, &primary, &additional).unwrap();
-
-        let wrong = STANDARD.encode(b"another-ek");
-        let additional =
-            serde_json::to_string(&HashMap::from([(Tee::Tpm, json!({ "ek_pubkey": wrong }))]))
-                .unwrap();
-        assert!(verify_snp_svsm_vtpm_binding(Tee::Snp, &primary, &additional).is_err());
-    }
-
-    #[test]
-    fn snp_rejects_tpm_without_svsm_manifest() {
-        let additional = serde_json::to_string(&HashMap::from([(
-            Tee::Tpm,
-            json!({
-                "ek_pubkey": STANDARD.encode(b"ek"),
-                "keylime_agent_uuid": "agent-1"
-            }),
-        )]))
-        .unwrap();
-        assert!(verify_snp_svsm_vtpm_binding(Tee::Snp, &json!({}), &additional).is_err());
-    }
 
     #[tokio::test]
     async fn test_make_nonce() {

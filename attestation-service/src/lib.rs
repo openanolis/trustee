@@ -9,6 +9,8 @@ pub mod policy_engine;
 pub mod rvps;
 pub mod token;
 
+mod composite;
+
 use crate::token::AttestationTokenBroker;
 
 use anyhow::{anyhow, Context, Result};
@@ -305,6 +307,8 @@ impl AttestationService {
             }
             .into());
         }
+
+        composite::verify_composite_bindings(&verification_requests)?;
 
         for (request_index, verification_request) in verification_requests.into_iter().enumerate() {
             let verifier = verifier::to_verifier(&verification_request.tee).map_err(|source| {
