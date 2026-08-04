@@ -291,4 +291,18 @@ mod tests {
         let snp = request(Tee::Snp, json!({}), json!({"nonce": "challenge"}));
         verify_composite_bindings(&[snp]).unwrap();
     }
+
+    #[test]
+    fn accepts_plain_snp_with_empty_additional_evidence() {
+        let snp = request(
+            Tee::Snp,
+            json!({}),
+            json!({
+                "nonce": "challenge",
+                (ADDITIONAL_EVIDENCE): "",
+            }),
+        );
+
+        verify_composite_bindings(&[snp]).unwrap();
+    }
 }

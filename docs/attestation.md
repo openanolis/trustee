@@ -93,6 +93,11 @@ OpenAnolis提供了一个简单易用的工具[cryptpilot](https://github.com/op
 
 当 SNP guest 使用 Coconut SVSM vTPM，且 guest 内核提供 `tpm_svsm` 与 TSM SVSM attestation ABI 时，Attestation Agent 会把 SNP 作为主证据、TPM Quote 作为附加设备证据，并把 AA 动态事件扩展到 vTPM PCR。
 
+同一版本也兼容不带 SVSM 的纯 SEV-SNP guest：AA 只提交普通 SNP
+evidence，Trustee 按既有 SNP verifier 校验证书链、报告签名、VMPL、TCB 与
+`REPORT_DATA`。此时不会要求 `svsm_manifest`、TPM Quote 或 event log；只有同一
+次 evaluation 同时出现 SNP 与 TPM evidence 时，才启用下面的组合绑定规则。
+
 Trustee 在 Attestation Service 核心层验证这组组合证据，因此经 KBS、
 直接访问 RESTful AS 或直接访问 gRPC AS 都遵循相同的安全语义：
 
