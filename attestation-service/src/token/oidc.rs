@@ -541,6 +541,42 @@ mod tests {
             .unwrap();
     }
 
+    #[tokio::test]
+    async fn test_snp_default_policy_accepts_without_reference_values() {
+        let policy_dir = tempfile::tempdir().unwrap();
+        let config = Configuration {
+            policy_dir: policy_dir.path().to_string_lossy().into_owned(),
+            ..Configuration::default()
+        };
+        let broker = OIDCAttestationTokenBroker::new(config).unwrap();
+        let claims = TeeClaims {
+            tee: Tee::Snp,
+            tee_class: "cpu".to_string(),
+            claims: json!({
+                "measurement": "test-snp-launch-measurement",
+                "policy_debug_allowed": "0",
+                "policy_migrate_ma": "0",
+                "reported_tcb_bootloader": "0",
+                "reported_tcb_tee": "0",
+                "reported_tcb_snp": "0",
+                "reported_tcb_microcode": "37",
+                "reported_tcb_fmc": "0",
+            }),
+            runtime_data_claims: serde_json::Value::Null,
+            init_data_claims: serde_json::Value::Null,
+            additional_data: None,
+        };
+        let token = broker
+            .issue(
+                vec![claims],
+                vec!["default".into()],
+                crate::rvps::empty_test_resolver(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(token.split('.').count(), 3);
+    }
+
     // A pre-generated RSA-2048 PKCS#8 private key (PEM). Used together with
     // `TEST_CERT_CHAIN_PEM` to exercise the `signer = Some(...)` branch of
     // `OIDCAttestationTokenBroker::new`, which parses the PEM cert chain via

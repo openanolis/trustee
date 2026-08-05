@@ -602,7 +602,7 @@ pub(crate) fn parse_tee_evidence(
 ) -> Result<TeeEvidenceParsedClaim> {
     // generation-aware reported_tcb (see read_reported_tcb)
     let tcb = read_reported_tcb(raw, proc_gen)?;
-    let claims_map = json!({
+    let mut claims_map = json!({
         // policy fields
         "policy_abi_major": format!("{}",report.policy.abi_major()),
         "policy_abi_minor": format!("{}", report.policy.abi_minor()),
@@ -624,6 +624,13 @@ pub(crate) fn parse_tee_evidence(
         // measurement
         "measurement": format!("{}", base64::engine::general_purpose::STANDARD.encode(report.measurement)),
     });
+
+    if let Some(fmc) = tcb.fmc {
+        claims_map
+            .as_object_mut()
+            .context("SNP claims must be a JSON object")?
+            .insert("reported_tcb_fmc".to_string(), json!(fmc.to_string()));
+    }
 
     Ok(claims_map as TeeEvidenceParsedClaim)
 }
@@ -866,6 +873,9 @@ mod tests {
             (3, 2, 5, 97)
         );
         assert_eq!(tcb.fmc, Some(1));
+
+        let claims = parse_tee_evidence(&report, &raw, ProcessorGeneration::Turin).unwrap();
+        assert_eq!(claims["reported_tcb_fmc"], "1");
     }
 
     #[test]

@@ -146,6 +146,8 @@ The results of every policy that is evaluated are included in the attestation to
 **Note**: Please refer to the [Policy Language](https://www.openpolicyagent.org/docs/latest/policy-language/) documentation for more information about Rego.
 
 If the policy is not updated, the AS will use the [default policy](src/token/ear_default_policy_cpu.rego).
+For AMD SEV-SNP, see the required launch-measurement and platform-TCB
+[reference values](docs/amd-snp-appraisal.md).
 
 Concrete policy usages please refer to [this guide](docs/policy.md).
 
