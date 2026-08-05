@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = [ "restful-bin", "rvps-grpc", "all-verifier", "fs" ]
+default = [ "restful-bin", "rvps-grpc", "all-verifier", "fs", "policy-rvps" ]
 
 # Filesystem-backed implementations: config-from-file, on-disk OPA policy engine,
 # rvps local_json/local_fs storage, nonce-key persistence, signer transparency
 # file, signer key/cert read by path. Turn off (`default-features = false`) for a
 # pure, fs-free library (e.g. wasm builds).
-fs = [ "policy-rvps", "tokio/fs", "reference-value-provider-service/fs" ]
+fs = [ "tokio/fs", "reference-value-provider-service/fs" ]
 # Runtime bridge used by synchronous Regorus extensions to make bounded
 # asynchronous RVPS queries. Normal AS binaries enable this through `fs`.
 policy-rvps = [ "tokio/rt", "tokio/time" ]
@@ -38,13 +38,13 @@ tpm-verifier = [ "verifier/tpm-verifier" ]
 rvps-grpc = [ "prost", "tonic", "tokio/sync" ]
 
 # For building gRPC CoCo-AS binary
-grpc-bin = [ "clap", "env_logger", "prost", "tonic", "tokio/full", "fs" ]
+grpc-bin = [ "clap", "env_logger", "prost", "tonic", "tokio/full", "fs", "policy-rvps" ]
 
 # For restful CoCo-AS binary
-restful-bin = [ "actix-cors", "actix-web/openssl", "clap", "env_logger", "openssl", "tokio/full", "fs" ]
+restful-bin = [ "actix-cors", "actix-web/openssl", "clap", "env_logger", "openssl", "tokio/full", "fs", "policy-rvps" ]
 
 # For attestation-challenge-client binary
-attestation-challenge-client = [ "tokio/full", "fs" ]
+attestation-challenge-client = [ "tokio/full", "fs", "policy-rvps" ]
 
 [[bin]]
 name = "grpc-as"
