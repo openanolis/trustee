@@ -19,9 +19,10 @@ use tonic::{Request, Response, Status};
 use crate::as_api::attestation_service_server::{AttestationService, AttestationServiceServer};
 use crate::as_api::{
     list_policies_response::PolicyInfo, AttestationRequest, AttestationResponse, ChallengeRequest,
-    ChallengeResponse, DeletePolicyRequest, DeletePolicyResponse, GetPolicyRequest,
-    GetPolicyResponse, ListPoliciesRequest, ListPoliciesResponse, SetPolicyRequest,
-    SetPolicyResponse,
+    ChallengeResponse, DeletePolicyRequest, DeletePolicyResponse,
+    DependencyStatus as GrpcDependencyStatus, GetAttestationServiceStatusRequest,
+    GetAttestationServiceStatusResponse, GetPolicyRequest, GetPolicyResponse, ListPoliciesRequest,
+    ListPoliciesResponse, SetPolicyRequest, SetPolicyResponse,
 };
 
 use crate::rvps_api::reference_value_provider_service_server::{
@@ -87,6 +88,40 @@ impl AttestationServer {
 
 #[tonic::async_trait]
 impl AttestationService for Arc<RwLock<AttestationServer>> {
+    async fn get_attestation_service_status(
+        &self,
+        _request: Request<GetAttestationServiceStatusRequest>,
+    ) -> Result<Response<GetAttestationServiceStatusResponse>, Status> {
+        let status = self.read().await.attestation_service.status().await;
+        let dependencies = status
+            .dependencies
+            .into_iter()
+            .map(|dependency| GrpcDependencyStatus {
+                kind: dependency.kind,
+                name: dependency.name,
+                status: dependency.status,
+                message: dependency.message.unwrap_or_default(),
+                details: dependency
+                    .details
+                    .into_iter()
+                    .map(|(key, value)| {
+                        let value = match value {
+                            serde_json::Value::String(value) => value,
+                            value => value.to_string(),
+                        };
+                        (key, value)
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        Ok(Response::new(GetAttestationServiceStatusResponse {
+            service: status.service,
+            status: status.status,
+            dependencies,
+        }))
+    }
+
     async fn set_attestation_policy(
         &self,
         request: Request<SetPolicyRequest>,

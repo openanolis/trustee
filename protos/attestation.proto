@@ -116,6 +116,22 @@ message ChallengeResponse {
     string attestation_challenge = 1;
 }
 
+message GetAttestationServiceStatusRequest {}
+
+message DependencyStatus {
+    string kind = 1;
+    string name = 2;
+    string status = 3;
+    string message = 4;
+    map<string, string> details = 5;
+}
+
+message GetAttestationServiceStatusResponse {
+    string service = 1;
+    string status = 2;
+    repeated DependencyStatus dependencies = 3;
+}
+
 service AttestationService {
     rpc AttestationEvaluate(AttestationRequest) returns (AttestationResponse) {};
     rpc SetAttestationPolicy(SetPolicyRequest) returns (SetPolicyResponse) {};
@@ -123,5 +139,6 @@ service AttestationService {
     rpc ListAttestationPolicies(ListPoliciesRequest) returns (ListPoliciesResponse) {};
     rpc DeleteAttestationPolicy(DeletePolicyRequest) returns (DeletePolicyResponse) {};
     rpc GetAttestationChallenge(ChallengeRequest) returns (ChallengeResponse) {};
+    rpc GetAttestationServiceStatus(GetAttestationServiceStatusRequest) returns (GetAttestationServiceStatusResponse) {};
     // Get the GetPolicyRequest.user and GetPolicyRequest.tee specified Policy(.rego)
 }

@@ -8,6 +8,9 @@ use log::debug;
 mod error;
 pub use error::Error as VerifierError;
 
+pub mod status;
+pub use status::DependencyStatus;
+
 pub mod sample;
 pub mod sample_device;
 
@@ -244,6 +247,22 @@ pub trait Verifier {
     /// A optional `tee_parameters` comes from the attester side as the input.
     async fn generate_supplemental_challenge(&self, _tee_parameters: String) -> Result<String> {
         Ok(String::new())
+    }
+}
+
+/// Return runtime status for verifier dependencies that support introspection.
+///
+/// An empty list means no enabled verifier currently exposes dependency state;
+/// it does not mean the verifier service is unhealthy.
+pub async fn dependency_statuses() -> Vec<DependencyStatus> {
+    #[cfg(feature = "tdx-dcap-rust")]
+    {
+        tdx::dependency_statuses().await
+    }
+
+    #[cfg(not(feature = "tdx-dcap-rust"))]
+    {
+        Vec::new()
     }
 }
 

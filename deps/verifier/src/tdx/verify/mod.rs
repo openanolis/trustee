@@ -45,7 +45,7 @@ mod native;
 #[cfg(feature = "tdx-dcap-rust")]
 pub(crate) use native::ecdsa_quote_verification;
 #[cfg(feature = "tdx-dcap-rust")]
-pub use native::set_pccs_url;
+pub use native::{dependency_statuses, set_pccs_url, set_pccs_urls};
 
 #[cfg(test)]
 mod tests {

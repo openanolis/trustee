@@ -26,7 +26,7 @@ pub(crate) mod quote;
 pub(crate) mod verify;
 
 #[cfg(feature = "tdx-dcap-rust")]
-pub use verify::set_pccs_url;
+pub use verify::{dependency_statuses, set_pccs_url, set_pccs_urls};
 
 pub use gpu::set_rim_service_url;
 

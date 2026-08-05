@@ -34,6 +34,36 @@ PCCS are usually supported by cloud providers, you can find the steps to configu
 - IBM Cloud: [Attestation with Intel SGX and Data Center Attestation Primitives (DCAP) for Virtual Servers for VPC](https://cloud.ibm.com/docs/vpc?topic=vpc-about-attestation-sgx-dcap-vpc)
 Or you can [set-up a PCCS yourself](https://download.01.org/intel-sgx/sgx-dcap/1.9/windows/docs/Intel_SGX_DCAP_Windows_SW_Installation_Guide.pdf).
 
+When the TDX verifier is built with the pure-Rust `tdx-dcap-rust` backend,
+verification collateral is cached in the AS process. The following environment
+variables configure PCCS resilience:
+
+See [PCCS Configuration and TDX Collateral Resilience](./pccs-resilience.md)
+for the full configuration precedence, cache state machine, and alerting guide.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PCCS_URLS` | unset | Ordered, comma-separated PCCS base URLs. The verifier falls back to the next URL when an endpoint fails. |
+| `PCCS_URL` | QCNL/default | Backward-compatible single PCCS URL used when `PCCS_URLS` is unset. |
+| `PCCS_HTTP_TIMEOUT_SECS` | `60` | Per-request timeout before the next PCCS is tried. |
+| `VERIFY_COLLATERAL_CACHE_REFRESH_HOURS` | `72` | Proactively refresh cached collateral after this age. Must be shorter than cache expiry. |
+| `VERIFY_COLLATERAL_CACHE_EXPIRE_HOURS` | `168` | Age at which cached collateral becomes stale. `0` disables the cache. |
+| `VERIFY_COLLATERAL_CACHE_REFRESH_RETRY_SECS` | `3600` | Backoff after a failed refresh. |
+
+Proactive refresh is asynchronous on native AS builds. If every PCCS endpoint
+is unavailable after the cache expiry, AS continues using the cached collateral
+until its signed TCB/QE `nextUpdate` is reached. Refresh failures are logged as
+`tdx_collateral_refresh_failed` and exposed through the generic status RPC:
+
+```shell
+grpcurl \
+  -plaintext \
+  -import-path protos \
+  -proto attestation.proto \
+  -d '{}' 127.0.0.1:50004 \
+  attestation.AttestationService/GetAttestationServiceStatus
+```
+
 Then an attestation request can be used to request the server. We provide an [example request of validating a SGX quote](../tests/coco-as/request.json).
 
 You can use the [tool](https://github.com/confidential-containers/guest-components/tree/main/attestation-agent/attester#evidence-getter-tool) to generate a report on
