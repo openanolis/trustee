@@ -15,15 +15,19 @@
 //! toolchain requirement as the default (FFI) build. With the feature disabled,
 //! Cargo prunes this whole subtree, so it has no effect on the default build.
 //!
-//! PCCS configuration: the collateral endpoint is resolved from, in order, the
-//! `PCCS_URL` environment variable, the `pccs_url` / `PCCS_URL` entry in
-//! `/etc/sgx_default_qcnl.conf` (the same file the DCAP quote provider reads, so
-//! both backends share one configuration), and finally a built-in default.
-//! Verification collateral is cached in process by PCCS URL, FMSPC and CA type.
-//! The cache lifetime honors `VERIFY_COLLATERAL_CACHE_EXPIRE_HOURS` from the
-//! environment or QCNL config, defaulting to the Intel QCNL value of 168 hours.
-//! A value of zero disables the cache. Concurrent misses are coalesced so that
-//! only one request refreshes collateral at a time.
+//! PCCS configuration: one or more collateral endpoints are resolved from, in
+//! order, the `PCCS_URLS` environment variable, the legacy `PCCS_URL`, the
+//! `pccs_url` / `PCCS_URL` entry in `/etc/sgx_default_qcnl.conf`, and finally a
+//! built-in default. Endpoints are tried in order so a secondary PCCS can take
+//! over when the preferred service is unavailable.
+//!
+//! Verification collateral is cached in process by PCCS set, FMSPC and CA type.
+//! `VERIFY_COLLATERAL_CACHE_REFRESH_HOURS` (72 hours by default) proactively
+//! refreshes an entry before `VERIFY_COLLATERAL_CACHE_EXPIRE_HOURS` (168 hours
+//! by default). Refresh failures retain the last successfully verified
+//! collateral. Even after the cache TTL, the old value remains usable while
+//! its signed TCB/QE `nextUpdate` has not passed. Concurrent refreshes are
+//! coalesced per cache key and failures are retried with a bounded backoff.
 //!
 //! Scope: the collateral fetch currently supports quotes whose certification
 //! data embeds the PCK certificate chain (PCK cert type 5), which is what cloud
@@ -40,10 +44,10 @@ use asn1_rs::{Any, FromDer, Oid};
 use dcap_qvl::tcb_info::{TcbComponents, TcbInfo, TcbLevel};
 use dcap_qvl::verify::{QuoteVerifier, VerifiedReport};
 use dcap_qvl::QuoteCollateralV3;
-use log::{debug, warn};
-use std::collections::HashMap;
-use std::future::Future;
-use std::sync::OnceLock;
+use log::{debug, info, warn};
+use serde_json::json;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 use tokio::sync::Mutex;
 use x509_parser::pem::Pem;
@@ -63,7 +67,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::tdx::quote::{parse_tdx_quote, TcbVerificationResult};
-use crate::VerifierError;
+use crate::{DependencyStatus, VerifierError};
 
 fn pccs_unavailable<E>(source: E) -> anyhow::Error
 where
@@ -87,8 +91,8 @@ where
     .into()
 }
 
-/// Default PCCS base URL, used only when neither `PCCS_URL` nor the QCNL config
-/// file provide one.
+/// Default PCCS base URL, used only when neither an override, `PCCS_URLS`,
+/// `PCCS_URL`, nor the QCNL config file provide one.
 const DEFAULT_PCCS_URL: &str = "https://sgx-dcap-server.cn-beijing.aliyuncs.com";
 
 /// QCNL config file read by the DCAP quote provider (FFI backend). We fall back
@@ -98,8 +102,30 @@ const QCNL_CONF_PATH: &str = "/etc/sgx_default_qcnl.conf";
 /// Intel QCNL's default verification collateral cache lifetime.
 const DEFAULT_COLLATERAL_CACHE_EXPIRE_HOURS: u64 = 168;
 
+/// Refresh well before the cache TTL so a PCCS incident does not first become
+/// visible on the hard-expiry boundary.
+const DEFAULT_COLLATERAL_CACHE_REFRESH_HOURS: u64 = 72;
+
+/// Avoid retrying an unavailable PCCS on every attestation request.
+const DEFAULT_COLLATERAL_CACHE_REFRESH_RETRY_SECS: u64 = 60 * 60;
+
 /// QCNL setting shared with the FFI quote-provider backend.
 const COLLATERAL_CACHE_EXPIRE_HOURS: &str = "VERIFY_COLLATERAL_CACHE_EXPIRE_HOURS";
+
+/// AS-specific proactive refresh setting. It is intentionally separate from
+/// Intel QCNL's hard cache-expiry setting.
+const COLLATERAL_CACHE_REFRESH_HOURS: &str = "VERIFY_COLLATERAL_CACHE_REFRESH_HOURS";
+
+/// Backoff after a failed proactive or blocking refresh.
+const COLLATERAL_CACHE_REFRESH_RETRY_SECS: &str = "VERIFY_COLLATERAL_CACHE_REFRESH_RETRY_SECS";
+
+/// Ordered comma-separated PCCS base URLs. The existing single-value
+/// `PCCS_URL` remains supported as a fallback for compatibility.
+const PCCS_URLS_ENV: &str = "PCCS_URLS";
+
+/// Per-request timeout before moving to the next configured PCCS endpoint.
+const PCCS_HTTP_TIMEOUT_SECS: &str = "PCCS_HTTP_TIMEOUT_SECS";
+const DEFAULT_PCCS_HTTP_TIMEOUT_SECS: u64 = 60;
 
 /// TEE type for TDX, matching the value the FFI backend reports in
 /// `TcbVerificationResult::tee_type`.
@@ -111,28 +137,33 @@ const OID_SGX_TCB: &[u64] = &[1, 2, 840, 113741, 1, 13, 1, 2];
 const OID_SGX_PCESVN: &[u64] = &[1, 2, 840, 113741, 1, 13, 1, 2, 17];
 const OID_SGX_FMSPC: &[u64] = &[1, 2, 840, 113741, 1, 13, 1, 4];
 
-use std::sync::RwLock;
-
-/// Injectable PCCS base URL override (pure-lib / wasm host). When set, takes
+/// Injectable PCCS base URL overrides (pure-lib / wasm host). When set, take
 /// precedence over env / config-file resolution. The verifier crate does not
 /// pull this from any config struct; whoever embeds the verifier calls
-/// [`set_pccs_url`] directly (e.g. a binary at startup, or the wasm host glue
-/// before invoking verification). A `RwLock<Option<String>>` (rather than
-/// `OnceLock`) so the caller can update it across tests / reconfiguration.
-static PCCS_URL_OVERRIDE: RwLock<Option<String>> = RwLock::new(None);
+/// [`set_pccs_urls`] directly (e.g. a binary at startup, or the wasm host glue
+/// before invoking verification). A `RwLock` lets tests and embedders update
+/// the value across reconfiguration.
+static PCCS_URLS_OVERRIDE: RwLock<Option<Vec<String>>> = RwLock::new(None);
 
 /// Inject the PCCS base URL (pure-lib / wasm host). When set, takes precedence
 /// over env / config-file resolution. The embedder is expected to call this
 /// directly — the verifier crate itself never reads an AS config for it.
 pub fn set_pccs_url(url: Option<String>) {
-    *PCCS_URL_OVERRIDE.write().unwrap() = url;
+    set_pccs_urls(url.map(|url| vec![url]));
 }
 
-/// Resolve the PCCS base URL: the injected override, then (on native) the
-/// `PCCS_URL` env var, then the QCNL config file, then the built-in default.
-fn resolve_pccs_url() -> String {
-    if let Some(u) = PCCS_URL_OVERRIDE.read().unwrap().clone() {
-        return u;
+/// Inject an ordered PCCS fallback list (pure-lib / wasm host).
+pub fn set_pccs_urls(urls: Option<Vec<String>>) {
+    *PCCS_URLS_OVERRIDE.write().unwrap() = urls.map(normalize_pccs_urls);
+}
+
+/// Resolve ordered PCCS endpoints: injected override, `PCCS_URLS`, legacy
+/// `PCCS_URL`, QCNL config, then the built-in default.
+fn resolve_pccs_urls() -> Vec<String> {
+    if let Some(urls) = PCCS_URLS_OVERRIDE.read().unwrap().clone() {
+        if !urls.is_empty() {
+            return urls;
+        }
     }
     #[cfg(not(all(
         target_arch = "wasm32",
@@ -140,9 +171,16 @@ fn resolve_pccs_url() -> String {
         target_os = "unknown"
     )))]
     {
+        if let Ok(value) = std::env::var(PCCS_URLS_ENV) {
+            let urls = parse_pccs_urls(&value);
+            if !urls.is_empty() {
+                return urls;
+            }
+            warn!("dcap-qvl backend: ignoring empty {PCCS_URLS_ENV}");
+        }
         if let Ok(v) = std::env::var("PCCS_URL") {
             if !v.is_empty() {
-                return v;
+                return normalize_pccs_urls(vec![v]);
             }
         }
         if let Some(v) = std::fs::read_to_string(QCNL_CONF_PATH)
@@ -150,33 +188,90 @@ fn resolve_pccs_url() -> String {
             .and_then(|c| parse_qcnl_pccs_url(&c))
         {
             debug!("dcap-qvl backend: using PCCS URL from {QCNL_CONF_PATH}");
-            return v;
+            return normalize_pccs_urls(vec![v]);
         }
     }
-    DEFAULT_PCCS_URL.to_string()
+    vec![DEFAULT_PCCS_URL.to_string()]
 }
 
-/// Resolve the collateral cache lifetime from the environment, then the QCNL
-/// config file, and finally the Intel QCNL default. Setting it to zero disables
-/// the cache.
-fn resolve_collateral_cache_ttl() -> Duration {
-    if let Ok(value) = std::env::var(COLLATERAL_CACHE_EXPIRE_HOURS) {
+#[derive(Clone, Copy, Debug)]
+struct CollateralCachePolicy {
+    refresh_after: Duration,
+    expire_after: Duration,
+    retry_after: Duration,
+}
+
+impl CollateralCachePolicy {
+    fn from_durations(
+        refresh_after: Duration,
+        expire_after: Duration,
+        retry_after: Duration,
+    ) -> Self {
+        let refresh_after = if !expire_after.is_zero() && refresh_after >= expire_after {
+            let adjusted = Duration::from_secs((expire_after.as_secs() / 2).max(1));
+            warn!(
+                "dcap-qvl backend: refresh interval {:?} must be shorter than cache expiry {:?}; using {:?}",
+                refresh_after, expire_after, adjusted
+            );
+            adjusted
+        } else {
+            refresh_after
+        };
+        Self {
+            refresh_after,
+            expire_after,
+            retry_after,
+        }
+    }
+}
+
+/// Resolve proactive refresh, cache expiry, and refresh retry policy. Existing
+/// QCNL cache expiry remains authoritative; the new settings are optional.
+fn resolve_collateral_cache_policy() -> CollateralCachePolicy {
+    let expire_hours = resolve_u64_setting(
+        COLLATERAL_CACHE_EXPIRE_HOURS,
+        DEFAULT_COLLATERAL_CACHE_EXPIRE_HOURS,
+    );
+    let refresh_hours = resolve_u64_setting(
+        COLLATERAL_CACHE_REFRESH_HOURS,
+        DEFAULT_COLLATERAL_CACHE_REFRESH_HOURS,
+    );
+    let retry_secs = resolve_u64_setting(
+        COLLATERAL_CACHE_REFRESH_RETRY_SECS,
+        DEFAULT_COLLATERAL_CACHE_REFRESH_RETRY_SECS,
+    );
+
+    CollateralCachePolicy::from_durations(
+        Duration::from_secs(refresh_hours.saturating_mul(60 * 60)),
+        Duration::from_secs(expire_hours.saturating_mul(60 * 60)),
+        Duration::from_secs(retry_secs),
+    )
+}
+
+fn resolve_u64_setting(key: &str, default: u64) -> u64 {
+    if let Ok(value) = std::env::var(key) {
         match value.parse::<u64>() {
-            Ok(hours) => return Duration::from_secs(hours.saturating_mul(60 * 60)),
-            Err(e) => warn!(
-                "dcap-qvl backend: ignoring invalid {COLLATERAL_CACHE_EXPIRE_HOURS}={value:?}: {e}"
-            ),
+            Ok(value) => return value,
+            Err(e) => warn!("dcap-qvl backend: ignoring invalid {key}={value:?}: {e}"),
         }
     }
 
-    if let Some(hours) = std::fs::read_to_string(QCNL_CONF_PATH)
+    std::fs::read_to_string(QCNL_CONF_PATH)
         .ok()
-        .and_then(|content| parse_qcnl_u64(&content, COLLATERAL_CACHE_EXPIRE_HOURS))
-    {
-        return Duration::from_secs(hours.saturating_mul(60 * 60));
-    }
+        .and_then(|content| parse_qcnl_u64(&content, key))
+        .unwrap_or(default)
+}
 
-    Duration::from_secs(DEFAULT_COLLATERAL_CACHE_EXPIRE_HOURS * 60 * 60)
+fn parse_pccs_urls(value: &str) -> Vec<String> {
+    normalize_pccs_urls(value.split(',').map(str::to_string).collect())
+}
+
+fn normalize_pccs_urls(urls: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    urls.into_iter()
+        .map(|url| normalize_pccs_base_url(url.trim()))
+        .filter(|url| !url.is_empty() && seen.insert(url.clone()))
+        .collect()
 }
 
 /// Extract the PCCS URL from QCNL config file contents, supporting both the JSON
@@ -238,7 +333,7 @@ fn parse_qcnl_u64(content: &str, key: &str) -> Option<u64> {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct CollateralCacheKey {
-    pccs_base_url: String,
+    pccs_base_urls: Vec<String>,
     fmspc: String,
     ca: String,
 }
@@ -247,93 +342,474 @@ struct CollateralCacheKey {
 struct CachedCollateral {
     collateral: QuoteCollateralV3,
     cached_at: Instant,
+    cached_at_unix: u64,
+    collateral_expires_at: i64,
+    last_successful_pccs: String,
+    last_refresh_attempt_at: Option<u64>,
+    last_refresh_error: Option<String>,
+    next_refresh_allowed_at: Instant,
 }
 
-/// Process-local collateral cache. Cache lookups only hold `entries` briefly.
-/// A separate refresh mutex coalesces concurrent misses without blocking cache
-/// hits for other platforms while PCCS I/O is in progress.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CacheEntryState {
+    Fresh,
+    RefreshDue,
+    CacheExpired,
+    CollateralExpired,
+}
+
+/// Process-local collateral cache. Per-key refresh locks prevent a slow PCCS
+/// for one platform from blocking refreshes for unrelated FMSPCs.
 #[derive(Default)]
 struct CollateralCache {
     entries: Mutex<HashMap<CollateralCacheKey, CachedCollateral>>,
-    refresh: Mutex<()>,
+    refresh_locks: Mutex<HashMap<CollateralCacheKey, Arc<Mutex<()>>>>,
 }
 
 impl CollateralCache {
-    async fn lookup(&self, key: &CollateralCacheKey, ttl: Duration) -> Option<QuoteCollateralV3> {
-        let mut entries = self.entries.lock().await;
-        let cached = entries.get(key)?;
-        if cached.cached_at.elapsed() < ttl {
-            return Some(cached.collateral.clone());
-        }
-        entries.remove(key);
-        None
+    async fn lookup(&self, key: &CollateralCacheKey) -> Option<CachedCollateral> {
+        self.entries.lock().await.get(key).cloned()
     }
 
-    async fn get_or_fetch<F, Fut>(
+    async fn refresh_lock(&self, key: &CollateralCacheKey) -> Arc<Mutex<()>> {
+        self.refresh_locks
+            .lock()
+            .await
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    async fn store_success(
         &self,
         key: CollateralCacheKey,
-        pck_chain: String,
-        ttl: Duration,
-        fetch: F,
-    ) -> Result<QuoteCollateralV3>
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<QuoteCollateralV3>>,
-    {
-        if ttl.is_zero() {
-            debug!("dcap-qvl backend: collateral cache disabled");
-            let mut collateral = fetch().await?;
-            collateral.pck_certificate_chain = Some(pck_chain);
-            return Ok(collateral);
-        }
-
-        if let Some(mut collateral) = self.lookup(&key, ttl).await {
-            debug!(
-                "dcap-qvl backend: collateral cache hit fmspc={} ca={}",
-                key.fmspc, key.ca
-            );
-            collateral.pck_certificate_chain = Some(pck_chain);
-            return Ok(collateral);
-        }
-
-        // Only one miss is allowed to refresh at a time. Recheck after taking
-        // the lock because another request may have populated the cache while
-        // this request was waiting.
-        let _refresh_guard = self.refresh.lock().await;
-        if let Some(mut collateral) = self.lookup(&key, ttl).await {
-            debug!(
-                "dcap-qvl backend: collateral cache hit after wait fmspc={} ca={}",
-                key.fmspc, key.ca
-            );
-            collateral.pck_certificate_chain = Some(pck_chain);
-            return Ok(collateral);
-        }
-
-        debug!(
-            "dcap-qvl backend: collateral cache miss fmspc={} ca={}",
-            key.fmspc, key.ca
-        );
-        let mut collateral = fetch().await?;
+        mut collateral: QuoteCollateralV3,
+        collateral_expires_at: i64,
+        successful_pccs: String,
+    ) -> Instant {
         // The PCK chain belongs to the current quote and must never be shared
         // across machines that happen to use the same FMSPC and CA type.
         collateral.pck_certificate_chain = None;
-        let cached = CachedCollateral {
-            collateral: collateral.clone(),
-            cached_at: Instant::now(),
-        };
-        let mut entries = self.entries.lock().await;
-        entries.retain(|_, value| value.cached_at.elapsed() < ttl);
-        entries.insert(key, cached);
-        drop(entries);
+        let now = Instant::now();
+        self.entries.lock().await.insert(
+            key,
+            CachedCollateral {
+                collateral,
+                cached_at: now,
+                cached_at_unix: unix_now(),
+                collateral_expires_at,
+                last_successful_pccs: successful_pccs,
+                last_refresh_attempt_at: Some(unix_now()),
+                last_refresh_error: None,
+                next_refresh_allowed_at: now,
+            },
+        );
+        now
+    }
 
-        collateral.pck_certificate_chain = Some(pck_chain);
-        Ok(collateral)
+    async fn record_refresh_attempt(&self, key: &CollateralCacheKey) {
+        if let Some(entry) = self.entries.lock().await.get_mut(key) {
+            entry.last_refresh_attempt_at = Some(unix_now());
+        }
+    }
+
+    async fn record_refresh_failure(
+        &self,
+        key: &CollateralCacheKey,
+        error: &anyhow::Error,
+        retry_after: Duration,
+    ) {
+        if let Some(entry) = self.entries.lock().await.get_mut(key) {
+            entry.last_refresh_attempt_at = Some(unix_now());
+            entry.last_refresh_error = Some(format!("{error:#}"));
+            entry.next_refresh_allowed_at = Instant::now() + retry_after;
+        }
+    }
+
+    async fn retry_allowed(&self, key: &CollateralCacheKey) -> bool {
+        self.lookup(key)
+            .await
+            .map(|entry| Instant::now() >= entry.next_refresh_allowed_at)
+            .unwrap_or(true)
+    }
+
+    async fn statuses(
+        &self,
+        policy: CollateralCachePolicy,
+        configured_pccs: Vec<String>,
+    ) -> Vec<DependencyStatus> {
+        let entries: Vec<(CollateralCacheKey, CachedCollateral)> = self
+            .entries
+            .lock()
+            .await
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+
+        if entries.is_empty() {
+            let mut details = BTreeMap::new();
+            details.insert("pccs_urls".into(), json!(configured_pccs));
+            details.insert(
+                "refresh_after_seconds".into(),
+                json!(policy.refresh_after.as_secs()),
+            );
+            details.insert(
+                "cache_expire_after_seconds".into(),
+                json!(policy.expire_after.as_secs()),
+            );
+            details.insert(
+                "refresh_retry_after_seconds".into(),
+                json!(policy.retry_after.as_secs()),
+            );
+            return vec![DependencyStatus {
+                kind: "tdx-collateral-cache".into(),
+                name: "tdx-collateral-cache".into(),
+                status: "not_initialized".into(),
+                message: Some("no TDX collateral has been cached in this AS process".into()),
+                details,
+            }];
+        }
+
+        let now = Instant::now();
+        let now_unix = unix_now() as i64;
+        let mut statuses = Vec::with_capacity(entries.len());
+        for (key, entry) in entries {
+            let state = classify_cache_entry(&entry, policy, now, now_unix);
+            let refresh_lock = self.refresh_lock(&key).await;
+            let refresh_in_progress = refresh_lock.try_lock().is_err();
+            let (mut status, mut message) = match state {
+                CacheEntryState::Fresh => (
+                    "ready",
+                    "cached collateral is within the proactive refresh interval",
+                ),
+                CacheEntryState::RefreshDue => (
+                    "refresh_due",
+                    "cached collateral is usable and due for proactive refresh",
+                ),
+                CacheEntryState::CacheExpired => (
+                    "degraded",
+                    "cache TTL elapsed; signed collateral remains valid as fallback",
+                ),
+                CacheEntryState::CollateralExpired => (
+                    "unhealthy",
+                    "cached collateral has passed its signed nextUpdate",
+                ),
+            };
+            if entry.last_refresh_error.is_some() && status != "unhealthy" {
+                status = "degraded";
+                message = "the last PCCS refresh failed; cached collateral remains available";
+            }
+
+            let mut details = BTreeMap::new();
+            details.insert("fmspc".into(), json!(key.fmspc));
+            details.insert("ca".into(), json!(key.ca));
+            details.insert("pccs_urls".into(), json!(key.pccs_base_urls));
+            details.insert(
+                "cache_age_seconds".into(),
+                json!(entry.cached_at.elapsed().as_secs()),
+            );
+            details.insert("cached_at".into(), json!(entry.cached_at_unix));
+            details.insert(
+                "collateral_expires_at".into(),
+                json!(entry.collateral_expires_at),
+            );
+            details.insert(
+                "collateral_valid_for_seconds".into(),
+                json!(entry.collateral_expires_at.saturating_sub(now_unix)),
+            );
+            details.insert(
+                "last_successful_pccs".into(),
+                json!(entry.last_successful_pccs),
+            );
+            details.insert(
+                "last_refresh_attempt_at".into(),
+                json!(entry.last_refresh_attempt_at),
+            );
+            details.insert("refresh_in_progress".into(), json!(refresh_in_progress));
+            if let Some(error) = entry.last_refresh_error {
+                details.insert("last_refresh_error".into(), json!(error));
+            }
+
+            statuses.push(DependencyStatus {
+                kind: "tdx-collateral-cache".into(),
+                name: format!("tdx-collateral:{}:{}", key.fmspc, key.ca),
+                status: status.into(),
+                message: Some(message.into()),
+                details,
+            });
+        }
+        statuses
     }
 }
 
 fn collateral_cache() -> &'static CollateralCache {
     static CACHE: OnceLock<CollateralCache> = OnceLock::new();
     CACHE.get_or_init(CollateralCache::default)
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn classify_cache_entry(
+    entry: &CachedCollateral,
+    policy: CollateralCachePolicy,
+    now: Instant,
+    now_unix: i64,
+) -> CacheEntryState {
+    if now_unix >= entry.collateral_expires_at {
+        CacheEntryState::CollateralExpired
+    } else {
+        let age = now.saturating_duration_since(entry.cached_at);
+        if age >= policy.expire_after {
+            CacheEntryState::CacheExpired
+        } else if age >= policy.refresh_after {
+            CacheEntryState::RefreshDue
+        } else {
+            CacheEntryState::Fresh
+        }
+    }
+}
+
+fn attach_pck_chain(mut collateral: QuoteCollateralV3, pck_chain: String) -> QuoteCollateralV3 {
+    collateral.pck_certificate_chain = Some(pck_chain);
+    collateral
+}
+
+fn cached_collateral(entry: &CachedCollateral, pck_chain: String) -> QuoteCollateralV3 {
+    attach_pck_chain(entry.collateral.clone(), pck_chain)
+}
+
+fn collateral_is_still_valid(entry: &CachedCollateral, now_unix: i64) -> bool {
+    now_unix < entry.collateral_expires_at
+}
+
+fn collateral_expiration(collateral: &QuoteCollateralV3) -> Result<i64> {
+    CollateralDates::parse(collateral)
+        .map(|dates| dates.earliest_expiration_date)
+        .map_err(pccs_bad_response)
+}
+
+async fn fetch_and_store(
+    key: &CollateralCacheKey,
+    policy: CollateralCachePolicy,
+) -> Result<QuoteCollateralV3> {
+    let (collateral, successful_pccs) =
+        fetch_collateral_with_fallback(&key.pccs_base_urls, &key.fmspc, &key.ca).await?;
+    let expires_at = collateral_expiration(&collateral)?;
+    let cached_at = collateral_cache()
+        .store_success(key.clone(), collateral.clone(), expires_at, successful_pccs)
+        .await;
+    schedule_refresh_after(key.clone(), policy, cached_at, policy.refresh_after);
+    Ok(collateral)
+}
+
+/// Schedule a timer when collateral is stored, so refresh does not depend on a
+/// verification request arriving at exactly the refresh boundary. The request
+/// path still detects `RefreshDue` as a safety net for runtimes where a timer
+/// was cancelled or delayed.
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
+fn schedule_refresh_after(
+    key: CollateralCacheKey,
+    policy: CollateralCachePolicy,
+    cached_at: Instant,
+    delay: Duration,
+) {
+    if delay.is_zero() {
+        return;
+    }
+
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        warn!(
+            "dcap-qvl backend: no Tokio runtime is available; proactive collateral refresh timer was not scheduled"
+        );
+        return;
+    };
+
+    runtime.spawn(async move {
+        tokio::time::sleep(delay).await;
+        let Some(entry) = collateral_cache().lookup(&key).await else {
+            return;
+        };
+        // A newer successful refresh owns its own timer. Do not let an older
+        // timer trigger another fetch for the same key.
+        if entry.cached_at != cached_at {
+            return;
+        }
+        trigger_background_refresh(key, policy).await;
+    });
+}
+
+#[cfg(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+))]
+fn schedule_refresh_after(
+    _key: CollateralCacheKey,
+    _policy: CollateralCachePolicy,
+    _cached_at: Instant,
+    _delay: Duration,
+) {
+}
+
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
+async fn trigger_background_refresh(key: CollateralCacheKey, policy: CollateralCachePolicy) {
+    if !collateral_cache().retry_allowed(&key).await {
+        return;
+    }
+    let refresh_lock = collateral_cache().refresh_lock(&key).await;
+    let Ok(refresh_guard) = refresh_lock.try_lock_owned() else {
+        return;
+    };
+
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        warn!(
+            "dcap-qvl backend: no Tokio runtime is available; proactive collateral refresh was skipped"
+        );
+        return;
+    };
+
+    runtime.spawn(async move {
+        let _refresh_guard = refresh_guard;
+        let Some(entry) = collateral_cache().lookup(&key).await else {
+            return;
+        };
+        if classify_cache_entry(&entry, policy, Instant::now(), unix_now() as i64)
+            == CacheEntryState::Fresh
+        {
+            return;
+        }
+
+        collateral_cache().record_refresh_attempt(&key).await;
+        match fetch_and_store(&key, policy).await {
+            Ok(_) => info!(
+                "event=tdx_collateral_refresh_succeeded fmspc={} ca={}",
+                key.fmspc, key.ca
+            ),
+            Err(error) => {
+                collateral_cache()
+                    .record_refresh_failure(&key, &error, policy.retry_after)
+                    .await;
+                warn!(
+                    "event=tdx_collateral_refresh_failed fmspc={} ca={} retry_after_seconds={} error={error:#}",
+                    key.fmspc,
+                    key.ca,
+                    policy.retry_after.as_secs()
+                );
+                if let Some(entry) = collateral_cache().lookup(&key).await {
+                    schedule_refresh_after(key, policy, entry.cached_at, policy.retry_after);
+                }
+            }
+        }
+    });
+}
+
+async fn refresh_blocking_or_use_stale(
+    key: CollateralCacheKey,
+    pck_chain: String,
+    policy: CollateralCachePolicy,
+) -> Result<QuoteCollateralV3> {
+    let refresh_lock = collateral_cache().refresh_lock(&key).await;
+    let _refresh_guard = refresh_lock.lock().await;
+
+    if let Some(entry) = collateral_cache().lookup(&key).await {
+        let state = classify_cache_entry(&entry, policy, Instant::now(), unix_now() as i64);
+        if state == CacheEntryState::Fresh {
+            return Ok(cached_collateral(&entry, pck_chain));
+        }
+        if !collateral_cache().retry_allowed(&key).await
+            && state != CacheEntryState::CollateralExpired
+        {
+            return Ok(cached_collateral(&entry, pck_chain));
+        }
+    }
+
+    collateral_cache().record_refresh_attempt(&key).await;
+    match fetch_and_store(&key, policy).await {
+        Ok(collateral) => Ok(attach_pck_chain(collateral, pck_chain)),
+        Err(error) => {
+            collateral_cache()
+                .record_refresh_failure(&key, &error, policy.retry_after)
+                .await;
+            if let Some(entry) = collateral_cache().lookup(&key).await {
+                if collateral_is_still_valid(&entry, unix_now() as i64) {
+                    warn!(
+                        "event=tdx_collateral_stale_fallback fmspc={} ca={} cache_age_seconds={} collateral_valid_for_seconds={} error={error:#}",
+                        key.fmspc,
+                        key.ca,
+                        entry.cached_at.elapsed().as_secs(),
+                        entry.collateral_expires_at.saturating_sub(unix_now() as i64)
+                    );
+                    return Ok(cached_collateral(&entry, pck_chain));
+                }
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn get_collateral(
+    key: CollateralCacheKey,
+    pck_chain: String,
+    policy: CollateralCachePolicy,
+) -> Result<QuoteCollateralV3> {
+    if policy.expire_after.is_zero() {
+        debug!("dcap-qvl backend: collateral cache disabled");
+        let (collateral, _) =
+            fetch_collateral_with_fallback(&key.pccs_base_urls, &key.fmspc, &key.ca).await?;
+        return Ok(attach_pck_chain(collateral, pck_chain));
+    }
+
+    if let Some(entry) = collateral_cache().lookup(&key).await {
+        match classify_cache_entry(&entry, policy, Instant::now(), unix_now() as i64) {
+            CacheEntryState::Fresh => {
+                debug!(
+                    "dcap-qvl backend: collateral cache hit fmspc={} ca={}",
+                    key.fmspc, key.ca
+                );
+                return Ok(cached_collateral(&entry, pck_chain));
+            }
+            CacheEntryState::RefreshDue => {
+                #[cfg(not(all(
+                    target_arch = "wasm32",
+                    target_vendor = "unknown",
+                    target_os = "unknown"
+                )))]
+                {
+                    trigger_background_refresh(key.clone(), policy).await;
+                    return Ok(cached_collateral(&entry, pck_chain));
+                }
+                #[cfg(all(
+                    target_arch = "wasm32",
+                    target_vendor = "unknown",
+                    target_os = "unknown"
+                ))]
+                return refresh_blocking_or_use_stale(key, pck_chain, policy).await;
+            }
+            CacheEntryState::CacheExpired | CacheEntryState::CollateralExpired => {}
+        }
+    }
+
+    refresh_blocking_or_use_stale(key, pck_chain, policy).await
+}
+
+/// Generic dependency status consumed by both REST and gRPC AS transports.
+pub async fn dependency_statuses() -> Vec<DependencyStatus> {
+    collateral_cache()
+        .statuses(resolve_collateral_cache_policy(), resolve_pccs_urls())
+        .await
 }
 
 fn normalize_pccs_base_url(pccs_url: &str) -> String {
@@ -354,7 +830,10 @@ fn pccs_http_client() -> Result<reqwest::Client> {
                 target_vendor = "unknown",
                 target_os = "unknown"
             )))]
-            let builder = builder.timeout(Duration::from_secs(60));
+            let builder = builder.timeout(Duration::from_secs(resolve_u64_setting(
+                PCCS_HTTP_TIMEOUT_SECS,
+                DEFAULT_PCCS_HTTP_TIMEOUT_SECS,
+            )));
             builder.build().map_err(|e| e.to_string())
         })
         .as_ref()
@@ -363,7 +842,7 @@ fn pccs_http_client() -> Result<reqwest::Client> {
 }
 
 pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationResult> {
-    let pccs_url = resolve_pccs_url();
+    let pccs_urls = resolve_pccs_urls();
 
     // The PCK certificate chain is embedded in the quote's certification data
     // (PCK cert type 5). Extract it and derive FMSPC / CA type for collateral.
@@ -382,20 +861,15 @@ pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationRes
             field: "quote",
             source,
         })?;
-    debug!("dcap-qvl backend: fmspc={fmspc}, ca={ca}, pccs={pccs_url}");
+    debug!("dcap-qvl backend: fmspc={fmspc}, ca={ca}, pccs={pccs_urls:?}");
 
-    let pccs_base_url = normalize_pccs_base_url(&pccs_url);
     let cache_key = CollateralCacheKey {
-        pccs_base_url: pccs_base_url.clone(),
+        pccs_base_urls: pccs_urls,
         fmspc: fmspc.clone(),
         ca: ca.to_string(),
     };
-    let cache_ttl = resolve_collateral_cache_ttl();
-    let collateral = collateral_cache()
-        .get_or_fetch(cache_key, pck_chain, cache_ttl, || {
-            fetch_collateral(&pccs_base_url, &fmspc, ca)
-        })
-        .await?;
+    let cache_policy = resolve_collateral_cache_policy();
+    let collateral = get_collateral(cache_key, pck_chain, cache_policy).await?;
 
     let real_now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -452,7 +926,7 @@ fn extract_pck_chain_pem(quote: &[u8]) -> Result<String> {
 
 /// DER of the leaf (first) certificate in a PEM chain.
 fn first_cert_der(pem_chain: &str) -> Result<Vec<u8>> {
-    for pem in Pem::iter_from_buffer(pem_chain.as_bytes()) {
+    if let Some(pem) = Pem::iter_from_buffer(pem_chain.as_bytes()).next() {
         let pem = pem.context("failed to parse PEM block in PCK chain")?;
         return Ok(pem.contents);
     }
@@ -479,10 +953,9 @@ fn extract_fmspc_and_ca(leaf_der: &[u8]) -> Result<(String, &'static str)> {
     let issuer = cert.issuer().to_string();
     let ca = if issuer.contains("Platform") {
         "platform"
-    } else if issuer.contains("Processor") {
-        "processor"
     } else {
-        // Default matches Intel/Phala behaviour when the CN is unexpected.
+        // "Processor" and unexpected issuers both follow Intel/Phala's
+        // processor default.
         "processor"
     };
 
@@ -538,6 +1011,40 @@ fn sgx_extension<'a>(cert: &'a X509Certificate<'a>) -> Result<&'a [u8]> {
 // ---------------------------------------------------------------------------
 // Collateral fetch (PCCS)
 // ---------------------------------------------------------------------------
+
+async fn fetch_collateral_with_fallback(
+    pccs_base_urls: &[String],
+    fmspc: &str,
+    ca: &str,
+) -> Result<(QuoteCollateralV3, String)> {
+    let mut last_error = None;
+    for (index, pccs_base_url) in pccs_base_urls.iter().enumerate() {
+        match fetch_collateral(pccs_base_url, fmspc, ca).await {
+            Ok(collateral) => {
+                if index > 0 {
+                    info!(
+                        "event=tdx_pccs_failover_succeeded fmspc={fmspc} ca={ca} selected_pccs={pccs_base_url} fallback_index={index}"
+                    );
+                }
+                return Ok((collateral, pccs_base_url.clone()));
+            }
+            Err(error) => {
+                warn!(
+                    "event=tdx_pccs_endpoint_failed fmspc={fmspc} ca={ca} pccs={pccs_base_url} fallback_index={index} error={error:#}"
+                );
+                last_error = Some(error);
+            }
+        }
+    }
+
+    match last_error {
+        Some(error) => Err(error.context(format!(
+            "all {} configured PCCS endpoints failed",
+            pccs_base_urls.len()
+        ))),
+        None => Err(pccs_unavailable(anyhow!("no PCCS endpoint is configured"))),
+    }
+}
 
 async fn fetch_collateral(pccs_base_url: &str, fmspc: &str, ca: &str) -> Result<QuoteCollateralV3> {
     let client = pccs_http_client()?;
@@ -889,19 +1396,20 @@ fn rfind_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_pccs_base_url, parse_qcnl_pccs_url, parse_qcnl_u64, CachedCollateral,
-        CollateralCache, CollateralCacheKey, QuoteCollateralV3, COLLATERAL_CACHE_EXPIRE_HOURS,
+        cached_collateral, classify_cache_entry, collateral_cache, collateral_is_still_valid,
+        fetch_collateral_with_fallback, normalize_pccs_base_url, parse_pccs_urls,
+        parse_qcnl_pccs_url, parse_qcnl_u64, refresh_blocking_or_use_stale, schedule_refresh_after,
+        unix_now, CacheEntryState, CachedCollateral, CollateralCache, CollateralCacheKey,
+        CollateralCachePolicy, QuoteCollateralV3, COLLATERAL_CACHE_EXPIRE_HOURS,
+        COLLATERAL_CACHE_REFRESH_HOURS,
     };
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
-    use tokio::sync::Barrier;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn cache_key() -> CollateralCacheKey {
         CollateralCacheKey {
-            pccs_base_url: "https://pccs.example.com".into(),
+            pccs_base_urls: vec!["https://pccs.example.com".into()],
             fmspc: "00906ED50000".into(),
             ca: "platform".into(),
         }
@@ -919,6 +1427,28 @@ mod tests {
             qe_identity: "{}".into(),
             qe_identity_signature: vec![4],
             pck_certificate_chain: None,
+        }
+    }
+
+    fn policy() -> CollateralCachePolicy {
+        CollateralCachePolicy::from_durations(
+            Duration::from_secs(10),
+            Duration::from_secs(20),
+            Duration::from_secs(30),
+        )
+    }
+
+    fn cached(age: Duration, collateral_valid_for: i64) -> CachedCollateral {
+        let now = Instant::now();
+        CachedCollateral {
+            collateral: collateral(),
+            cached_at: now - age,
+            cached_at_unix: unix_now().saturating_sub(age.as_secs()),
+            collateral_expires_at: unix_now() as i64 + collateral_valid_for,
+            last_successful_pccs: "https://pccs.example.com".into(),
+            last_refresh_attempt_at: Some(unix_now()),
+            last_refresh_error: None,
+            next_refresh_allowed_at: now,
         }
     }
 
@@ -961,6 +1491,13 @@ mod tests {
             ),
             Some(0)
         );
+        assert_eq!(
+            parse_qcnl_u64(
+                "VERIFY_COLLATERAL_CACHE_REFRESH_HOURS=72\n",
+                COLLATERAL_CACHE_REFRESH_HOURS
+            ),
+            Some(72)
+        );
     }
 
     #[test]
@@ -973,169 +1510,270 @@ mod tests {
             normalize_pccs_base_url("https://pccs.example.com/tdx/certification/v4/"),
             "https://pccs.example.com"
         );
+        assert_eq!(
+            parse_pccs_urls(
+                "https://primary.example/sgx/certification/v4/, \
+                 https://backup.example/tdx/certification/v4/,https://primary.example"
+            ),
+            vec![
+                "https://primary.example".to_string(),
+                "https://backup.example".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn refresh_interval_is_clamped_below_cache_expiry() {
+        let policy = CollateralCachePolicy::from_durations(
+            Duration::from_secs(20),
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+        );
+        assert_eq!(policy.refresh_after, Duration::from_secs(5));
+        assert_eq!(policy.expire_after, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn cache_state_has_separate_refresh_cache_and_collateral_deadlines() {
+        let now = Instant::now();
+        let now_unix = unix_now() as i64;
+        assert_eq!(
+            classify_cache_entry(
+                &cached(Duration::from_secs(5), 3_600),
+                policy(),
+                now,
+                now_unix
+            ),
+            CacheEntryState::Fresh
+        );
+        assert_eq!(
+            classify_cache_entry(
+                &cached(Duration::from_secs(15), 3_600),
+                policy(),
+                now,
+                now_unix
+            ),
+            CacheEntryState::RefreshDue
+        );
+        let cache_expired = cached(Duration::from_secs(25), 3_600);
+        assert_eq!(
+            classify_cache_entry(&cache_expired, policy(), now, now_unix),
+            CacheEntryState::CacheExpired
+        );
+        assert!(collateral_is_still_valid(&cache_expired, now_unix));
+
+        let collateral_expired = cached(Duration::from_secs(5), -1);
+        assert_eq!(
+            classify_cache_entry(&collateral_expired, policy(), now, now_unix),
+            CacheEntryState::CollateralExpired
+        );
+        assert!(!collateral_is_still_valid(&collateral_expired, now_unix));
     }
 
     #[tokio::test]
-    async fn cache_reuses_collateral_but_not_pck_chain() {
+    async fn cache_does_not_share_quote_local_pck_chain() {
         let cache = CollateralCache::default();
-        let fetches = AtomicUsize::new(0);
-        let ttl = Duration::from_secs(60);
+        let mut fetched = collateral();
+        fetched.pck_certificate_chain = Some("must-not-be-cached".into());
+        cache
+            .store_success(
+                cache_key(),
+                fetched,
+                unix_now() as i64 + 3_600,
+                "https://pccs.example.com".into(),
+            )
+            .await;
 
-        let first = cache
-            .get_or_fetch(cache_key(), "pck-chain-1".into(), ttl, || async {
-                fetches.fetch_add(1, Ordering::SeqCst);
-                Ok(collateral())
-            })
-            .await
-            .unwrap();
-        let second = cache
-            .get_or_fetch(cache_key(), "pck-chain-2".into(), ttl, || async {
-                fetches.fetch_add(1, Ordering::SeqCst);
-                Ok(collateral())
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(fetches.load(Ordering::SeqCst), 1);
+        let entry = cache.lookup(&cache_key()).await.unwrap();
+        assert!(entry.collateral.pck_certificate_chain.is_none());
+        let first = cached_collateral(&entry, "pck-chain-1".into());
+        let second = cached_collateral(&entry, "pck-chain-2".into());
         assert_eq!(first.pck_certificate_chain.as_deref(), Some("pck-chain-1"));
         assert_eq!(second.pck_certificate_chain.as_deref(), Some("pck-chain-2"));
-        assert_eq!(
-            cache
-                .entries
-                .lock()
-                .await
-                .get(&cache_key())
-                .unwrap()
-                .collateral
-                .pck_certificate_chain,
-            None
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn cache_coalesces_concurrent_misses() {
-        const REQUESTS: usize = 32;
-        let cache = Arc::new(CollateralCache::default());
-        let fetches = Arc::new(AtomicUsize::new(0));
-        let barrier = Arc::new(Barrier::new(REQUESTS + 1));
-        let mut tasks = Vec::new();
-
-        for index in 0..REQUESTS {
-            let cache = cache.clone();
-            let fetches = fetches.clone();
-            let barrier = barrier.clone();
-            tasks.push(tokio::spawn(async move {
-                barrier.wait().await;
-                let fetch_counter = fetches.clone();
-                let result = cache
-                    .get_or_fetch(
-                        cache_key(),
-                        format!("pck-chain-{index}"),
-                        Duration::from_secs(60),
-                        || async move {
-                            fetch_counter.fetch_add(1, Ordering::SeqCst);
-                            tokio::task::yield_now().await;
-                            Ok(collateral())
-                        },
-                    )
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    result.pck_certificate_chain,
-                    Some(format!("pck-chain-{index}"))
-                );
-            }));
-        }
-
-        barrier.wait().await;
-        for task in tasks {
-            task.await.unwrap();
-        }
-        assert_eq!(fetches.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
-    async fn zero_ttl_disables_cache() {
+    async fn refresh_locks_are_single_flight_per_cache_key() {
         let cache = CollateralCache::default();
-        let fetches = AtomicUsize::new(0);
+        let same_a = cache.refresh_lock(&cache_key()).await;
+        let same_b = cache.refresh_lock(&cache_key()).await;
+        assert!(Arc::ptr_eq(&same_a, &same_b));
 
-        for index in 0..2 {
-            cache
-                .get_or_fetch(
-                    cache_key(),
-                    format!("pck-chain-{index}"),
-                    Duration::ZERO,
-                    || async {
-                        fetches.fetch_add(1, Ordering::SeqCst);
-                        Ok(collateral())
-                    },
-                )
-                .await
-                .unwrap();
-        }
-
-        assert_eq!(fetches.load(Ordering::SeqCst), 2);
-        assert!(cache.entries.lock().await.is_empty());
+        let mut other = cache_key();
+        other.fmspc = "AABBCCDDEEFF".into();
+        let other = cache.refresh_lock(&other).await;
+        assert!(!Arc::ptr_eq(&same_a, &other));
     }
 
     #[tokio::test]
-    async fn expired_collateral_is_refetched() {
+    async fn refresh_failure_preserves_stale_collateral_and_is_reported() {
         let cache = CollateralCache::default();
         let key = cache_key();
-        cache.entries.lock().await.insert(
-            key.clone(),
-            CachedCollateral {
-                collateral: collateral(),
-                cached_at: Instant::now() - Duration::from_secs(2),
-            },
-        );
-        let fetches = AtomicUsize::new(0);
-
-        let result = cache
-            .get_or_fetch(
-                key,
-                "current-pck-chain".into(),
-                Duration::from_secs(1),
-                || async {
-                    fetches.fetch_add(1, Ordering::SeqCst);
-                    Ok(collateral())
-                },
-            )
+        cache
+            .entries
+            .lock()
             .await
-            .unwrap();
+            .insert(key.clone(), cached(Duration::from_secs(25), 3_600));
+        cache
+            .record_refresh_failure(
+                &key,
+                &anyhow::anyhow!("temporary PCCS error"),
+                Duration::from_secs(60),
+            )
+            .await;
 
-        assert_eq!(fetches.load(Ordering::SeqCst), 1);
+        let entry = cache.lookup(&key).await.unwrap();
+        assert!(collateral_is_still_valid(&entry, unix_now() as i64));
+        assert!(entry
+            .last_refresh_error
+            .as_deref()
+            .unwrap()
+            .contains("temporary PCCS error"));
+        assert!(!cache.retry_allowed(&key).await);
+
+        let statuses = cache
+            .statuses(policy(), vec!["https://pccs.example.com".into()])
+            .await;
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].status, "degraded");
+        assert!(statuses[0].details.contains_key("last_refresh_error"));
+    }
+
+    #[tokio::test]
+    async fn proactive_refresh_timer_runs_without_a_request() {
+        let key = CollateralCacheKey {
+            pccs_base_urls: vec!["http://127.0.0.1:1".into()],
+            fmspc: "TIMER00000001".into(),
+            ca: "platform".into(),
+        };
+        let entry = cached(Duration::ZERO, 3_600);
+        let cached_at = entry.cached_at;
+        collateral_cache()
+            .entries
+            .lock()
+            .await
+            .insert(key.clone(), entry);
+        let policy = CollateralCachePolicy::from_durations(
+            Duration::from_millis(10),
+            Duration::from_secs(60),
+            Duration::from_secs(3_600),
+        );
+
+        schedule_refresh_after(key.clone(), policy, cached_at, policy.refresh_after);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if collateral_cache()
+                    .lookup(&key)
+                    .await
+                    .and_then(|entry| entry.last_refresh_error)
+                    .is_some()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the proactive refresh timer did not run");
+    }
+
+    #[tokio::test]
+    async fn hard_expired_cache_falls_back_while_collateral_is_valid() {
+        let key = CollateralCacheKey {
+            pccs_base_urls: vec!["http://127.0.0.1:1".into()],
+            fmspc: "STALE0000001".into(),
+            ca: "platform".into(),
+        };
+        collateral_cache()
+            .entries
+            .lock()
+            .await
+            .insert(key.clone(), cached(Duration::from_secs(25), 3_600));
+
+        let result =
+            refresh_blocking_or_use_stale(key.clone(), "current-pck-chain".into(), policy())
+                .await
+                .unwrap();
         assert_eq!(
             result.pck_certificate_chain.as_deref(),
             Some("current-pck-chain")
         );
+        assert!(collateral_cache()
+            .lookup(&key)
+            .await
+            .unwrap()
+            .last_refresh_error
+            .is_some());
     }
 
     #[tokio::test]
-    async fn fetch_failures_are_not_cached() {
-        let cache = CollateralCache::default();
-        let fetches = AtomicUsize::new(0);
-        let ttl = Duration::from_secs(60);
+    async fn expired_collateral_is_not_used_after_refresh_failure() {
+        let key = CollateralCacheKey {
+            pccs_base_urls: vec!["http://127.0.0.1:1".into()],
+            fmspc: "STALE0000002".into(),
+            ca: "platform".into(),
+        };
+        collateral_cache()
+            .entries
+            .lock()
+            .await
+            .insert(key.clone(), cached(Duration::from_secs(25), -1));
 
-        let error = cache
-            .get_or_fetch(cache_key(), "pck-chain-1".into(), ttl, || async {
-                fetches.fetch_add(1, Ordering::SeqCst);
-                anyhow::bail!("temporary PCCS error")
-            })
+        let error = refresh_blocking_or_use_stale(key, "current-pck-chain".into(), policy())
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("temporary PCCS error"));
-        assert!(cache.entries.lock().await.is_empty());
+        assert!(error
+            .to_string()
+            .contains("configured PCCS endpoints failed"));
+    }
 
-        let result = cache
-            .get_or_fetch(cache_key(), "pck-chain-2".into(), ttl, || async {
-                fetches.fetch_add(1, Ordering::SeqCst);
-                Ok(collateral())
-            })
-            .await
-            .unwrap();
-        assert_eq!(result.pck_certificate_chain.as_deref(), Some("pck-chain-2"));
-        assert_eq!(fetches.load(Ordering::SeqCst), 2);
+    #[tokio::test]
+    async fn pccs_failure_falls_back_to_the_next_endpoint() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backup = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = vec![0; 4_096];
+                let size = stream.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..size]);
+                let path = request.split_whitespace().nth(1).unwrap();
+                let (extra_header, body) = if path.contains("pckcrl") {
+                    ("SGX-PCK-CRL-Issuer-Chain: chain\r\n", "crl")
+                } else if path.contains("/tcb?") {
+                    (
+                        "TCB-Info-Issuer-Chain: chain\r\n",
+                        r#"{"tcbInfo":{},"signature":"00"}"#,
+                    )
+                } else if path.contains("qe/identity") {
+                    (
+                        "SGX-Enclave-Identity-Issuer-Chain: chain\r\n",
+                        r#"{"enclaveIdentity":{},"signature":"00"}"#,
+                    )
+                } else {
+                    ("", "00")
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{}",
+                    body.len(),
+                    extra_header,
+                    body
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+
+        let (collateral, selected) = fetch_collateral_with_fallback(
+            &["http://127.0.0.1:1".into(), backup.clone()],
+            "00906ED50000",
+            "platform",
+        )
+        .await
+        .unwrap();
+        assert_eq!(selected, backup);
+        assert_eq!(collateral.pck_crl, b"crl");
+        assert_eq!(collateral.root_ca_crl, vec![0]);
+        server.await.unwrap();
     }
 
     #[test]
@@ -1145,13 +1783,19 @@ mod tests {
         // resolution. (`PCCS_URL` env is deliberately not set here, to avoid
         // polluting other tests' env state; the override wins regardless.)
         super::set_pccs_url(Some("https://my-pccs.example".into()));
-        assert_eq!(super::resolve_pccs_url(), "https://my-pccs.example");
+        assert_eq!(
+            super::resolve_pccs_urls(),
+            vec!["https://my-pccs.example".to_string()]
+        );
 
         // Clearing the override restores default resolution, and confirms the
         // shared global was reset so it cannot leak into other tests. The
         // `#[serial_test::serial]` attribute above serializes this test against
         // any other test that touches the same global PCCS override.
         super::set_pccs_url(None);
-        assert_ne!(super::resolve_pccs_url(), "https://my-pccs.example");
+        assert_ne!(
+            super::resolve_pccs_urls(),
+            vec!["https://my-pccs.example".to_string()]
+        );
     }
 }

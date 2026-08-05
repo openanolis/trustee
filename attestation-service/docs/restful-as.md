@@ -35,10 +35,32 @@ PCCS are usually supported by cloud providers, you can find the steps to configu
 Or you can [set-up a PCCS yourself](https://download.01.org/intel-sgx/sgx-dcap/1.9/windows/docs/Intel_SGX_DCAP_Windows_SW_Installation_Guide.pdf).
 
 When the TDX verifier is built with the pure-Rust `tdx-dcap-rust` backend,
-verification collateral is cached in the AS process. The cache lifetime uses
-`VERIFY_COLLATERAL_CACHE_EXPIRE_HOURS` from the environment or QCNL config and
-defaults to 168 hours. Set the value to `0` to disable the cache. Concurrent
-cache misses are coalesced to avoid overloading PCCS during startup.
+verification collateral is cached in the AS process. The following environment
+variables configure PCCS resilience:
+
+See [PCCS Configuration and TDX Collateral Resilience](./pccs-resilience.md)
+for the full configuration precedence, cache state machine, and alerting guide.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PCCS_URLS` | unset | Ordered, comma-separated PCCS base URLs. The verifier falls back to the next URL when an endpoint fails. |
+| `PCCS_URL` | QCNL/default | Backward-compatible single PCCS URL used when `PCCS_URLS` is unset. |
+| `PCCS_HTTP_TIMEOUT_SECS` | `60` | Per-request timeout before the next PCCS is tried. |
+| `VERIFY_COLLATERAL_CACHE_REFRESH_HOURS` | `72` | Proactively refresh cached collateral after this age. Must be shorter than cache expiry. |
+| `VERIFY_COLLATERAL_CACHE_EXPIRE_HOURS` | `168` | Age at which cached collateral becomes stale. `0` disables the cache. |
+| `VERIFY_COLLATERAL_CACHE_REFRESH_RETRY_SECS` | `3600` | Backoff after a failed refresh. |
+
+Proactive refresh is asynchronous on native AS builds, so verification requests
+continue using the last successful collateral. If all PCCS endpoints are down
+after the cache expiry, the stale cache remains usable until the signed TCB/QE
+`nextUpdate` is reached. Refresh failures are logged with the stable event
+`tdx_collateral_refresh_failed` and exposed by the status API.
+
+`GET /status` returns AS and verifier dependency state without contacting PCCS:
+
+```shell
+curl http://127.0.0.1:8080/status
+```
 
 Then an attestation request can be used to request the server. We provide an [example request of validating a SGX quote](../tests/coco-as/request.json).
 

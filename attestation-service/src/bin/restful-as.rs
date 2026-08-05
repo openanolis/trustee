@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 
 use crate::restful::{
     attestation, delete_policy, get_certificate, get_challenge, get_jwks, get_openid_configuration,
-    get_policies, set_policy,
+    get_policies, get_status, set_policy,
 };
 
 mod restful;
@@ -76,6 +76,9 @@ enum WebApi {
 
     #[strum(serialize = "/.well-known/openid-configuration")]
     OpenIdConfiguration,
+
+    #[strum(serialize = "/status")]
+    Status,
 }
 
 #[derive(Error, Debug)]
@@ -178,6 +181,7 @@ async fn main() -> Result<(), RestfulError> {
                 web::resource(WebApi::Certificate.as_ref()).route(web::get().to(get_certificate)),
             )
             .service(web::resource(WebApi::Jwks.as_ref()).route(web::get().to(get_jwks)))
+            .service(web::resource(WebApi::Status.as_ref()).route(web::get().to(get_status)))
             .service(
                 web::resource(WebApi::OpenIdConfiguration.as_ref())
                     .route(web::get().to(get_openid_configuration)),

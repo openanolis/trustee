@@ -226,6 +226,17 @@ pub struct AttestationService {
     token_broker: Box<dyn AttestationTokenBroker + Send + Sync>,
 }
 
+/// Transport-neutral runtime status exposed by REST and gRPC AS binaries.
+/// Verifier dependencies use a generic list so future KDS, RIM, registrar, or
+/// other cache-backed integrations can report state without changing the
+/// top-level API shape.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ServiceStatus {
+    pub service: String,
+    pub status: String,
+    pub dependencies: Vec<verifier::DependencyStatus>,
+}
+
 #[derive(serde::Serialize, Debug, Clone)]
 struct Jwk {
     kty: String,
@@ -254,6 +265,24 @@ impl AttestationService {
             rvps,
             token_broker,
         })
+    }
+
+    /// Return AS and verifier dependency status without performing network I/O.
+    pub async fn status(&self) -> ServiceStatus {
+        let dependencies = verifier::dependency_statuses().await;
+        let status = if dependencies.iter().any(|status| status.is_unhealthy()) {
+            "unhealthy"
+        } else if dependencies.iter().any(|status| status.is_degraded()) {
+            "degraded"
+        } else {
+            "ok"
+        };
+
+        ServiceStatus {
+            service: "attestation-service".into(),
+            status: status.into(),
+            dependencies,
+        }
     }
 
     /// Set Attestation Verification Policy.

@@ -55,6 +55,8 @@ tdx-dcap-rust = [
     "asn1-rs",
     "urlencoding",
     "chrono",
+    "tokio/rt",
+    "tokio/time",
 ]
 sgx-verifier = ["scroll", "intel-tee-quote-verification-rs"]
 az-snp-vtpm-verifier = ["az-snp-vtpm", "sev", "snp-verifier"]

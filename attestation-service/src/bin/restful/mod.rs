@@ -448,6 +448,13 @@ fn parse_init_data(data: InitDataInput) -> Result<InnerInitDataInput> {
     Ok(res)
 }
 
+/// Return transport-neutral AS and verifier dependency status. This endpoint
+/// does not contact PCCS; it only snapshots the in-process state.
+pub async fn get_status(cocoas: web::Data<Arc<RwLock<AttestationService>>>) -> impl Responder {
+    let status = cocoas.read().await.status().await;
+    web::Json(status)
+}
+
 /// This handler uses json extractor
 pub async fn attestation(
     request: web::Json<AttestationRequest>,
