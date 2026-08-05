@@ -41,25 +41,29 @@ through the cache.
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `VERIFY_COLLATERAL_CACHE_REFRESH_HOURS` | `72` | Schedule an asynchronous refresh after a successful cache fill. |
-| `VERIFY_COLLATERAL_CACHE_EXPIRE_HOURS` | `168` | Mark the local cache entry stale after this age. `0` disables caching. |
+| `VERIFY_COLLATERAL_CACHE_EXPIRE_HOURS` | `168` | Mark the local cache dependency degraded and make requests refresh synchronously after this age. `0` disables caching. |
 | `VERIFY_COLLATERAL_CACHE_REFRESH_RETRY_SECS` | `3600` | Minimum delay before another refresh after PCCS failure. |
 
 These numeric settings are read from the environment first, then from
 `/etc/sgx_default_qcnl.conf`. If the refresh age is not shorter than the cache
 expiry, AS clamps it to half of the expiry and emits a warning.
 
-The three time boundaries have different purposes:
+The cache policy has two local age boundaries:
 
 1. **Refresh age**: a native AS schedules a background timer as soon as it
    stores collateral. When the timer fires, verification continues with the
    current cache while one refresh runs for that cache key. A request that
    notices an overdue refresh also triggers it as a safety net.
 2. **Cache expiry**: after this local TTL, the next request attempts a blocking
-   refresh. If every PCCS is unavailable, AS falls back to the cached value.
-3. **Collateral validity**: stale fallback is allowed only while the earliest
-   signed TCB Info or QE Identity `nextUpdate` is still in the future. Intel
-   collateral is commonly issued with a validity window of about 30 days, but
-   AS uses the actual signed dates instead of assuming a fixed 30-day value.
+   refresh. If every PCCS is unavailable, AS still passes the cached value to
+   quote verification.
+
+The cache layer deliberately does not use TCB Info or QE Identity `nextUpdate`,
+CRL validity, or certificate validity to decide whether a cached value may be
+used. Those checks belong to quote verification and its policy. Consequently,
+cache expiry means operational degradation, not cryptographic collateral
+expiry, and extending the cache TTL does not change the verifier's security
+policy.
 
 Refreshes for the same key are coalesced. A slow PCCS for one FMSPC does not
 block refreshes for other cache keys. Stable log event names are available for
@@ -99,19 +103,18 @@ of these states:
 | Dependency state | Meaning |
 |------------------|---------|
 | `not_initialized` | This AS process has not verified TDX evidence yet. |
-| `ready` | Cache age is below the proactive refresh threshold. |
-| `refresh_due` | Collateral is usable and refresh is due or running. |
-| `degraded` | Refresh failed or local cache TTL elapsed, but signed collateral remains valid. |
-| `unhealthy` | Signed collateral has passed `nextUpdate`; PCCS recovery is required. |
+| `ready` | Cache age is below the proactive refresh threshold (less than 72 hours by default). |
+| `refresh_due` | Cache age is between refresh and expiry thresholds and proactive refresh is due or running. `refresh_in_progress` distinguishes an active fetch. |
+| `refresh_retrying` | Cache age is between refresh and expiry thresholds, the previous refresh failed, and AS is waiting to retry. |
+| `degraded` | The local cache age has reached the expiry threshold (168 hours by default). The cached value is still passed to quote verification if PCCS is unavailable. |
 
 Useful detail fields include `pccs_urls`, `last_successful_pccs`,
 `last_refresh_attempt_at`, `last_refresh_error`, `refresh_in_progress`,
-`cache_age_seconds`, `collateral_expires_at`, and
-`collateral_valid_for_seconds`. Timestamp fields are Unix seconds.
+`cache_age_seconds`, and `cached_at`. Timestamp fields are Unix seconds.
 
-For alerting, trigger an early operational warning when any dependency becomes
-`degraded` or `last_refresh_error` appears. Trigger a page when it becomes
-`unhealthy` or when `collateral_valid_for_seconds` approaches the team's repair
-SLO. With the defaults, a failed refresh is visible around day 3, the local
-cache TTL is day 7, and stale fallback remains bounded by the collateral's
-signed validity.
+For alerting, trigger an early operational warning when a dependency becomes
+`refresh_retrying` or `last_refresh_error` appears. Escalate when it becomes
+`degraded`. With the defaults, a failed refresh is visible around day 3 and the
+local cache dependency becomes degraded at day 7. Whether verification accepts
+the cached collateral is reported by the normal quote-verification path rather
+than this cache-health API.
