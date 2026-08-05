@@ -20,6 +20,11 @@ use sev::firmware::host::{CertTableEntry, CertType};
 use sha2::{Digest, Sha512};
 #[cfg(test)]
 use std::sync::OnceLock;
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    result::Result::Ok,
+};
 use x509_parser::prelude::*;
 
 #[derive(Serialize, Deserialize)]
@@ -44,9 +49,12 @@ const FMC_SPL_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .3704 .1 .3 .9);
 // provision the VCEK cert table in the extended report).
 const KDS_CERT_SITE: &str = "https://kdsintf.amd.com";
 const KDS_VCEK: &str = "/vcek/v1";
+const DEFAULT_KDS_OFFLINE_STORE_PATH: &str =
+    "/opt/confidential-containers/attestation-service/kds-store";
+const KDS_OFFLINE_STORE_ENV: &str = "TRUSTEE_SNP_VCEK_STORE";
 
-// Supported report versions. v2 has no CPUID fields (legacy, assumed Milan);
-// v3..=5 carry CPUID family/model so the processor generation can be derived.
+// Supported report versions. v2 has no CPUID fields; v3..=5 carry CPUID
+// family/model so the processor generation can be derived directly.
 const REPORT_VERSION_MIN: u32 = 2;
 const REPORT_VERSION_MAX: u32 = 5;
 
@@ -121,10 +129,20 @@ fn read_reported_tcb(raw: &[u8], gen: ProcessorGeneration) -> Result<ReportedTcb
 }
 
 /// Derive the processor generation from the CPUID family/model bytes (report
-/// v3+). v2 reports have no CPUID data and are treated as Milan for backwards
-/// compatibility.
-fn get_processor_generation(raw: &[u8], version: u32) -> Result<ProcessorGeneration> {
+/// v3+). Report v2 has no CPUID fields. Milan uses the full 64-byte chip ID,
+/// while Turin exposes its 8-byte KDS hardware ID followed by zero padding, so
+/// that representation is the only trustworthy discriminator available in a
+/// v2 report. Other v2 reports retain the historical Milan fallback.
+fn get_processor_generation(
+    raw: &[u8],
+    version: u32,
+    chip_id: &[u8; 64],
+) -> Result<ProcessorGeneration> {
     if version < 3 {
+        if chip_id[..8].iter().any(|byte| *byte != 0) && chip_id[8..].iter().all(|byte| *byte == 0)
+        {
+            return Ok(ProcessorGeneration::Turin);
+        }
         return Ok(ProcessorGeneration::Milan);
     }
     let cpu_fam = *raw
@@ -145,6 +163,77 @@ fn get_processor_generation(raw: &[u8], version: u32) -> Result<ProcessorGenerat
         },
         _ => bail!("Unsupported SNP processor family {cpu_fam:#x}"),
     }
+}
+
+fn vcek_hardware_id(gen: ProcessorGeneration, chip_id: &[u8]) -> String {
+    match gen {
+        ProcessorGeneration::Turin => hex::encode(&chip_id[..8]),
+        _ => hex::encode(chip_id),
+    }
+}
+
+fn vcek_tcb_prefix(raw: &[u8], gen: ProcessorGeneration) -> Result<String> {
+    let tcb = read_reported_tcb(raw, gen)?;
+    let mut prefix = format!(
+        "bl{:02}_tee{:02}_snp{:02}_ucode{:02}",
+        tcb.bootloader, tcb.tee, tcb.snp, tcb.microcode
+    );
+    if let Some(fmc) = tcb.fmc {
+        prefix.push_str(&format!("_fmc{fmc:02}"));
+    }
+    Ok(prefix)
+}
+
+fn offline_vcek_store() -> PathBuf {
+    env::var_os(KDS_OFFLINE_STORE_ENV)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_KDS_OFFLINE_STORE_PATH))
+}
+
+fn read_vcek_if_present(path: &Path) -> Result<Option<Vec<u8>>> {
+    match path.try_exists() {
+        Ok(true) => fs::read(path)
+            .with_context(|| format!("Failed to read VCEK from {}", path.display()))
+            .map(Some),
+        Ok(false) => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("Failed to stat {}", path.display())),
+    }
+}
+
+/// Load a pre-provisioned VCEK before using the network. The directory layout
+/// matches upstream Trustee's offline AMD certificate store. A TCB-specific
+/// filename is preferred, with the historical flat `vcek.der` as fallback.
+fn fetch_vcek_from_offline_store(
+    raw: &[u8],
+    gen: ProcessorGeneration,
+    chip_id: &[u8],
+) -> Result<Option<Vec<u8>>> {
+    fetch_vcek_from_offline_store_at(&offline_vcek_store(), raw, gen, chip_id)
+}
+
+fn fetch_vcek_from_offline_store_at(
+    store: &Path,
+    raw: &[u8],
+    gen: ProcessorGeneration,
+    chip_id: &[u8],
+) -> Result<Option<Vec<u8>>> {
+    let dir = store.join("vcek").join(vcek_hardware_id(gen, chip_id));
+    let tcb_path = dir.join(format!("{}_vcek.der", vcek_tcb_prefix(raw, gen)?));
+    if let Some(vcek) = read_vcek_if_present(&tcb_path)? {
+        debug!("Loaded VCEK from offline store: {}", tcb_path.display());
+        return Ok(Some(vcek));
+    }
+
+    let fallback_path = dir.join("vcek.der");
+    let vcek = read_vcek_if_present(&fallback_path)?;
+    if vcek.is_some() {
+        debug!(
+            "Loaded VCEK from offline store fallback: {}",
+            fallback_path.display()
+        );
+    }
+    Ok(vcek)
 }
 
 fn load_cert_chain_for(gen: ProcessorGeneration) -> Result<VendorCertificates> {
@@ -170,10 +259,7 @@ async fn fetch_vcek_from_kds(
     }
     let tcb = read_reported_tcb(raw, gen)?;
     // Turin uses an 8-byte hwID in the KDS URL; earlier generations use 64 bytes.
-    let hw_id = match gen {
-        ProcessorGeneration::Turin => hex::encode(&chip_id[0..8]),
-        _ => hex::encode(chip_id),
-    };
+    let hw_id = vcek_hardware_id(gen, chip_id);
     let url = match gen {
         ProcessorGeneration::Turin => {
             let fmc = tcb.fmc.context("Turin report missing FMC TCB value")?;
@@ -205,6 +291,16 @@ async fn fetch_vcek_from_kds(
         .context("Failed to read VCEK body from KDS")?
         .to_vec();
     Ok(der)
+}
+
+async fn get_vcek(raw: &[u8], gen: ProcessorGeneration, chip_id: &[u8]) -> Result<Vec<u8>> {
+    match fetch_vcek_from_offline_store(raw, gen, chip_id) {
+        Ok(Some(vcek)) => return Ok(vcek),
+        Ok(None) => debug!("No matching VCEK found in the offline store"),
+        Err(err) => warn!("Failed to load VCEK from the offline store: {err:#}"),
+    }
+
+    fetch_vcek_from_kds(raw, gen, chip_id).await
 }
 
 #[derive(Debug, Default)]
@@ -267,7 +363,7 @@ impl Verifier for Snp {
             ));
         }
 
-        let proc_gen = get_processor_generation(&raw, report.version)?;
+        let proc_gen = get_processor_generation(&raw, report.version, &report.chip_id)?;
         let vendor_certs = load_cert_chain_for(proc_gen)?;
 
         // Use the cert chain embedded in the evidence, or fetch the VCEK from the
@@ -275,7 +371,7 @@ impl Verifier for Snp {
         let cert_chain = match cert_chain {
             Some(cc) if !cc.is_empty() => cc,
             _ => {
-                let vcek = fetch_vcek_from_kds(&raw, proc_gen, &report.chip_id).await?;
+                let vcek = get_vcek(&raw, proc_gen, &report.chip_id).await?;
                 vec![CertTableEntry::new(CertType::VCEK, vcek)]
             }
         };
@@ -760,7 +856,7 @@ mod tests {
         let raw = bincode::serialize(&report).unwrap();
         assert_eq!(report.version, 5);
         assert_eq!(
-            get_processor_generation(&raw, report.version).unwrap(),
+            get_processor_generation(&raw, report.version, &report.chip_id).unwrap(),
             ProcessorGeneration::Turin
         );
         // The sev 4.x struct misreads Turin's FMC-shifted TCB; the raw reader fixes it.
@@ -770,6 +866,69 @@ mod tests {
             (3, 2, 5, 97)
         );
         assert_eq!(tcb.fmc, Some(1));
+    }
+
+    #[test]
+    fn check_turin_v2_generation_from_short_hwid() {
+        let mut chip_id = [0u8; 64];
+        chip_id[..8].copy_from_slice(&[0x5b, 0x53, 0xe0, 0x6b, 0xd3, 0x56, 0xd9, 0xc6]);
+        let raw = [0u8; 1184];
+
+        assert_eq!(
+            get_processor_generation(&raw, 2, &chip_id).unwrap(),
+            ProcessorGeneration::Turin
+        );
+    }
+
+    #[test]
+    fn check_offline_vcek_store_prefers_tcb_specific_file() {
+        let report = bincode::deserialize::<AttestationReport>(TURIN_REPORT.as_slice()).unwrap();
+        let raw = bincode::serialize(&report).unwrap();
+        let store = tempfile::tempdir().unwrap();
+        let vcek_dir = store.path().join("vcek").join(vcek_hardware_id(
+            ProcessorGeneration::Turin,
+            &report.chip_id,
+        ));
+        std::fs::create_dir_all(&vcek_dir).unwrap();
+        std::fs::write(vcek_dir.join("vcek.der"), b"fallback").unwrap();
+        let tcb_name = format!(
+            "{}_vcek.der",
+            vcek_tcb_prefix(&raw, ProcessorGeneration::Turin).unwrap()
+        );
+        std::fs::write(vcek_dir.join(tcb_name), TURIN_VCEK).unwrap();
+
+        let loaded = fetch_vcek_from_offline_store_at(
+            store.path(),
+            &raw,
+            ProcessorGeneration::Turin,
+            &report.chip_id,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(loaded, TURIN_VCEK);
+    }
+
+    #[test]
+    fn check_offline_vcek_store_legacy_fallback() {
+        let report = bincode::deserialize::<AttestationReport>(TURIN_REPORT.as_slice()).unwrap();
+        let raw = bincode::serialize(&report).unwrap();
+        let store = tempfile::tempdir().unwrap();
+        let vcek_dir = store.path().join("vcek").join(vcek_hardware_id(
+            ProcessorGeneration::Turin,
+            &report.chip_id,
+        ));
+        std::fs::create_dir_all(&vcek_dir).unwrap();
+        std::fs::write(vcek_dir.join("vcek.der"), TURIN_VCEK).unwrap();
+
+        let loaded = fetch_vcek_from_offline_store_at(
+            store.path(),
+            &raw,
+            ProcessorGeneration::Turin,
+            &report.chip_id,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(loaded, TURIN_VCEK);
     }
 
     #[test]
