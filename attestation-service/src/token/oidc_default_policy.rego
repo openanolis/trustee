@@ -160,6 +160,35 @@ validate_aael_file_measurements(uefi_event_logs) if {
 	}
 }
 
+##### AMD SEV-SNP
+
+# Reference-value checks are deployment-specific. Uncomment the checks needed
+# by the relying party after provisioning the corresponding RVPS values.
+executables := 3 if {
+	input.snp
+	# input.snp.measurement in query_reference_value("snp.measurement")
+}
+
+hardware := 2 if {
+	input.snp
+	# input.snp.reported_tcb_bootloader in query_reference_value("snp.reported_tcb_bootloader")
+	# input.snp.reported_tcb_tee in query_reference_value("snp.reported_tcb_tee")
+	# input.snp.reported_tcb_snp in query_reference_value("snp.reported_tcb_snp")
+	# input.snp.reported_tcb_microcode in query_reference_value("snp.reported_tcb_microcode")
+	# Turin and later only:
+	# input.snp.reported_tcb_fmc in query_reference_value("snp.reported_tcb_fmc")
+}
+
+configuration := 2 if {
+	input.snp.policy_debug_allowed == "0"
+	input.snp.policy_migrate_ma == "0"
+}
+
+# Base SNP evidence does not authenticate runtime filesystem state.
+file_system := 0 if {
+	input.snp
+}
+
 ##### TDX
 
 executables := 3 if {

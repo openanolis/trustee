@@ -224,6 +224,41 @@ validate_aael_model_measurements(uefi_event_logs) if {
 	}
 }
 
+##### AMD SEV-SNP
+
+# Signature, endorsement-chain, TCB-extension, VMPL, and REPORT_DATA checks are
+# completed by the SNP verifier before policy evaluation. Reference-value
+# checks are deployment-specific, so keep them disabled in the default policy
+# and uncomment the checks needed by the relying party.
+executables := 3 if {
+	input.snp
+	# Check the initial guest launch measurement.
+	# input.snp.measurement in query_reference_value("snp.measurement")
+}
+
+hardware := 2 if {
+	input.snp
+	# Check minimum or explicitly approved platform TCB values.
+	# input.snp.reported_tcb_bootloader in query_reference_value("snp.reported_tcb_bootloader")
+	# input.snp.reported_tcb_tee in query_reference_value("snp.reported_tcb_tee")
+	# input.snp.reported_tcb_snp in query_reference_value("snp.reported_tcb_snp")
+	# input.snp.reported_tcb_microcode in query_reference_value("snp.reported_tcb_microcode")
+	# Turin and later only:
+	# input.snp.reported_tcb_fmc in query_reference_value("snp.reported_tcb_fmc")
+}
+
+configuration := 2 if {
+	input.snp.policy_debug_allowed == "0"
+	input.snp.policy_migrate_ma == "0"
+}
+
+# AR4SI value 0 means "no claim". Base SNP attestation has no authenticated
+# runtime filesystem measurement; SVSM/vTPM or another measured-boot mechanism
+# must provide that evidence separately.
+file_system := 0 if {
+	input.snp
+}
+
 ##### TDX
 
 executables := 3 if {

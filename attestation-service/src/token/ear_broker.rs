@@ -577,6 +577,54 @@ mod tests {
         ear.validate().unwrap();
     }
 
+    async fn issue_snp_ear(debug_allowed: &str) -> Value {
+        let policy_dir = tempfile::tempdir().unwrap();
+        let config = Configuration {
+            policy_dir: policy_dir.path().to_string_lossy().into_owned(),
+            ..Configuration::default()
+        };
+        let broker = EarAttestationTokenBroker::new(config).unwrap();
+        let token = broker
+            .issue(
+                vec![TeeClaims {
+                    tee: Tee::Snp,
+                    tee_class: "cpu".to_string(),
+                    claims: json!({
+                        "measurement": "test-snp-launch-measurement",
+                        "policy_debug_allowed": debug_allowed,
+                        "policy_migrate_ma": "0",
+                        "reported_tcb_bootloader": "0",
+                        "reported_tcb_tee": "0",
+                        "reported_tcb_snp": "0",
+                        "reported_tcb_microcode": "37",
+                        "reported_tcb_fmc": "0",
+                    }),
+                    runtime_data_claims: Value::Null,
+                    init_data_claims: Value::Null,
+                    additional_data: None,
+                }],
+                vec!["default".into()],
+                crate::rvps::empty_test_resolver(),
+            )
+            .await
+            .unwrap();
+
+        let payload = token.split('.').nth(1).unwrap();
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_snp_default_policy_affirms_without_reference_values() {
+        let ear = issue_snp_ear("0").await;
+        assert_eq!(ear["submods"]["cpu0"]["ear.status"], "affirming");
+    }
+
+    #[tokio::test]
+    async fn test_snp_default_policy_rejects_debug_guest() {
+        let ear = issue_snp_ear("1").await;
+        assert_eq!(ear["submods"]["cpu0"]["ear.status"], "warning");
+    }
+
     #[test]
     fn test_transform_claims() {
         let json = json!({
