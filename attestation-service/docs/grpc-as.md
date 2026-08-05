@@ -52,8 +52,10 @@ for the full configuration precedence, cache state machine, and alerting guide.
 
 Proactive refresh is asynchronous on native AS builds. If every PCCS endpoint
 is unavailable after the cache expiry, AS continues using the cached collateral
-until its signed TCB/QE `nextUpdate` is reached. Refresh failures are logged as
-`tdx_collateral_refresh_failed` and exposed through the generic status RPC:
+and leaves collateral freshness and validity decisions to quote verification.
+Refresh failures are logged as `tdx_collateral_refresh_failed` and exposed as
+`refresh_retrying` before cache expiry or `degraded` after cache expiry through
+the generic status RPC:
 
 ```shell
 grpcurl \

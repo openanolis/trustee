@@ -24,10 +24,11 @@
 //! Verification collateral is cached in process by PCCS set, FMSPC and CA type.
 //! `VERIFY_COLLATERAL_CACHE_REFRESH_HOURS` (72 hours by default) proactively
 //! refreshes an entry before `VERIFY_COLLATERAL_CACHE_EXPIRE_HOURS` (168 hours
-//! by default). Refresh failures retain the last successfully verified
-//! collateral. Even after the cache TTL, the old value remains usable while
-//! its signed TCB/QE `nextUpdate` has not passed. Concurrent refreshes are
-//! coalesced per cache key and failures are retried with a bounded backoff.
+//! by default). Refresh failures retain the last successfully fetched
+//! collateral, including after the cache TTL. Collateral freshness remains a
+//! quote-verification policy decision rather than a cache-availability
+//! decision. Concurrent refreshes are coalesced per cache key and failures are
+//! retried with a bounded backoff.
 //!
 //! Scope: the collateral fetch currently supports quotes whose certification
 //! data embeds the PCK certificate chain (PCK cert type 5), which is what cloud
@@ -343,7 +344,6 @@ struct CachedCollateral {
     collateral: QuoteCollateralV3,
     cached_at: Instant,
     cached_at_unix: u64,
-    collateral_expires_at: i64,
     last_successful_pccs: String,
     last_refresh_attempt_at: Option<u64>,
     last_refresh_error: Option<String>,
@@ -355,7 +355,6 @@ enum CacheEntryState {
     Fresh,
     RefreshDue,
     CacheExpired,
-    CollateralExpired,
 }
 
 /// Process-local collateral cache. Per-key refresh locks prevent a slow PCCS
@@ -384,7 +383,6 @@ impl CollateralCache {
         &self,
         key: CollateralCacheKey,
         mut collateral: QuoteCollateralV3,
-        collateral_expires_at: i64,
         successful_pccs: String,
     ) -> Instant {
         // The PCK chain belongs to the current quote and must never be shared
@@ -397,7 +395,6 @@ impl CollateralCache {
                 collateral,
                 cached_at: now,
                 cached_at_unix: unix_now(),
-                collateral_expires_at,
                 last_successful_pccs: successful_pccs,
                 last_refresh_attempt_at: Some(unix_now()),
                 last_refresh_error: None,
@@ -471,34 +468,33 @@ impl CollateralCache {
         }
 
         let now = Instant::now();
-        let now_unix = unix_now() as i64;
         let mut statuses = Vec::with_capacity(entries.len());
         for (key, entry) in entries {
-            let state = classify_cache_entry(&entry, policy, now, now_unix);
+            let state = classify_cache_entry(&entry, policy, now);
             let refresh_lock = self.refresh_lock(&key).await;
             let refresh_in_progress = refresh_lock.try_lock().is_err();
-            let (mut status, mut message) = match state {
+            let (status, message) = match state {
                 CacheEntryState::Fresh => (
                     "ready",
                     "cached collateral is within the proactive refresh interval",
                 ),
-                CacheEntryState::RefreshDue => (
-                    "refresh_due",
-                    "cached collateral is usable and due for proactive refresh",
-                ),
                 CacheEntryState::CacheExpired => (
                     "degraded",
-                    "cache TTL elapsed; signed collateral remains valid as fallback",
+                    "cache TTL elapsed; cached collateral is retained for verification",
                 ),
-                CacheEntryState::CollateralExpired => (
-                    "unhealthy",
-                    "cached collateral has passed its signed nextUpdate",
+                CacheEntryState::RefreshDue if refresh_in_progress => (
+                    "refresh_due",
+                    "cached collateral is usable while proactive refresh is running",
+                ),
+                CacheEntryState::RefreshDue if entry.last_refresh_error.is_some() => (
+                    "refresh_retrying",
+                    "the last PCCS refresh failed; cached collateral is available while waiting to retry",
+                ),
+                CacheEntryState::RefreshDue => (
+                    "refresh_due",
+                    "cached collateral is usable and proactive refresh is due",
                 ),
             };
-            if entry.last_refresh_error.is_some() && status != "unhealthy" {
-                status = "degraded";
-                message = "the last PCCS refresh failed; cached collateral remains available";
-            }
 
             let mut details = BTreeMap::new();
             details.insert("fmspc".into(), json!(key.fmspc));
@@ -509,14 +505,6 @@ impl CollateralCache {
                 json!(entry.cached_at.elapsed().as_secs()),
             );
             details.insert("cached_at".into(), json!(entry.cached_at_unix));
-            details.insert(
-                "collateral_expires_at".into(),
-                json!(entry.collateral_expires_at),
-            );
-            details.insert(
-                "collateral_valid_for_seconds".into(),
-                json!(entry.collateral_expires_at.saturating_sub(now_unix)),
-            );
             details.insert(
                 "last_successful_pccs".into(),
                 json!(entry.last_successful_pccs),
@@ -558,19 +546,14 @@ fn classify_cache_entry(
     entry: &CachedCollateral,
     policy: CollateralCachePolicy,
     now: Instant,
-    now_unix: i64,
 ) -> CacheEntryState {
-    if now_unix >= entry.collateral_expires_at {
-        CacheEntryState::CollateralExpired
+    let age = now.saturating_duration_since(entry.cached_at);
+    if age >= policy.expire_after {
+        CacheEntryState::CacheExpired
+    } else if age >= policy.refresh_after {
+        CacheEntryState::RefreshDue
     } else {
-        let age = now.saturating_duration_since(entry.cached_at);
-        if age >= policy.expire_after {
-            CacheEntryState::CacheExpired
-        } else if age >= policy.refresh_after {
-            CacheEntryState::RefreshDue
-        } else {
-            CacheEntryState::Fresh
-        }
+        CacheEntryState::Fresh
     }
 }
 
@@ -583,25 +566,14 @@ fn cached_collateral(entry: &CachedCollateral, pck_chain: String) -> QuoteCollat
     attach_pck_chain(entry.collateral.clone(), pck_chain)
 }
 
-fn collateral_is_still_valid(entry: &CachedCollateral, now_unix: i64) -> bool {
-    now_unix < entry.collateral_expires_at
-}
-
-fn collateral_expiration(collateral: &QuoteCollateralV3) -> Result<i64> {
-    CollateralDates::parse(collateral)
-        .map(|dates| dates.earliest_expiration_date)
-        .map_err(pccs_bad_response)
-}
-
 async fn fetch_and_store(
     key: &CollateralCacheKey,
     policy: CollateralCachePolicy,
 ) -> Result<QuoteCollateralV3> {
     let (collateral, successful_pccs) =
         fetch_collateral_with_fallback(&key.pccs_base_urls, &key.fmspc, &key.ca).await?;
-    let expires_at = collateral_expiration(&collateral)?;
     let cached_at = collateral_cache()
-        .store_success(key.clone(), collateral.clone(), expires_at, successful_pccs)
+        .store_success(key.clone(), collateral.clone(), successful_pccs)
         .await;
     schedule_refresh_after(key.clone(), policy, cached_at, policy.refresh_after);
     Ok(collateral)
@@ -686,9 +658,7 @@ async fn trigger_background_refresh(key: CollateralCacheKey, policy: CollateralC
         let Some(entry) = collateral_cache().lookup(&key).await else {
             return;
         };
-        if classify_cache_entry(&entry, policy, Instant::now(), unix_now() as i64)
-            == CacheEntryState::Fresh
-        {
+        if classify_cache_entry(&entry, policy, Instant::now()) == CacheEntryState::Fresh {
             return;
         }
 
@@ -725,13 +695,11 @@ async fn refresh_blocking_or_use_stale(
     let _refresh_guard = refresh_lock.lock().await;
 
     if let Some(entry) = collateral_cache().lookup(&key).await {
-        let state = classify_cache_entry(&entry, policy, Instant::now(), unix_now() as i64);
+        let state = classify_cache_entry(&entry, policy, Instant::now());
         if state == CacheEntryState::Fresh {
             return Ok(cached_collateral(&entry, pck_chain));
         }
-        if !collateral_cache().retry_allowed(&key).await
-            && state != CacheEntryState::CollateralExpired
-        {
+        if !collateral_cache().retry_allowed(&key).await {
             return Ok(cached_collateral(&entry, pck_chain));
         }
     }
@@ -744,16 +712,13 @@ async fn refresh_blocking_or_use_stale(
                 .record_refresh_failure(&key, &error, policy.retry_after)
                 .await;
             if let Some(entry) = collateral_cache().lookup(&key).await {
-                if collateral_is_still_valid(&entry, unix_now() as i64) {
-                    warn!(
-                        "event=tdx_collateral_stale_fallback fmspc={} ca={} cache_age_seconds={} collateral_valid_for_seconds={} error={error:#}",
-                        key.fmspc,
-                        key.ca,
-                        entry.cached_at.elapsed().as_secs(),
-                        entry.collateral_expires_at.saturating_sub(unix_now() as i64)
-                    );
-                    return Ok(cached_collateral(&entry, pck_chain));
-                }
+                warn!(
+                    "event=tdx_collateral_stale_fallback fmspc={} ca={} cache_age_seconds={} error={error:#}",
+                    key.fmspc,
+                    key.ca,
+                    entry.cached_at.elapsed().as_secs()
+                );
+                return Ok(cached_collateral(&entry, pck_chain));
             }
             Err(error)
         }
@@ -773,7 +738,7 @@ async fn get_collateral(
     }
 
     if let Some(entry) = collateral_cache().lookup(&key).await {
-        match classify_cache_entry(&entry, policy, Instant::now(), unix_now() as i64) {
+        match classify_cache_entry(&entry, policy, Instant::now()) {
             CacheEntryState::Fresh => {
                 debug!(
                     "dcap-qvl backend: collateral cache hit fmspc={} ca={}",
@@ -798,7 +763,7 @@ async fn get_collateral(
                 ))]
                 return refresh_blocking_or_use_stale(key, pck_chain, policy).await;
             }
-            CacheEntryState::CacheExpired | CacheEntryState::CollateralExpired => {}
+            CacheEntryState::CacheExpired => {}
         }
     }
 
@@ -1396,12 +1361,11 @@ fn rfind_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cached_collateral, classify_cache_entry, collateral_cache, collateral_is_still_valid,
-        fetch_collateral_with_fallback, normalize_pccs_base_url, parse_pccs_urls,
-        parse_qcnl_pccs_url, parse_qcnl_u64, refresh_blocking_or_use_stale, schedule_refresh_after,
-        unix_now, CacheEntryState, CachedCollateral, CollateralCache, CollateralCacheKey,
-        CollateralCachePolicy, QuoteCollateralV3, COLLATERAL_CACHE_EXPIRE_HOURS,
-        COLLATERAL_CACHE_REFRESH_HOURS,
+        cached_collateral, classify_cache_entry, collateral_cache, fetch_collateral_with_fallback,
+        normalize_pccs_base_url, parse_pccs_urls, parse_qcnl_pccs_url, parse_qcnl_u64,
+        refresh_blocking_or_use_stale, schedule_refresh_after, unix_now, CacheEntryState,
+        CachedCollateral, CollateralCache, CollateralCacheKey, CollateralCachePolicy,
+        QuoteCollateralV3, COLLATERAL_CACHE_EXPIRE_HOURS, COLLATERAL_CACHE_REFRESH_HOURS,
     };
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -1438,13 +1402,12 @@ mod tests {
         )
     }
 
-    fn cached(age: Duration, collateral_valid_for: i64) -> CachedCollateral {
+    fn cached(age: Duration) -> CachedCollateral {
         let now = Instant::now();
         CachedCollateral {
             collateral: collateral(),
             cached_at: now - age,
             cached_at_unix: unix_now().saturating_sub(age.as_secs()),
-            collateral_expires_at: unix_now() as i64 + collateral_valid_for,
             last_successful_pccs: "https://pccs.example.com".into(),
             last_refresh_attempt_at: Some(unix_now()),
             last_refresh_error: None,
@@ -1534,40 +1497,20 @@ mod tests {
     }
 
     #[test]
-    fn cache_state_has_separate_refresh_cache_and_collateral_deadlines() {
+    fn cache_state_depends_only_on_local_cache_age() {
         let now = Instant::now();
-        let now_unix = unix_now() as i64;
         assert_eq!(
-            classify_cache_entry(
-                &cached(Duration::from_secs(5), 3_600),
-                policy(),
-                now,
-                now_unix
-            ),
+            classify_cache_entry(&cached(Duration::from_secs(5)), policy(), now),
             CacheEntryState::Fresh
         );
         assert_eq!(
-            classify_cache_entry(
-                &cached(Duration::from_secs(15), 3_600),
-                policy(),
-                now,
-                now_unix
-            ),
+            classify_cache_entry(&cached(Duration::from_secs(15)), policy(), now),
             CacheEntryState::RefreshDue
         );
-        let cache_expired = cached(Duration::from_secs(25), 3_600);
         assert_eq!(
-            classify_cache_entry(&cache_expired, policy(), now, now_unix),
+            classify_cache_entry(&cached(Duration::from_secs(25)), policy(), now),
             CacheEntryState::CacheExpired
         );
-        assert!(collateral_is_still_valid(&cache_expired, now_unix));
-
-        let collateral_expired = cached(Duration::from_secs(5), -1);
-        assert_eq!(
-            classify_cache_entry(&collateral_expired, policy(), now, now_unix),
-            CacheEntryState::CollateralExpired
-        );
-        assert!(!collateral_is_still_valid(&collateral_expired, now_unix));
     }
 
     #[tokio::test]
@@ -1576,12 +1519,7 @@ mod tests {
         let mut fetched = collateral();
         fetched.pck_certificate_chain = Some("must-not-be-cached".into());
         cache
-            .store_success(
-                cache_key(),
-                fetched,
-                unix_now() as i64 + 3_600,
-                "https://pccs.example.com".into(),
-            )
+            .store_success(cache_key(), fetched, "https://pccs.example.com".into())
             .await;
 
         let entry = cache.lookup(&cache_key()).await.unwrap();
@@ -1613,7 +1551,7 @@ mod tests {
             .entries
             .lock()
             .await
-            .insert(key.clone(), cached(Duration::from_secs(25), 3_600));
+            .insert(key.clone(), cached(Duration::from_secs(15)));
         cache
             .record_refresh_failure(
                 &key,
@@ -1623,7 +1561,6 @@ mod tests {
             .await;
 
         let entry = cache.lookup(&key).await.unwrap();
-        assert!(collateral_is_still_valid(&entry, unix_now() as i64));
         assert!(entry
             .last_refresh_error
             .as_deref()
@@ -1635,8 +1572,45 @@ mod tests {
             .statuses(policy(), vec!["https://pccs.example.com".into()])
             .await;
         assert_eq!(statuses.len(), 1);
-        assert_eq!(statuses[0].status, "degraded");
+        assert_eq!(statuses[0].status, "refresh_retrying");
         assert!(statuses[0].details.contains_key("last_refresh_error"));
+        assert!(!statuses[0].details.contains_key("collateral_expires_at"));
+        assert!(!statuses[0]
+            .details
+            .contains_key("collateral_valid_for_seconds"));
+    }
+
+    #[tokio::test]
+    async fn status_reports_refresh_due_while_refresh_is_running_and_degraded_after_ttl() {
+        let cache = CollateralCache::default();
+        let key = cache_key();
+        cache
+            .entries
+            .lock()
+            .await
+            .insert(key.clone(), cached(Duration::from_secs(15)));
+
+        let refresh_lock = cache.refresh_lock(&key).await;
+        let refresh_guard = refresh_lock.lock().await;
+        let statuses = cache
+            .statuses(policy(), vec!["https://pccs.example.com".into()])
+            .await;
+        assert_eq!(statuses[0].status, "refresh_due");
+        assert_eq!(
+            statuses[0].details.get("refresh_in_progress"),
+            Some(&serde_json::json!(true))
+        );
+        drop(refresh_guard);
+
+        cache
+            .entries
+            .lock()
+            .await
+            .insert(key, cached(Duration::from_secs(25)));
+        let statuses = cache
+            .statuses(policy(), vec!["https://pccs.example.com".into()])
+            .await;
+        assert_eq!(statuses[0].status, "degraded");
     }
 
     #[tokio::test]
@@ -1646,7 +1620,7 @@ mod tests {
             fmspc: "TIMER00000001".into(),
             ca: "platform".into(),
         };
-        let entry = cached(Duration::ZERO, 3_600);
+        let entry = cached(Duration::ZERO);
         let cached_at = entry.cached_at;
         collateral_cache()
             .entries
@@ -1678,17 +1652,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hard_expired_cache_falls_back_while_collateral_is_valid() {
+    async fn hard_expired_cache_falls_back_without_parsing_collateral_validity() {
         let key = CollateralCacheKey {
             pccs_base_urls: vec!["http://127.0.0.1:1".into()],
             fmspc: "STALE0000001".into(),
             ca: "platform".into(),
         };
+        let mut entry = cached(Duration::from_secs(25));
+        entry.collateral.tcb_info =
+            r#"{"issueDate":"2019-01-01T00:00:00Z","nextUpdate":"2020-01-01T00:00:00Z"}"#.into();
+        entry.collateral.qe_identity =
+            r#"{"issueDate":"2019-01-01T00:00:00Z","nextUpdate":"2020-01-01T00:00:00Z"}"#.into();
         collateral_cache()
             .entries
             .lock()
             .await
-            .insert(key.clone(), cached(Duration::from_secs(25), 3_600));
+            .insert(key.clone(), entry);
 
         let result =
             refresh_blocking_or_use_stale(key.clone(), "current-pck-chain".into(), policy())
@@ -1704,27 +1683,6 @@ mod tests {
             .unwrap()
             .last_refresh_error
             .is_some());
-    }
-
-    #[tokio::test]
-    async fn expired_collateral_is_not_used_after_refresh_failure() {
-        let key = CollateralCacheKey {
-            pccs_base_urls: vec!["http://127.0.0.1:1".into()],
-            fmspc: "STALE0000002".into(),
-            ca: "platform".into(),
-        };
-        collateral_cache()
-            .entries
-            .lock()
-            .await
-            .insert(key.clone(), cached(Duration::from_secs(25), -1));
-
-        let error = refresh_blocking_or_use_stale(key, "current-pck-chain".into(), policy())
-            .await
-            .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("configured PCCS endpoints failed"));
     }
 
     #[tokio::test]

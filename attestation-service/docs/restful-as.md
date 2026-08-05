@@ -52,9 +52,11 @@ for the full configuration precedence, cache state machine, and alerting guide.
 
 Proactive refresh is asynchronous on native AS builds, so verification requests
 continue using the last successful collateral. If all PCCS endpoints are down
-after the cache expiry, the stale cache remains usable until the signed TCB/QE
-`nextUpdate` is reached. Refresh failures are logged with the stable event
-`tdx_collateral_refresh_failed` and exposed by the status API.
+after the cache expiry, the cache layer still passes the cached collateral to
+quote verification; collateral freshness and validity remain verifier-policy
+decisions. Refresh failures are logged with the stable event
+`tdx_collateral_refresh_failed` and exposed by the status API as
+`refresh_retrying` before cache expiry or `degraded` after cache expiry.
 
 `GET /status` returns AS and verifier dependency state without contacting PCCS:
 
