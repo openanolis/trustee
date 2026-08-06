@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io;
+#[cfg(feature = "fs")]
 use std::path::Path;
 use std::sync::Arc;
 use strum::EnumString;
@@ -55,10 +56,12 @@ pub enum PolicyError {
 #[derive(Debug, EnumString, Deserialize)]
 #[strum(ascii_case_insensitive)]
 pub enum PolicyEngineType {
+    #[cfg(feature = "fs")]
     OPA,
 }
 
 impl PolicyEngineType {
+    #[cfg(feature = "fs")]
     pub fn to_policy_engine(
         &self,
         work_dir: &Path,
