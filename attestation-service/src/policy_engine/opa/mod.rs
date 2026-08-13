@@ -32,6 +32,7 @@ const REFERENCE_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(all(feature = "policy-rvps", test))]
 const REFERENCE_QUERY_TIMEOUT: Duration = Duration::from_millis(100);
 
+#[allow(dead_code)]
 fn is_valid_policy_id(policy_id: &str) -> bool {
     policy_id
         .chars()

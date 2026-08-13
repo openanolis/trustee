@@ -12,9 +12,9 @@ use ear::{
     Algorithm, Appraisal, Ear, ExtensionKind, ExtensionValue, Extensions, RawValue, TrustVector,
     VerifierID,
 };
-use jsonwebtoken::{jwk, EncodingKey};
+use jsonwebtoken::jwk;
 use kbs_types::Tee;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::pkcs8::{EncodePrivateKey, LineEnding};
 use p256::SecretKey;
@@ -24,16 +24,15 @@ use serde_json::json;
 use serde_json::Value;
 use serde_variant::to_variant_name;
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
 use std::sync::Arc;
 use time::{Duration, OffsetDateTime};
 
-use crate::policy_engine::{PolicyEngine, PolicyEngineType};
+use crate::policy_engine::PolicyEngine;
 use crate::rvps::ReferenceValueResolver;
 use crate::token::DEFAULT_TOKEN_WORK_DIR;
 use crate::{AttestationTokenBroker, TeeClaims};
 
-use super::signer::{EphemeralSigner, FsSigner, SignKeyProvider};
+use super::signer::SignKeyProvider;
 #[cfg(feature = "fs")]
 use super::signer_transparency;
 use super::{COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
@@ -160,20 +159,20 @@ impl EarAttestationTokenBroker {
     /// `policy_dir` (OPA fs / InMemory). Replaces the old `new(config)`.
     #[cfg(feature = "fs")]
     pub fn from_config(config: Configuration) -> Result<Self> {
-        let policy_engine = PolicyEngineType::OPA.to_policy_engine(
-            Path::new(&config.policy_dir),
+        let policy_engine = crate::policy_engine::PolicyEngineType::OPA.to_policy_engine(
+            std::path::Path::new(&config.policy_dir),
             DEFAULT_POLICY,
             DEFAULT_POLICY_ID,
         )?;
-        info!("Loading default AS policy \"default.rego\"");
+        log::info!("Loading default AS policy \"default.rego\"");
 
         let signer: Arc<dyn SignKeyProvider<SecretKey>> = match config.signer {
-            Some(sc) => Arc::new(FsSigner::<SecretKey>::from_config(sc)?),
+            Some(sc) => Arc::new(super::signer::FsSigner::<SecretKey>::from_config(sc)?),
             None => {
                 log::info!(
                     "No Token Signer key in config file, create an ephemeral key and without CA pubkey cert"
                 );
-                Arc::new(EphemeralSigner::<SecretKey>::new())
+                Arc::new(super::signer::EphemeralSigner::<SecretKey>::new())
             }
         };
 
@@ -342,7 +341,7 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
             jsonwebtoken::encode(
                 &jwt_header,
                 &Value::Object(ear_claims),
-                &EncodingKey::from_ec_pem(private_key_bytes)?,
+                &jsonwebtoken::EncodingKey::from_ec_pem(private_key_bytes)?,
             )?
         } else {
             ear.sign_jwt_pem_with_header(&jwt_header, private_key_bytes)?
@@ -666,7 +665,7 @@ default file_system := 35
         ));
         let broker = EarAttestationTokenBroker::from_components(
             TokenBrokerSettings::default(),
-            Arc::new(EphemeralSigner::<SecretKey>::new()),
+            Arc::new(crate::token::signer::EphemeralSigner::<SecretKey>::new()),
             policy_engine,
         );
 
