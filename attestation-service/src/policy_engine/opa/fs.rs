@@ -4,7 +4,6 @@
 
 use crate::rvps::ReferenceValueResolver;
 use anyhow::Result;
-use async_trait::async_trait;
 use base64::Engine;
 use log::warn;
 use sha2::{Digest, Sha384};

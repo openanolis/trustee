@@ -11,7 +11,6 @@ use anyhow::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use const_format::concatcp;
-use log::info;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use rsa::pkcs1v15::{Signature, SigningKey};
@@ -23,15 +22,14 @@ use serde_json::{json, Map, Value};
 use serde_variant::to_variant_name;
 use sha2::Sha384;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 
-use crate::policy_engine::{PolicyEngine, PolicyEngineType};
+use crate::policy_engine::PolicyEngine;
 use crate::rvps::ReferenceValueResolver;
 use crate::token::{AttestationTokenBroker, DEFAULT_TOKEN_WORK_DIR};
 use crate::{TeeClaims, TeeEvidenceParsedClaim};
 
-use super::signer::{EphemeralSigner, FsSigner, SignKeyProvider};
+use super::signer::SignKeyProvider;
 #[cfg(feature = "fs")]
 use super::signer_transparency;
 use super::{COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION};
@@ -118,20 +116,20 @@ pub struct SimpleAttestationTokenBroker {
 impl SimpleAttestationTokenBroker {
     #[cfg(feature = "fs")]
     pub fn from_config(config: Configuration) -> Result<Self> {
-        let policy_engine = PolicyEngineType::OPA.to_policy_engine(
-            Path::new(&config.policy_dir),
+        let policy_engine = crate::policy_engine::PolicyEngineType::OPA.to_policy_engine(
+            std::path::Path::new(&config.policy_dir),
             DEFAULT_POLICY,
             DEFAULT_POLICY_ID,
         )?;
-        info!("Loading default AS policy \"simple_default_policy.rego\"");
+        log::info!("Loading default AS policy \"simple_default_policy.rego\"");
 
         let signer: Arc<dyn SignKeyProvider<RsaPrivateKey>> = match config.signer {
-            Some(sc) => Arc::new(FsSigner::<RsaPrivateKey>::from_config(sc)?),
+            Some(sc) => Arc::new(super::signer::FsSigner::<RsaPrivateKey>::from_config(sc)?),
             None => {
                 log::info!(
                     "No Token Signer key in config file, create an ephemeral key and without CA pubkey cert"
                 );
-                Arc::new(EphemeralSigner::<RsaPrivateKey>::new()?)
+                Arc::new(super::signer::EphemeralSigner::<RsaPrivateKey>::new()?)
             }
         };
 
