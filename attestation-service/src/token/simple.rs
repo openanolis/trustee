@@ -44,6 +44,8 @@ const RSA_KEY_BITS: u32 = 2048;
 const SIMPLE_TOKEN_ALG: &str = "RS384";
 
 const DEFAULT_POLICY_DIR: &str = concatcp!(DEFAULT_TOKEN_WORK_DIR, "/simple/policies");
+pub const DEFAULT_POLICY: &str = include_str!("simple_default_policy.rego");
+pub const DEFAULT_POLICY_ID: &str = "default.rego";
 
 /// Part 2 — signer resolution spec (native/serde path only). Renamed from
 /// `TokenSignerConfig`; field set unchanged.
@@ -227,8 +229,8 @@ impl SimpleAttestationTokenBroker {
     pub fn from_config(config: Configuration) -> Result<Self> {
         let policy_engine = PolicyEngineType::OPA.to_policy_engine(
             Path::new(&config.policy_dir),
-            include_str!("simple_default_policy.rego"),
-            "default.rego",
+            DEFAULT_POLICY,
+            DEFAULT_POLICY_ID,
         )?;
         info!("Loading default AS policy \"simple_default_policy.rego\"");
 
@@ -671,11 +673,7 @@ mod tests {
         use crate::policy_engine::{PolicyEngine, PolicyEngineType};
 
         let policy_engine: Arc<dyn PolicyEngine> = PolicyEngineType::InMemory
-            .to_policy_engine(
-                Path::new("/"),
-                include_str!("simple_default_policy.rego"),
-                "default.rego",
-            )
+            .to_policy_engine(Path::new("/"), DEFAULT_POLICY, DEFAULT_POLICY_ID)
             .unwrap();
         let broker = SimpleAttestationTokenBroker::from_components(
             super::TokenBrokerSettings::default(),

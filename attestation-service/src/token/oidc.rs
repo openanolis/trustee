@@ -45,6 +45,8 @@ const OIDC_TOKEN_ALG: &str = "RS256";
 const DEFAULT_OIDC_AUDIENCE: &str = "sigstore";
 
 const DEFAULT_POLICY_DIR: &str = concatcp!(DEFAULT_TOKEN_WORK_DIR, "/oidc/policies");
+pub const DEFAULT_POLICY: &str = include_str!("oidc_default_policy.rego");
+pub const DEFAULT_POLICY_ID: &str = "default.rego";
 
 /// Part 2 — signer resolution spec (native/serde path only). Renamed from
 /// `TokenSignerConfig`; field set unchanged.
@@ -259,8 +261,8 @@ impl OIDCAttestationTokenBroker {
     pub fn from_config(config: Configuration) -> Result<Self> {
         let policy_engine = PolicyEngineType::OPA.to_policy_engine(
             Path::new(&config.policy_dir),
-            include_str!("oidc_default_policy.rego"),
-            "default.rego",
+            DEFAULT_POLICY,
+            DEFAULT_POLICY_ID,
         )?;
         info!("Loading default AS policy \"oidc_default_policy.rego\"");
 
@@ -685,11 +687,7 @@ mod tests {
         use crate::policy_engine::{PolicyEngine, PolicyEngineType};
 
         let policy_engine: Arc<dyn PolicyEngine> = PolicyEngineType::InMemory
-            .to_policy_engine(
-                Path::new("/"),
-                include_str!("oidc_default_policy.rego"),
-                "default.rego",
-            )
+            .to_policy_engine(Path::new("/"), DEFAULT_POLICY, DEFAULT_POLICY_ID)
             .unwrap();
         let broker = OIDCAttestationTokenBroker::from_components(
             super::TokenBrokerSettings::default(),
