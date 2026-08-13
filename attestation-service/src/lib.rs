@@ -11,31 +11,21 @@ pub mod token;
 
 mod composite;
 
-use crate::token::AttestationTokenBroker;
+use crate::{rvps::ReferenceValueResolver, token::AttestationTokenBroker};
 
 use anyhow::{anyhow, Context, Result};
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
 use canon_json::CanonicalFormatter;
 use config::Config;
 pub use kbs_types::{Attestation, Tee};
 use log::info;
 #[cfg(feature = "fs")]
 use reqwest::Client;
-use rsa::pkcs1::DecodeRsaPrivateKey;
-use rsa::pkcs8::DecodePrivateKey;
-use rsa::traits::PublicKeyParts;
-use rsa::RsaPrivateKey;
-use rvps::{ReferenceValueResolver, RvpsApi, RvpsError};
+use rvps::{RvpsApi, RvpsError};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 pub use serde_json::Value;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use sm3::Sm3;
-use std::collections::HashMap;
-#[cfg(feature = "fs")]
-use std::io::Read;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use strum::{AsRefStr, Display, EnumString};
 use thiserror::Error;
 #[cfg(feature = "fs")]
@@ -235,13 +225,6 @@ pub struct ServiceStatus {
     pub service: String,
     pub status: String,
     pub dependencies: Vec<verifier::DependencyStatus>,
-}
-
-#[derive(serde::Serialize, Debug, Clone)]
-struct Jwk {
-    kty: String,
-    n: String,
-    e: String,
 }
 
 impl AttestationService {
@@ -492,131 +475,60 @@ impl AttestationService {
         }
     }
 
-    /// Get token broker certificate content
-    /// Returns the binary content of the certificate
-    #[cfg(feature = "fs")]
+    /// Get token broker signer certificate content.
+    ///
+    /// The broker self-reports the local cert it loaded at construction (from
+    /// an inline `cert_pem` or a `cert_path`); if it has none, the service
+    /// HTTP-fetches the broker's published `cert_url`. Returns the binary PEM
+    /// bytes, or `None` when no cert is available.
     pub async fn get_token_broker_cert_config(&self) -> Result<Option<Vec<u8>>> {
-        match &self._config.attestation_token_broker {
-            token::AttestationTokenConfig::Simple(cfg) => {
-                if let Some(signer) = &cfg.signer {
-                    self.get_cert_content(signer.cert_path.as_deref(), signer.cert_url.as_deref())
-                        .await
-                } else {
-                    Ok(None)
-                }
-            }
-            token::AttestationTokenConfig::Ear(cfg) => {
-                if let Some(signer) = &cfg.signer {
-                    self.get_cert_content(signer.cert_path.as_deref(), signer.cert_url.as_deref())
-                        .await
-                } else {
-                    Ok(None)
-                }
-            }
-            token::AttestationTokenConfig::OIDC(cfg) => {
-                if let Some(signer) = &cfg.signer {
-                    self.get_cert_content(signer.cert_path.as_deref(), signer.cert_url.as_deref())
-                        .await
-                } else {
-                    Ok(None)
-                }
-            }
+        if let Some(content) = self.token_broker.signer_cert_content().await? {
+            return Ok(Some(content));
+        }
+        match self.token_broker.signer_cert_url() {
+            Some(url) => self.fetch_cert_url(url).await,
+            None => Ok(None),
         }
     }
 
-    /// Get certificate content from file path or URL
-    #[cfg(feature = "fs")]
-    async fn get_cert_content(
-        &self,
-        cert_path: Option<&str>,
-        cert_url: Option<&str>,
-    ) -> Result<Option<Vec<u8>>> {
-        if let Some(path) = cert_path {
-            // Read certificate from file
-            let mut file = std::fs::File::open(path)
-                .map_err(|e| anyhow!("Failed to open certificate file: {}", e))?;
-            let mut content = Vec::new();
-            file.read_to_end(&mut content)
-                .map_err(|e| anyhow!("Failed to read certificate file: {}", e))?;
-            Ok(Some(content))
-        } else if let Some(url) = cert_url {
-            // Get certificate from URL
-            let client = Client::new();
-            let response = client
-                .get(url)
-                .send()
-                .await
-                .map_err(|e| anyhow!("Failed to fetch certificate from URL: {}", e))?;
+    /// Fetch certificate content from a URL (the broker's published x5u).
+    /// Inherent async (not behind the `Send`-bound broker trait), so it stays
+    /// wasm-compatible — reqwest-wasm futures need not be `Send` here.
+    async fn fetch_cert_url(&self, url: &str) -> Result<Option<Vec<u8>>> {
+        let client = Client::new();
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| anyhow!("Failed to fetch certificate from URL: {}", e))?;
 
-            if !response.status().is_success() {
-                return Err(anyhow!(
-                    "Failed to fetch certificate: HTTP {}",
-                    response.status()
-                ));
-            }
-
-            let content = response
-                .bytes()
-                .await
-                .map_err(|e| anyhow!("Failed to read certificate content: {}", e))?;
-
-            Ok(Some(content.to_vec()))
-        } else {
-            Ok(None)
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "Failed to fetch certificate: HTTP {}",
+                response.status()
+            ));
         }
+
+        let content = response
+            .bytes()
+            .await
+            .map_err(|e| anyhow!("Failed to read certificate content: {}", e))?;
+
+        Ok(Some(content.to_vec()))
     }
 
+    /// Get the token broker's public key set (JWKS JSON). Delegates to the
+    /// broker; only brokers that publish a public key (e.g. OIDC with a
+    /// configured signer) return `Some`.
     pub async fn get_token_broker_public_key(&self) -> Result<Option<String>> {
-        match &self._config.attestation_token_broker {
-            token::AttestationTokenConfig::Simple(_) => Ok(None),
-            token::AttestationTokenConfig::Ear(_) => Ok(None),
-            token::AttestationTokenConfig::OIDC(cfg) => {
-                if let Some(signer) = &cfg.signer {
-                    let pem_data = std::fs::read(&signer.key_path)
-                        .context("Read Token Signer private key failed")?;
-                    let pem_str =
-                        std::str::from_utf8(&pem_data).context("Token Signer key not UTF-8")?;
-                    let private_key = RsaPrivateKey::from_pkcs8_pem(pem_str)
-                        .or_else(|_| RsaPrivateKey::from_pkcs1_pem(pem_str))?;
-                    let n = private_key.n().to_bytes_be();
-                    let e = private_key.e().to_bytes_be();
-
-                    let jwk = Jwk {
-                        kty: "RSA".to_string(),
-                        n: URL_SAFE_NO_PAD.encode(n),
-                        e: URL_SAFE_NO_PAD.encode(e),
-                    };
-
-                    let jwks = json!({
-                        "keys": vec![jwk],
-                    });
-
-                    Ok(Some(serde_json::to_string(&jwks)?))
-                } else {
-                    Ok(None)
-                }
-            }
-        }
+        self.token_broker.public_jwks().await
     }
 
+    /// Get the token broker's OIDC discovery configuration (JSON). Delegates to
+    /// the broker; only the OIDC broker with a configured `oid_config` returns
+    /// `Some`.
     pub async fn get_token_broker_oid_config(&self) -> Result<Option<String>> {
-        match &self._config.attestation_token_broker {
-            token::AttestationTokenConfig::Simple(_) => Ok(None),
-            token::AttestationTokenConfig::Ear(_) => Ok(None),
-            token::AttestationTokenConfig::OIDC(cfg) => {
-                if let Some(oid_config) = &cfg.settings.oid_config {
-                    let oid_info = json!({
-                        "issuer": oid_config.issuer,
-                        "jwks_uri": oid_config.jwks_uri,
-                        "id_token_signing_alg_values_supported": oid_config.id_token_signing_alg_values_supported
-                    });
-
-                    Ok(Some(serde_json::to_string(&oid_info)?))
-                } else {
-                    Ok(None)
-                }
-            }
-        }
+        self.token_broker.oid_config_json().await
     }
 }
 

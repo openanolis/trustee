@@ -50,6 +50,35 @@ pub trait AttestationTokenBroker: Send + Sync {
     async fn delete_policy(&self, _policy_id: String) -> Result<()> {
         bail!("Delete Policy not support")
     }
+
+    /// The signer's certificate-chain PEM bytes this broker already holds
+    /// (loaded from an inline `cert_pem` or a `cert_path` at construction).
+    /// `None` if the broker has no local signer cert. The service uses this to
+    /// answer its "get token broker certificate" endpoint — it no longer holds
+    /// a `Config` to read these from, so the broker self-reports. Default: none.
+    async fn signer_cert_content(&self) -> Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
+    /// The signer certificate URL (x5u) the broker publishes, if any. The
+    /// service HTTP-fetches it when [`Self::signer_cert_content`] returns
+    /// `None`. Default: none.
+    fn signer_cert_url(&self) -> Option<&str> {
+        None
+    }
+
+    /// The broker's public key set as a JWKS JSON string, for the service's
+    /// "get token broker public key" endpoint. Default: not supported (the
+    /// service returns `None`).
+    async fn public_jwks(&self) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    /// The broker's OIDC discovery configuration as a JSON string, for the
+    /// service's "get token broker oid config" endpoint. Default: not supported.
+    async fn oid_config_json(&self) -> Result<Option<String>> {
+        Ok(None)
+    }
 }
 
 #[derive(Deserialize, Debug, Clone, Display, PartialEq)]
