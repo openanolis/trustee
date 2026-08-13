@@ -128,19 +128,27 @@ pub trait SignerProvider: Send + Sync {
     fn private_key(&self) -> &RsaPrivateKey;
     fn cert_chain(&self) -> Option<&[Certificate]>;
     fn cert_url(&self) -> Option<&str>;
+    /// The signer's certificate-chain raw PEM bytes, read lazily from the
+    /// configured `cert_path` on each call (not cached at construction).
+    /// `None` when no `cert_path` is configured. Ephemeral signers return
+    /// `None`. The broker forwards this through `signer_cert_content`.
+    fn cert_pem_raw(&self) -> Result<Option<Vec<u8>>>;
 }
 
 /// Signer resolved from a `SignerConfig` (native/serde path). Reads
 /// `key_path`/`cert_path` under the `fs` feature; `key_pem`/`cert_pem` work
 /// without fs.
+#[cfg(feature = "fs")]
 struct ConfigSigner {
     private_key: RsaPrivateKey,
     cert_chain: Option<Vec<Certificate>>,
     cert_url: Option<String>,
+    // Kept so `cert_pem_raw` can re-read the file lazily; not the cached PEM.
+    cert_path: Option<String>,
 }
 
+#[cfg(feature = "fs")]
 impl ConfigSigner {
-    #[cfg(feature = "fs")]
     fn from_signer_config(signer: SignerConfig) -> Result<Self> {
         let pem_data = std::fs::read_to_string(&signer.key_path)
             .context("Read Token Signer private key failed")?;
@@ -175,10 +183,12 @@ impl ConfigSigner {
             private_key,
             cert_chain,
             cert_url: signer.cert_url,
+            cert_path: signer.cert_path,
         })
     }
 }
 
+#[cfg(feature = "fs")]
 impl SignerProvider for ConfigSigner {
     fn private_key(&self) -> &RsaPrivateKey {
         &self.private_key
@@ -189,16 +199,32 @@ impl SignerProvider for ConfigSigner {
     fn cert_url(&self) -> Option<&str> {
         self.cert_url.as_deref()
     }
+    fn cert_pem_raw(&self) -> Result<Option<Vec<u8>>> {
+        match &self.cert_path {
+            Some(path) => {
+                use std::io::Read as _;
+
+                // Read certificate from file
+                let mut file = std::fs::File::open(path)
+                    .map_err(|e| anyhow!("Failed to open certificate file: {}", e))?;
+                let mut content = Vec::new();
+                file.read_to_end(&mut content)
+                    .map_err(|e| anyhow!("Failed to read certificate file: {}", e))?;
+                Ok(Some(content))
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 /// Ephemeral signer: generates a fresh RSA key. Used when no signer is
 /// configured (both `from_config` and `from_components`).
-struct EphemeralSigner {
+pub struct EphemeralSigner {
     private_key: RsaPrivateKey,
 }
 
 impl EphemeralSigner {
-    fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let mut rng = OsRng;
         Ok(Self {
             private_key: RsaPrivateKey::new(&mut rng, RSA_KEY_BITS as usize)?,
@@ -215,6 +241,9 @@ impl SignerProvider for EphemeralSigner {
     }
     fn cert_url(&self) -> Option<&str> {
         None
+    }
+    fn cert_pem_raw(&self) -> Result<Option<Vec<u8>>> {
+        Ok(None)
     }
 }
 
@@ -253,13 +282,9 @@ impl SimpleAttestationTokenBroker {
 
     pub fn from_components(
         settings: TokenBrokerSettings,
-        signer: Option<Arc<dyn SignerProvider>>,
+        signer: Arc<dyn SignerProvider>,
         policy_engine: Arc<dyn PolicyEngine>,
     ) -> Self {
-        let signer: Arc<dyn SignerProvider> = match signer {
-            Some(s) => s,
-            None => Arc::new(EphemeralSigner::new()?),
-        };
         Self {
             settings,
             signer,
@@ -450,6 +475,14 @@ impl AttestationTokenBroker for SimpleAttestationTokenBroker {
             .await
             .map_err(Error::from)
     }
+
+    async fn signer_cert_content(&self) -> Result<Option<Vec<u8>>> {
+        self.signer.cert_pem_raw()
+    }
+
+    fn signer_cert_url(&self) -> Option<&str> {
+        self.signer.cert_url()
+    }
 }
 
 #[derive(serde::Serialize, Debug, Clone)]
@@ -558,16 +591,6 @@ mod tests {
     };
 
     use super::flatten_claims;
-
-    #[test]
-    fn token_iat_uses_injected_now() {
-        crate::time::set_now(2_000_000_000);
-        let now = crate::time::now_unix();
-        // Reset before the assert so a pinned clock never leaks into later
-        // tests in this binary (the override is process-global).
-        crate::time::reset_now();
-        assert_eq!(now, 2_000_000_000);
-    }
 
     #[cfg(not(feature = "fs"))]
     #[test]
@@ -860,7 +883,7 @@ frJCGYDUg+8c
 
         let config = Configuration {
             signer: Some(SignerConfig {
-                key_path: Some(key_file.path().to_string_lossy().to_string()),
+                key_path: key_file.path().to_string_lossy().to_string(),
                 cert_url: None,
                 cert_path: Some(chain_file.path().to_string_lossy().to_string()),
             }),

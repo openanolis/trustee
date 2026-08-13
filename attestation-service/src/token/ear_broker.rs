@@ -16,7 +16,7 @@ use jsonwebtoken::{jwk, EncodingKey};
 use kbs_types::Tee;
 use log::{debug, info, warn};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
-use p256::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey, LineEnding};
+use p256::pkcs8::{DecodePrivateKey, EncodePrivateKey, LineEnding};
 use p256::SecretKey;
 use rand::rngs::OsRng;
 use serde::Deserialize;
@@ -169,19 +169,27 @@ pub trait SignerProvider: Send + Sync {
     fn private_key(&self) -> &SecretKey;
     fn cert_chain(&self) -> Option<&[Certificate]>;
     fn cert_url(&self) -> Option<&str>;
+    /// The signer's certificate-chain raw PEM bytes, read lazily from the
+    /// configured `cert_path` on each call (not cached at construction).
+    /// `None` when no `cert_path` is configured. Ephemeral signers return
+    /// `None`. The broker forwards this through `signer_cert_content`.
+    fn cert_pem_raw(&self) -> Result<Option<Vec<u8>>>;
 }
 
 /// Signer resolved from a `SignerConfig` (native/serde path). Reads
 /// `key_path`/`cert_path` under the `fs` feature; `key_pem`/`cert_pem` work
 /// without fs.
+#[cfg(feature = "fs")]
 struct ConfigSigner {
     private_key: SecretKey,
     cert_chain: Option<Vec<Certificate>>,
     cert_url: Option<String>,
+    // Kept so `cert_pem_raw` can re-read the file lazily; not the cached PEM.
+    cert_path: Option<String>,
 }
 
+#[cfg(feature = "fs")]
 impl ConfigSigner {
-    #[cfg(feature = "fs")]
     fn from_signer_config(signer: SignerConfig) -> Result<Self> {
         let pem_data =
             std::fs::read(&signer.key_path).context("Read Token Signer private key failed")?;
@@ -217,10 +225,12 @@ impl ConfigSigner {
             private_key,
             cert_chain,
             cert_url: signer.cert_url,
+            cert_path: signer.cert_path,
         })
     }
 }
 
+#[cfg(feature = "fs")]
 impl SignerProvider for ConfigSigner {
     fn private_key(&self) -> &SecretKey {
         &self.private_key
@@ -231,16 +241,31 @@ impl SignerProvider for ConfigSigner {
     fn cert_url(&self) -> Option<&str> {
         self.cert_url.as_deref()
     }
+    fn cert_pem_raw(&self) -> Result<Option<Vec<u8>>> {
+        match &self.cert_path {
+            Some(path) => {
+                use std::io::Read as _;
+                // Read certificate from file
+                let mut file = std::fs::File::open(path)
+                    .map_err(|e| anyhow!("Failed to open certificate file: {}", e))?;
+                let mut content = Vec::new();
+                file.read_to_end(&mut content)
+                    .map_err(|e| anyhow!("Failed to read certificate file: {}", e))?;
+                Ok(Some(content))
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 /// Ephemeral signer: generates a fresh EC key. Used when no signer is
 /// configured (both `from_config` and `from_components`).
-struct EphemeralSigner {
+pub struct EphemeralSigner {
     private_key: SecretKey,
 }
 
 impl EphemeralSigner {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let mut rng = OsRng;
         Self {
             private_key: SecretKey::random(&mut rng),
@@ -257,6 +282,9 @@ impl SignerProvider for EphemeralSigner {
     }
     fn cert_url(&self) -> Option<&str> {
         None
+    }
+    fn cert_pem_raw(&self) -> Result<Option<Vec<u8>>> {
+        Ok(None)
     }
 }
 
@@ -296,17 +324,11 @@ impl EarAttestationTokenBroker {
         })
     }
 
-    /// Pure-lib / wasm path. Objects injected — zero fs, zero paths.
-    /// Falls back to an ephemeral key when `signer` is None.
     pub fn from_components(
         settings: TokenBrokerSettings,
-        signer: Option<Arc<dyn SignerProvider>>,
+        signer: Arc<dyn SignerProvider>,
         policy_engine: Arc<dyn PolicyEngine>,
     ) -> Self {
-        let signer: Arc<dyn SignerProvider> = match signer {
-            Some(s) => s,
-            None => Arc::new(EphemeralSigner::new()),
-        };
         Self {
             settings,
             signer,
@@ -490,6 +512,14 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
             .await
             .map_err(Error::from)
     }
+
+    async fn signer_cert_content(&self) -> Result<Option<Vec<u8>>> {
+        self.signer.cert_pem_raw()
+    }
+
+    fn signer_cert_url(&self) -> Option<&str> {
+        self.signer.cert_url()
+    }
 }
 
 impl EarAttestationTokenBroker {
@@ -539,6 +569,8 @@ impl EarAttestationTokenBroker {
 
 #[cfg(all(test, feature = "fs"))]
 fn generate_ec_keys() -> Result<(SecretKey, Vec<u8>, Vec<u8>)> {
+    use rsa::pkcs8::EncodePublicKey as _;
+
     let mut rng = OsRng;
     let secret = SecretKey::random(&mut rng);
     let priv_pem = secret
@@ -658,7 +690,7 @@ mod tests {
         private_key_file.write_all(&private_key_bytes).unwrap();
 
         let signer = SignerConfig {
-            key_path: Some(private_key_file.path().to_str().unwrap().to_string()),
+            key_path: private_key_file.path().to_str().unwrap().to_string(),
             cert_url: None,
             cert_path: None,
         };
