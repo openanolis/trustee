@@ -197,7 +197,15 @@ impl EarAttestationTokenBroker {
     }
 }
 
-#[async_trait::async_trait]
+#[cfg_attr(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"), async_trait::async_trait(?Send))]
+#[cfg_attr(
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )),
+    async_trait::async_trait
+)]
 impl AttestationTokenBroker for EarAttestationTokenBroker {
     async fn issue(
         &self,

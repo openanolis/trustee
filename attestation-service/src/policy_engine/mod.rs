@@ -1,6 +1,5 @@
 use crate::rvps::ReferenceValueResolver;
 use anyhow::Result;
-use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -86,7 +85,15 @@ pub struct EvaluationResult {
     pub policy_hash: String,
 }
 
-#[async_trait]
+#[cfg_attr(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"), async_trait::async_trait(?Send))]
+#[cfg_attr(
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )),
+    async_trait::async_trait
+)]
 pub trait PolicyEngine: Send + Sync {
     /// The inputs to an policy engine. Inspired by OPA, we divided the inputs
     /// into three parts:

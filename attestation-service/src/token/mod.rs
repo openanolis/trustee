@@ -25,7 +25,15 @@ pub const COCO_AS_ISSUER_NAME: &str = "CoCo-Attestation-Service";
 
 const DEFAULT_TOKEN_WORK_DIR: &str = concatcp!(DEFAULT_WORK_DIR, "/token");
 
-#[async_trait::async_trait]
+#[cfg_attr(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"), async_trait::async_trait(?Send))]
+#[cfg_attr(
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )),
+    async_trait::async_trait
+)]
 pub trait AttestationTokenBroker: Send + Sync {
     /// Issue an signed attestation token with custom claims.
     /// Return base64 encoded Json Web Token.
