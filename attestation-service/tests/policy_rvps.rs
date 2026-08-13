@@ -72,8 +72,10 @@ fn as_config(work_dir: &Path, rvps_config: RvpsConfig) -> Config {
         work_dir: work_dir.join("work"),
         rvps_config,
         attestation_token_broker: AttestationTokenConfig::Simple(simple::Configuration {
-            duration_min: 5,
-            issuer_name: "policy-rvps-e2e".to_string(),
+            settings: simple::TokenBrokerSettings {
+                duration_min: 5,
+                issuer_name: "policy-rvps-e2e".to_string(),
+            },
             signer: None,
             policy_dir: work_dir.join("policies").to_string_lossy().into_owned(),
         }),

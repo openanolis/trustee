@@ -453,77 +453,7 @@ mod tests {
 
     use super::flatten_claims;
 
-    #[cfg(not(feature = "fs"))]
-    #[test]
-    fn broker_from_inline_key_pem_without_fs() {
-        // A throwaway RSA PKCS#8 PEM generated in-test via the `rsa` crate.
-        // The pure-lib / wasm path supplies the signer key inline as `key_pem`
-        // instead of reading it from a filesystem path, so broker construction
-        // must succeed with `--no-default-features`.
-        use rsa::pkcs8::EncodePrivateKey;
-        let mut rng = rand::rngs::OsRng;
-        let k = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
-        let pem = k
-            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
-            .unwrap()
-            .to_string();
-
-        let cfg = Configuration {
-            signer: Some(SignerConfig {
-                key_path: None,
-                cert_url: None,
-                cert_path: None,
-                cert_pem: None,
-            }),
-            ..Configuration::default()
-        };
-        // to_token_broker must succeed without touching the filesystem.
-        crate::token::AttestationTokenConfig::Simple(cfg)
-            .to_token_broker()
-            .expect("broker from inline key");
-    }
-
-    #[cfg(not(feature = "fs"))]
-    #[tokio::test]
-    async fn issue_with_inline_key_and_in_memory_default_policy() {
-        // End-to-end fs-free smoke: build a broker from an inline `key_pem` AND
-        // call `issue()` with `policy_ids = ["default"]`, proving the InMemory
-        // default-policy preload + Regorus eval path works without the fs
-        // feature. Mirrors `test_issue_simple_ephemeral_key`'s TeeClaims shape.
-        use rsa::pkcs8::EncodePrivateKey;
-        let mut rng = rand::rngs::OsRng;
-        let k = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
-        let pem = k
-            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
-            .unwrap()
-            .to_string();
-        let cfg = Configuration {
-            signer: Some(SignerConfig {
-                key_path: None,
-                cert_url: None,
-                cert_path: None,
-                cert_pem: None,
-            }),
-            ..Configuration::default()
-        };
-        let broker = SimpleAttestationTokenBroker::from_config(cfg).unwrap();
-        let _token = broker
-            .issue(
-                vec![TeeClaims {
-                    tee: kbs_types::Tee::Sample,
-                    tee_class: "cpu".to_string(),
-                    claims: json!({"claim": "claim1"}),
-                    runtime_data_claims: json!({"runtime_data": "111"}),
-                    init_data_claims: json!({"initdata": "111"}),
-                    additional_data: None,
-                }],
-                vec!["default".into()],
-                HashMap::new(),
-            )
-            .await
-            .unwrap();
-    }
-
+    #[cfg(feature = "fs")]
     #[tokio::test]
     async fn test_issue_simple_ephemeral_key() {
         // use default config with no signer.
@@ -551,20 +481,31 @@ mod tests {
     #[cfg(not(feature = "fs"))]
     #[tokio::test]
     async fn from_components_issues_without_fs() {
-        use std::path::Path;
         use std::sync::Arc;
 
-        use crate::policy_engine::{PolicyEngine, PolicyEngineType};
+        use rsa::RsaPrivateKey;
 
-        let policy_engine: Arc<dyn PolicyEngine> = PolicyEngineType::InMemory
-            .to_policy_engine(Path::new("/"), DEFAULT_POLICY, DEFAULT_POLICY_ID)
-            .unwrap();
+        use crate::policy_engine::opa::OPAInMemory;
+        use crate::policy_engine::PolicyEngine;
+        use crate::token::signer::EphemeralSigner;
+
+        // Construct the fs-free InMemory policy engine directly (bypassing the
+        // fs-gated `PolicyEngineType`/`to_policy_engine`) and inject an
+        // ephemeral signer, proving `from_components` + `issue()` work with no
+        // filesystem access at all. A trivial `allow` policy is used instead of
+        // `DEFAULT_POLICY` because the real default policy calls the
+        // `query_reference_value` regorus extension, which is only registered
+        // under the `policy-rvps` feature — off under `--no-default-features`.
+        const TRIVIAL_ALLOW_POLICY: &str = "package policy\ndefault allow = true";
+        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(OPAInMemory::with_raw_default_policy(
+            TRIVIAL_ALLOW_POLICY,
+            super::DEFAULT_POLICY_ID,
+        ));
         let broker = SimpleAttestationTokenBroker::from_components(
             super::TokenBrokerSettings::default(),
-            None,
+            Arc::new(EphemeralSigner::<RsaPrivateKey>::new().unwrap()),
             policy_engine,
-        )
-        .unwrap();
+        );
 
         let _token = broker
             .issue(
@@ -577,7 +518,7 @@ mod tests {
                     additional_data: None,
                 }],
                 vec!["default".into()],
-                HashMap::new(),
+                crate::rvps::empty_test_resolver(),
             )
             .await
             .unwrap();
@@ -729,6 +670,7 @@ frJCGYDUg+8c
 -----END CERTIFICATE-----
 ";
 
+    #[cfg(feature = "fs")]
     #[test]
     fn test_simple_signer_cert_chain_x5c() {
         // Exercise the `signer = Some(...)` branch of

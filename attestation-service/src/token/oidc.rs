@@ -541,6 +541,7 @@ mod tests {
         AttestationTokenBroker,
     };
 
+    #[cfg(feature = "fs")]
     #[tokio::test]
     async fn test_issue_oidc_ephemeral_key() {
         // use default config with no signer.
@@ -565,6 +566,7 @@ mod tests {
             .unwrap();
     }
 
+    #[cfg(feature = "fs")]
     #[tokio::test]
     async fn test_snp_default_policy_accepts_without_reference_values() {
         let policy_dir = tempfile::tempdir().unwrap();
@@ -572,7 +574,7 @@ mod tests {
             policy_dir: policy_dir.path().to_string_lossy().into_owned(),
             ..Configuration::default()
         };
-        let broker = OIDCAttestationTokenBroker::new(config).unwrap();
+        let broker = OIDCAttestationTokenBroker::from_config(config).unwrap();
         let claims = TeeClaims {
             tee: Tee::Snp,
             tee_class: "cpu".to_string(),
@@ -604,20 +606,33 @@ mod tests {
     #[cfg(not(feature = "fs"))]
     #[tokio::test]
     async fn from_components_issues_without_fs() {
-        use std::path::Path;
+        use std::collections::HashMap;
         use std::sync::Arc;
 
-        use crate::policy_engine::{PolicyEngine, PolicyEngineType};
+        use rsa::RsaPrivateKey;
 
-        let policy_engine: Arc<dyn PolicyEngine> = PolicyEngineType::InMemory
-            .to_policy_engine(Path::new("/"), DEFAULT_POLICY, DEFAULT_POLICY_ID)
-            .unwrap();
+        use crate::policy_engine::opa::OPAInMemory;
+        use crate::policy_engine::PolicyEngine;
+        use crate::token::signer::EphemeralSigner;
+
+        // Construct the fs-free InMemory policy engine directly (bypassing the
+        // fs-gated `PolicyEngineType`/`to_policy_engine`) and inject an
+        // ephemeral RSA signer, proving `from_components` + `issue()` work
+        // with no filesystem access at all. A trivial `allow` policy is used
+        // instead of `DEFAULT_POLICY` because the real default policy calls
+        // the `query_reference_value` regorus extension, which is only
+        // registered under the `policy-rvps` feature — off under
+        // `--no-default-features`.
+        const TRIVIAL_ALLOW_POLICY: &str = "package policy\ndefault allow = true";
+        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(OPAInMemory::with_raw_default_policy(
+            TRIVIAL_ALLOW_POLICY,
+            super::DEFAULT_POLICY_ID,
+        ));
         let broker = OIDCAttestationTokenBroker::from_components(
             super::TokenBrokerSettings::default(),
-            None,
+            Arc::new(EphemeralSigner::<RsaPrivateKey>::new().unwrap()),
             policy_engine,
-        )
-        .unwrap();
+        );
 
         let _token = broker
             .issue(
@@ -630,7 +645,7 @@ mod tests {
                     additional_data: None,
                 }],
                 vec!["default".into()],
-                HashMap::new(),
+                crate::rvps::empty_test_resolver(),
             )
             .await
             .unwrap();
@@ -716,6 +731,7 @@ frJCGYDUg+8c
 -----END CERTIFICATE-----
 ";
 
+    #[cfg(feature = "fs")]
     #[test]
     fn test_oidc_signer_cert_chain_x5c() {
         // Exercise the `signer = Some(...)` branch of

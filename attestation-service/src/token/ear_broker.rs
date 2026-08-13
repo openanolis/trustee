@@ -518,6 +518,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg(feature = "fs")]
     #[tokio::test]
     async fn test_issue_ear_ephemeral_key() {
         // use default config with no signer.
@@ -542,6 +543,7 @@ mod tests {
             .unwrap();
     }
 
+    #[cfg(feature = "fs")]
     #[tokio::test]
     async fn test_issue_and_validate_ear() {
         let (_pkey, private_key_bytes, public_key_bytes) = generate_ec_keys().unwrap();
@@ -580,13 +582,14 @@ mod tests {
         ear.validate().unwrap();
     }
 
+    #[cfg(feature = "fs")]
     async fn issue_snp_ear(debug_allowed: &str) -> Value {
         let policy_dir = tempfile::tempdir().unwrap();
         let config = Configuration {
             policy_dir: policy_dir.path().to_string_lossy().into_owned(),
             ..Configuration::default()
         };
-        let broker = EarAttestationTokenBroker::new(config).unwrap();
+        let broker = EarAttestationTokenBroker::from_config(config).unwrap();
         let token = broker
             .issue(
                 vec![TeeClaims {
@@ -616,12 +619,14 @@ mod tests {
         serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
     }
 
+    #[cfg(feature = "fs")]
     #[tokio::test]
     async fn test_snp_default_policy_affirms_without_reference_values() {
         let ear = issue_snp_ear("0").await;
         assert_eq!(ear["submods"]["cpu0"]["ear.status"], "affirming");
     }
 
+    #[cfg(feature = "fs")]
     #[tokio::test]
     async fn test_snp_default_policy_rejects_debug_guest() {
         let ear = issue_snp_ear("1").await;
@@ -631,18 +636,31 @@ mod tests {
     #[cfg(not(feature = "fs"))]
     #[tokio::test]
     async fn from_components_issues_without_fs() {
-        // Programmatic path: inject an InMemory policy engine and let the
-        // broker fall back to an ephemeral key. Proves issue() works with no
-        // fs feature, no policy_dir, no SignerConfig.
-        let policy_engine: Arc<dyn PolicyEngine> = PolicyEngineType::OPAInMemory
-            .to_policy_engine(Path::new("/"), DEFAULT_POLICY, DEFAULT_POLICY_ID)
-            .unwrap();
+        // Programmatic path: inject an fs-free InMemory policy engine
+        // (constructed directly, bypassing the fs-gated `PolicyEngineType`)
+        // and an ephemeral EC key. Proves issue() works with no fs feature,
+        // no policy_dir, no SignerConfig. A stripped-down policy (just the
+        // AR4SI trust-vector defaults, copied from the real default policy) is
+        // used instead of `DEFAULT_POLICY` because the real one calls the
+        // `query_reference_value` regorus extension, only registered under the
+        // `policy-rvps` feature — off under `--no-default-features`.
+        const TRIVIAL_EAR_POLICY: &str = r#"package policy
+import rego.v1
+default executables := 33
+default hardware := 97
+default configuration := 36
+default file_system := 35
+"#;
+        use crate::policy_engine::opa::OPAInMemory;
+        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(OPAInMemory::with_raw_default_policy(
+            TRIVIAL_EAR_POLICY,
+            DEFAULT_POLICY_ID,
+        ));
         let broker = EarAttestationTokenBroker::from_components(
             TokenBrokerSettings::default(),
-            None,
+            Arc::new(EphemeralSigner::<SecretKey>::new()),
             policy_engine,
-        )
-        .unwrap();
+        );
 
         let _token = broker
             .issue(
@@ -655,7 +673,7 @@ mod tests {
                     additional_data: None,
                 }],
                 vec!["default".into()],
-                HashMap::new(),
+                crate::rvps::empty_test_resolver(),
             )
             .await
             .unwrap();
