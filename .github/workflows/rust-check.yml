@@ -250,7 +250,5 @@ jobs:
         run: |
           RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p eventlog --target wasm32-unknown-unknown
           RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p reference-value-provider-service --target wasm32-unknown-unknown --no-default-features  # no "fs" feature in wasm
-          # The only OPA policy engine still hard-depends on tokio::fs, which is
-          # unavailable on wasm32, so the attestation-service check is disabled for now.
-          # RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p attestation-service --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust
+          RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p attestation-service --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust
           RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p verifier --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust
