@@ -92,7 +92,7 @@ mod tests {
     use crate::rvps::RvpsCrateConfig;
     use crate::{
         rvps::RvpsConfig,
-        token::{ear_broker, simple, AttestationTokenConfig},
+        token::{ear_broker, oidc, simple, AttestationTokenConfig},
     };
     use reference_value_provider_service::storage::{local_fs, ReferenceValueStorageConfig};
 
@@ -171,9 +171,141 @@ mod tests {
         }),
         challenge_key_path: None,
     })]
+    #[case("./tests/configs/example5.json", Config {
+        work_dir: PathBuf::from("/var/lib/attestation-service/"),
+        rvps_config: RvpsConfig::BuiltIn(RvpsCrateConfig {
+            storage: ReferenceValueStorageConfig::LocalFs(local_fs::Config::default()),
+        }),
+        attestation_token_broker: AttestationTokenConfig::OIDC(oidc::Configuration {
+            settings: oidc::TokenBrokerSettings {
+                duration_min: 5,
+                issuer_name: "test".into(),
+                oid_config: Some(oidc::OpenIDConfig {
+                    issuer: "https://example.com".into(),
+                    jwks_uri: "https://example.com/jwks".into(),
+                    id_token_signing_alg_values_supported: vec!["RS256".into()],
+                    audience: "sigstore".into(),
+                    sub_claims: Some(vec!["sub1".into()]),
+                    additional_claims: Some(vec!["extra1".into()]),
+                }),
+            },
+            signer: Some(oidc::SignerConfig {
+                key_path: "/etc/key".into(),
+                cert_url: Some("https://example.io".into()),
+                cert_path: Some("/etc/cert.pem".into()),
+            }),
+            policy_dir: "/var/lib/attestation-service/policies".into(),
+        }),
+        challenge_key_path: None,
+    })]
     fn read_config(#[case] config: &str, #[case] expected: Config) {
         let config = std::fs::read_to_string(config).unwrap();
         let config: Config = serde_json::from_str(&config).unwrap();
         assert_eq!(config, expected);
+    }
+
+    // Backward compatibility: the refactor moved `duration_min` / `issuer_name`
+    // (and ear's `developer_name` / `build_name` / `profile_name`, oidc's
+    // `oid_config`) into a nested `settings: TokenBrokerSettings` sub-struct.
+    // `#[serde(flatten)]` on `settings` must keep the *pre-refactor* flat
+    // JSON/TOML config format working. These inline cases assert that a flat
+    // broker config still deserializes into the nested struct for every broker
+    // variant, without relying on the on-disk example fixtures.
+    #[test]
+    fn backward_compat_flat_broker_json_deserializes_into_nested_settings() {
+        // Simple: flat `duration_min` / `issuer_name` → `settings.*`.
+        let json = r#"{
+            "type": "Simple",
+            "duration_min": 9,
+            "issuer_name": "flat-issuer",
+            "policy_dir": "/p"
+        }"#;
+        let cfg: AttestationTokenConfig = serde_json::from_str(json).unwrap();
+        let simple::Configuration {
+            settings,
+            signer,
+            policy_dir,
+        } = match cfg {
+            AttestationTokenConfig::Simple(c) => c,
+            _ => unreachable!(),
+        };
+        assert_eq!(settings.duration_min, 9);
+        assert_eq!(settings.issuer_name, "flat-issuer");
+        assert_eq!(policy_dir, "/p");
+        assert!(signer.is_none());
+
+        // Ear: flat `developer_name` / `build_name` / `profile_name` → `settings.*`.
+        let json = r#"{
+            "type": "Ear",
+            "duration_min": 9,
+            "issuer_name": "flat-issuer",
+            "developer_name": "dev",
+            "build_name": "build",
+            "profile_name": "prof",
+            "policy_dir": "/p"
+        }"#;
+        let cfg: AttestationTokenConfig = serde_json::from_str(json).unwrap();
+        let ear_broker::Configuration {
+            settings,
+            signer,
+            policy_dir,
+        } = match cfg {
+            AttestationTokenConfig::Ear(c) => c,
+            _ => unreachable!(),
+        };
+        assert_eq!(settings.developer_name, "dev");
+        assert_eq!(settings.build_name, "build");
+        assert_eq!(settings.profile_name, "prof");
+        assert_eq!(policy_dir, "/p");
+        assert!(signer.is_none());
+
+        // OIDC: flat `oid_config` → `settings.oid_config`.
+        let json = r#"{
+            "type": "OIDC",
+            "duration_min": 9,
+            "issuer_name": "flat-issuer",
+            "policy_dir": "/p",
+            "oid_config": {
+                "issuer": "https://example.com",
+                "jwks_uri": "https://example.com/jwks"
+            }
+        }"#;
+        let cfg: AttestationTokenConfig = serde_json::from_str(json).unwrap();
+        let oidc::Configuration {
+            settings,
+            signer,
+            policy_dir,
+        } = match cfg {
+            AttestationTokenConfig::OIDC(c) => c,
+            _ => unreachable!(),
+        };
+        let oid = settings.oid_config.expect("oid_config deserialized");
+        assert_eq!(oid.issuer, "https://example.com");
+        assert_eq!(oid.jwks_uri, "https://example.com/jwks");
+        assert_eq!(policy_dir, "/p");
+        assert!(signer.is_none());
+    }
+
+    // Backward-compat / relaxation: the shared `SignerConfig` makes `cert_url`
+    // and `cert_path` `#[serde(default)]` (absent → `None`). The pre-refactor
+    // simple/oidc `TokenSignerConfig` rejected a signer missing `cert_url`; the
+    // new shared config must accept a minimal `{key_path}` signer for every
+    // broker.
+    #[test]
+    fn signer_config_accepts_minimal_key_path_only() {
+        let json = r#"{
+            "type": "Simple",
+            "signer": { "key_path": "/etc/key" },
+            "policy_dir": "/p"
+        }"#;
+        let cfg: AttestationTokenConfig = serde_json::from_str(json).unwrap();
+        let simple::Configuration { signer, .. } = match cfg {
+            AttestationTokenConfig::Simple(c) => c,
+            _ => unreachable!(),
+        };
+        let signer = signer.expect("signer present");
+        assert_eq!(signer.key_path, "/etc/key");
+        assert!(signer.cert_url.is_none());
+        assert!(signer.cert_path.is_none());
     }
 }
