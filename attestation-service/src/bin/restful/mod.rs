@@ -2,7 +2,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use actix_web::{http::StatusCode, web, HttpRequest, HttpResponse, Responder, ResponseError};
 use anyhow::{anyhow, bail, Context};
-use attestation_service::challenge::verify_challenge_and_extract_nonce_b64url;
 use attestation_service::{
     AttestationError, AttestationService, HashAlgorithm, InitDataInput as InnerInitDataInput,
     RuntimeData as InnerRuntimeData, VerificationRequest,
@@ -505,8 +504,12 @@ pub async fn attestation(
             Some(RuntimeData::Structured(v)) => {
                 if let Some(jwt) = v.get("challenge_token").and_then(|x| x.as_str()) {
                     // 验证 token，但不修改 runtime_data 内容
-                    let challenge_key_path = cocoas.read().await.challenge_key_path();
-                    let _ = verify_challenge_and_extract_nonce_b64url(jwt, &challenge_key_path)
+                    let _ = cocoas
+                        .read()
+                        .await
+                        .challenger()
+                        .verify_challenge_and_extract_nonce_b64url(jwt)
+                        .await
                         .map_err(|source| {
                             Error::unauthorized(
                                 "AS.CHALLENGE.INVALID_TOKEN",
