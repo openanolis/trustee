@@ -186,3 +186,9 @@ impl EphemeralSigner<SecretKey> {
         }
     }
 }
+
+impl Default for EphemeralSigner<SecretKey> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
