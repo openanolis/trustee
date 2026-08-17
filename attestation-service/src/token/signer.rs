@@ -8,7 +8,7 @@
 //! [`SignKeyProvider`]`<K>` is the common trait; [`FsSigner`]`<K>` (key
 //! material loaded from a [`SignerConfig`] on disk, fs-gated construction)
 //! and [`EphemeralSigner`]`<K>` (a fresh key generated at runtime) are the
-//! two implementations. The shared cert-chain / cert-url / cert-pem-raw
+//! two implementations. The shared cert-chain / cert-url / cert-pem-live
 //! plumbing is written once in the generic trait impls; K-specific
 //! construction (PEM parsing, key generation) is provided via concrete
 //! inherent impls on the specific key types the brokers use
@@ -44,8 +44,8 @@ pub trait SignKeyProvider<K>: Send + Sync {
     /// The signer's certificate-chain raw PEM bytes, read lazily from the
     /// configured `cert_path` on each call (not cached at construction).
     /// `None` when no `cert_path` is configured. Ephemeral signers return
-    /// `None`. The broker forwards this through `signer_cert_content`.
-    fn cert_pem_raw(&self) -> Option<Result<Vec<u8>>>;
+    /// `None`. The broker forwards this through `signer_cert_pem_live`.
+    fn cert_pem_live(&self) -> Option<Result<Vec<u8>>>;
 }
 
 /// Signer resolved from a [`SignerConfig`] (native/serde path). Reads
@@ -54,8 +54,26 @@ pub trait SignKeyProvider<K>: Send + Sync {
 pub struct FsSigner<K> {
     private_key: K,
     cert_url: Option<String>,
-    // Kept so `cert_pem_raw` can re-read the file lazily; not the cached PEM.
+    // Kept so `cert_pem_live` can re-read the raw PEM bytes lazily on each call.
+    // This mirrors the historical `get_token_broker_cert_config` /
+    // `get_cert_content` cert endpoint, which always served the *current*
+    // on-disk certificate (no cache) — the right behavior for an endpoint
+    // whose job is to expose whatever cert is deployed.
     cert_path: Option<String>,
+    // Parsed certificate chain, loaded *once* at construction and cached.
+    // This backs the `x5c`/`jwk` embedded in issued tokens via `cert_chain()`.
+    // Caching (rather than re-reading per attest) does two things:
+    //   1. avoids a file read + PEM parse on every token issuance; and
+    //   2. keeps the cert chain and `private_key` as a single
+    //      construction-time snapshot, so the `x5c` in a token always matches
+    //      the key that signed it — even if the cert file is swapped at run
+    //      time. (A re-read-per-attest design would let `x5c` drift away from
+    //      the cached signing key.) This matches the pre-PR behavior, where
+    //      the broker cached `cert_chain` in `new()` and reused it.
+    // Note: `cert_path` is kept separately above so `cert_pem_live` (the cert
+    // *endpoint*) can still re-read lazily — the two paths have different
+    // semantics and must not be unified.
+    cert_chain: Option<Vec<CertificateDer<'static>>>,
 }
 
 /// Ephemeral signer: generates a fresh key at runtime. Used when no signer is
@@ -69,21 +87,18 @@ impl<K: Send + Sync> SignKeyProvider<K> for FsSigner<K> {
     fn private_key(&self) -> &K {
         &self.private_key
     }
+    // Returns the construction-time cached chain (see field doc). Never reads
+    // disk here — the read+parse already happened in `from_config`, so by the
+    // time this is called the result is infallible. (The `Result` in the
+    // return type is kept to satisfy the trait signature; other impls may be
+    // fallible at call time.)
     fn cert_chain(&self) -> Option<Result<Vec<CertificateDer<'static>>>> {
-        self.cert_path
-            .as_ref()
-            .map(|cert_path| -> Result<Vec<CertificateDer<'static>>> {
-                let pem_cert_chain = std::fs::read_to_string(cert_path)
-                    .context("Read Token Signer cert file failed")?;
-                let chain: Result<Vec<_>, rustls_pki_types::pem::Error> =
-                    CertificateDer::pem_slice_iter(pem_cert_chain.as_bytes()).collect();
-                chain.context("Invalid PEM certificate chain")
-            })
+        self.cert_chain.clone().map(Ok)
     }
     fn cert_url(&self) -> Option<&str> {
         self.cert_url.as_deref()
     }
-    fn cert_pem_raw(&self) -> Option<Result<Vec<u8>>> {
+    fn cert_pem_live(&self) -> Option<Result<Vec<u8>>> {
         self.cert_path.as_ref().map(|path| {
             use std::io::Read as _;
             // Read certificate from file
@@ -107,7 +122,7 @@ impl<K: Send + Sync> SignKeyProvider<K> for EphemeralSigner<K> {
     fn cert_url(&self) -> Option<&str> {
         None
     }
-    fn cert_pem_raw(&self) -> Option<Result<Vec<u8>>> {
+    fn cert_pem_live(&self) -> Option<Result<Vec<u8>>> {
         None
     }
 }
@@ -130,6 +145,24 @@ pub struct SignerConfig {
 
 // --- Concrete construction impls ("specific code on the generic") ---
 
+/// Read and PEM-parse a certificate chain from `cert_path` once, returning
+/// the parsed `CertificateDer` list (or `None` when no `cert_path` is
+/// configured). Used by both `FsSigner::*::from_config` to populate the
+/// cached `cert_chain` field at construction time.
+#[cfg(feature = "fs")]
+fn load_cert_chain(cert_path: &Option<String>) -> Result<Option<Vec<CertificateDer<'static>>>> {
+    match cert_path {
+        Some(cert_path) => {
+            let pem_cert_chain =
+                std::fs::read_to_string(cert_path).context("Read Token Signer cert file failed")?;
+            let chain: Result<Vec<_>, rustls_pki_types::pem::Error> =
+                CertificateDer::pem_slice_iter(pem_cert_chain.as_bytes()).collect();
+            Ok(Some(chain.context("Invalid PEM certificate chain")?))
+        }
+        None => Ok(None),
+    }
+}
+
 #[cfg(feature = "fs")]
 impl FsSigner<RsaPrivateKey> {
     /// Parse an RSA private key from `SignerConfig::key_path` (PKCS#8, with a
@@ -140,10 +173,13 @@ impl FsSigner<RsaPrivateKey> {
         let private_key = RsaPrivateKey::from_pkcs8_pem(&pem_data)
             .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&pem_data))
             .context("Parse Token Signer private key failed")?;
+        // Cache the cert chain at construction (see `cert_chain` field doc).
+        let cert_chain = load_cert_chain(&signer.cert_path)?;
         Ok(Self {
             private_key,
             cert_url: signer.cert_url,
             cert_path: signer.cert_path,
+            cert_chain,
         })
     }
 }
@@ -159,10 +195,13 @@ impl FsSigner<SecretKey> {
         let private_key = SecretKey::from_sec1_pem(pem_str)
             .or_else(|_| SecretKey::from_pkcs8_pem(pem_str))
             .context("Parse Token Signer private key failed")?;
+        // Cache the cert chain at construction (see `cert_chain` field doc).
+        let cert_chain = load_cert_chain(&signer.cert_path)?;
         Ok(Self {
             private_key,
             cert_url: signer.cert_url,
             cert_path: signer.cert_path,
+            cert_chain,
         })
     }
 }

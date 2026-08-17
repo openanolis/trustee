@@ -465,8 +465,8 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
             .map_err(Error::from)
     }
 
-    async fn signer_cert_content(&self) -> Option<Result<Vec<u8>>> {
-        self.signer.cert_pem_raw()
+    async fn signer_cert_pem_live(&self) -> Option<Result<Vec<u8>>> {
+        self.signer.cert_pem_live()
     }
 
     fn signer_cert_url(&self) -> Option<&str> {

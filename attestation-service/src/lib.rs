@@ -481,7 +481,7 @@ impl AttestationService {
     /// HTTP-fetches the broker's published `cert_url`. Returns the binary PEM
     /// bytes, or `None` when no cert is available.
     pub async fn get_token_broker_cert_config(&self) -> Result<Option<Vec<u8>>> {
-        if let Some(content) = self.token_broker.signer_cert_content().await {
+        if let Some(content) = self.token_broker.signer_cert_pem_live().await {
             return Ok(Some(content?));
         }
         match self.token_broker.signer_cert_url() {
