@@ -473,10 +473,18 @@ impl AttestationTokenBroker for OIDCAttestationTokenBroker {
         self.signer.cert_url()
     }
 
-    /// OIDC broker publishes its signer RSA public key as a JWKS `{"keys":[...]}`
-    /// with `kty/n/e` only — matching the historical service endpoint output.
-    /// `None` when no signer is configured (ephemeral key).
-    async fn public_jwks(&self) -> Result<Option<String>> {
+    /// Publish the configured signer's RSA public key as a JWKS
+    /// `{"keys":[...]}` with `kty/n/e` only — matching the historical service
+    /// endpoint output. Returns `None` when no signer is configured (i.e. the
+    /// signer is ephemeral, per [`SignKeyProvider::is_configured`]): an
+    /// ephemeral key is freshly generated per process start and is not
+    /// publishable, so the `/jwks` endpoint answers `404`. This preserves the
+    /// long-standing behavior of only publishing a JWKS for an explicitly
+    /// configured signer.
+    async fn configured_signer_jwks(&self) -> Result<Option<String>> {
+        if !self.signer.is_configured() {
+            return Ok(None);
+        }
         let n = self.signer.private_key().n().to_bytes_be();
         let e = self.signer.private_key().e().to_bytes_be();
         let jwk = json!({
@@ -806,5 +814,58 @@ frJCGYDUg+8c
                 .expect("each x5c entry must base64url-decode to DER bytes");
             Certificate::from_der(&der).expect("decoded x5c entry must be a valid DER certificate");
         }
+    }
+
+    /// `configured_signer_jwks` must publish a JWKS only for a *configured*
+    /// signer; an ephemeral signer returns `None` (so `/jwks` answers 404),
+    /// preserving the long-standing behavior of only publishing a JWKS when a
+    /// signer was explicitly configured.
+    #[cfg(feature = "fs")]
+    #[tokio::test]
+    async fn test_configured_signer_jwks_visibility() {
+        use crate::policy_engine::opa::OPAInMemory;
+        use crate::policy_engine::PolicyEngine;
+        use crate::token::signer::EphemeralSigner;
+        use rsa::RsaPrivateKey;
+        use std::sync::Arc;
+
+        // Configured signer → published.
+        let key_file = NamedTempFile::new().expect("create temp key file");
+        std::fs::write(&key_file, TEST_SIGNER_KEY_PEM).expect("write temp key file");
+        let cfg = Configuration {
+            signer: Some(SignerConfig {
+                key_path: key_file.path().to_string_lossy().to_string(),
+                cert_url: None,
+                cert_path: None,
+            }),
+            ..Configuration::default()
+        };
+        let broker =
+            OIDCAttestationTokenBroker::from_config(cfg).expect("configured broker must construct");
+        let jwks = broker
+            .configured_signer_jwks()
+            .await
+            .expect("configured_signer_jwks must not error");
+        assert!(jwks.is_some(), "configured signer must publish a JWKS");
+        let v: serde_json::Value =
+            serde_json::from_str(&jwks.unwrap()).expect("published JWKS must be valid JSON");
+        assert_eq!(v["keys"][0]["kty"], "RSA", "JWK kty must be RSA");
+
+        // Ephemeral signer → not published (None).
+        const TRIVIAL_ALLOW_POLICY: &str = "package policy\ndefault allow = true";
+        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(OPAInMemory::with_raw_default_policy(
+            TRIVIAL_ALLOW_POLICY,
+            super::DEFAULT_POLICY_ID,
+        ));
+        let ephemeral = OIDCAttestationTokenBroker::from_components(
+            super::TokenBrokerSettings::default(),
+            Arc::new(EphemeralSigner::<RsaPrivateKey>::new().unwrap()),
+            policy_engine,
+        );
+        assert_eq!(
+            ephemeral.configured_signer_jwks().await.unwrap(),
+            None,
+            "ephemeral signer must not be published at /jwks"
+        );
     }
 }

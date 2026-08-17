@@ -74,10 +74,21 @@ pub trait AttestationTokenBroker: Send + Sync {
         None
     }
 
-    /// The broker's public key set as a JWKS JSON string, for the service's
-    /// "get token broker public key" endpoint. Default: not supported (the
-    /// service returns `None`).
-    async fn public_jwks(&self) -> Result<Option<String>> {
+    /// The *configured* signer's public key set as a JWKS JSON string, for the
+    /// service's "get token broker public key" (`/jwks`) endpoint.
+    ///
+    /// Publishes the JWKS only when a signer was explicitly configured; an
+    /// ephemeral signer is intentionally **not** published (its key is freshly
+    /// generated per process start, so clients cannot pin it), and the method
+    /// returns `None` in that case — the service then answers `/jwks` with
+    /// 404. This preserves the long-standing behavior of only publishing a
+    /// JWKS for an explicitly configured signer. Default: not supported
+    /// (`None`).
+    ///
+    /// The name emphasizes "configured" so callers don't assume a generic
+    /// "any public key" contract. If a future use case needs to publish an
+    /// ephemeral key too, add a separate method rather than loosening this one.
+    async fn configured_signer_jwks(&self) -> Result<Option<String>> {
         Ok(None)
     }
 

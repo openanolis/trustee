@@ -520,7 +520,7 @@ impl AttestationService {
     /// broker; only brokers that publish a public key (e.g. OIDC with a
     /// configured signer) return `Some`.
     pub async fn get_token_broker_public_key(&self) -> Result<Option<String>> {
-        self.token_broker.public_jwks().await
+        self.token_broker.configured_signer_jwks().await
     }
 
     /// Get the token broker's OIDC discovery configuration (JSON). Delegates to

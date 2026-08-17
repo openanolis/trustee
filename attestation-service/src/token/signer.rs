@@ -46,6 +46,20 @@ pub trait SignKeyProvider<K>: Send + Sync {
     /// `None` when no `cert_path` is configured. Ephemeral signers return
     /// `None`. The broker forwards this through `signer_cert_pem_live`.
     fn cert_pem_live(&self) -> Option<Result<Vec<u8>>>;
+    /// Whether this signer was loaded from explicit configuration
+    /// ([`FsSigner`]) rather than an ephemeral key generated at runtime
+    /// ([`EphemeralSigner`]).
+    ///
+    /// Brokers use this to decide whether to publish the signer's public key
+    /// at the `/jwks` endpoint: the attestation service has historically
+    /// published a JWKS only when a signer was explicitly configured,
+    /// answering `404` otherwise. An ephemeral key is freshly generated per
+    /// process start, so clients cannot pin it and it is not published.
+    /// [`FsSigner`] overrides this to `true`; [`EphemeralSigner`] keeps the
+    /// default `false`.
+    fn is_configured(&self) -> bool {
+        false
+    }
 }
 
 /// Signer resolved from a [`SignerConfig`] (native/serde path). Reads
@@ -68,8 +82,10 @@ pub struct FsSigner<K> {
     //      construction-time snapshot, so the `x5c` in a token always matches
     //      the key that signed it — even if the cert file is swapped at run
     //      time. (A re-read-per-attest design would let `x5c` drift away from
-    //      the cached signing key.) This matches the pre-PR behavior, where
-    //      the broker cached `cert_chain` in `new()` and reused it.
+    //      the cached signing key.) This matches the historical behavior of
+    //      the attestation-service brokers, which loaded and cached the cert
+    //      chain once at construction (alongside the private key) and reused
+    //      it for every issued token.
     // Note: `cert_path` is kept separately above so `cert_pem_live` (the cert
     // *endpoint*) can still re-read lazily — the two paths have different
     // semantics and must not be unified.
@@ -109,6 +125,10 @@ impl<K: Send + Sync> SignKeyProvider<K> for FsSigner<K> {
                 .map_err(|e| anyhow::anyhow!("Failed to read certificate file: {}", e))?;
             Ok(content)
         })
+    }
+    // Loaded from an explicit `SignerConfig` on disk — publishable.
+    fn is_configured(&self) -> bool {
+        true
     }
 }
 
