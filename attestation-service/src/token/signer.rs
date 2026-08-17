@@ -149,10 +149,11 @@ impl<K: Send + Sync> SignKeyProvider<K> for EphemeralSigner<K> {
 
 /// Shared signer configuration (deserialized from the token-broker config).
 ///
-/// Note: unifying on `#[serde(default)]` for `cert_url`/`cert_path` relaxes
-/// the simple/oidc configs (which previously errored on a missing field) to
-/// match ear's existing tolerant behavior. This does not affect emitted
-/// tokens; `cert_url`/`cert_path` only influence `x5u`/`x5c` when set.
+/// `key_path` is required. `cert_url`/`cert_path` are optional: when omitted
+/// from the config they deserialize to `None` (serde already defaults a
+/// missing `Option<T>` field to `None`, so the `#[serde(default)]` attributes
+/// are kept for explicitness rather than out of necessity). When set, they
+/// only influence the token's `x5u`/`x5c`; they do not affect the signing key.
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct SignerConfig {
     pub key_path: String,
