@@ -16,6 +16,9 @@ use crate::policy_engine::{EvaluationResult, PolicyDigest, PolicyEngine, PolicyE
 #[derive(Debug, Clone)]
 pub struct OPA {
     policy_dir_path: PathBuf,
+
+    #[cfg(feature = "policy-artifact-server")]
+    artifact_server_client: Arc<artifact_resolve_sdk::Client>,
 }
 
 impl OPA {
@@ -23,6 +26,7 @@ impl OPA {
         work_dir: PathBuf,
         default_policy: &str,
         default_policy_id: &str,
+        artifact_server_address: &str,
     ) -> Result<Self, PolicyError> {
         let mut policy_dir_path = work_dir;
 
@@ -45,7 +49,20 @@ impl OPA {
             warn!("Default policy file is already populated. Existing policy file will be used.");
         }
 
-        Ok(Self { policy_dir_path })
+        #[cfg(feature = "policy-artifact-server")]
+        {
+            let client = artifact_resolve_sdk::Client::new(artifact_server_address)
+                .map_err(PolicyError::ArtifactServerClientCreationFailed)?;
+            Ok(Self {
+                policy_dir_path,
+                artifact_server_client: Arc::new(client),
+            })
+        }
+
+        #[cfg(not(feature = "policy-artifact-server"))]
+        {
+            Ok(Self { policy_dir_path })
+        }
     }
 }
 
@@ -82,6 +99,8 @@ impl PolicyEngine for OPA {
             policy_id.to_string(),
             evaluation_rules,
             reference_value_resolver,
+            #[cfg(feature = "policy-artifact-server")]
+            self.artifact_server_client.clone(),
         )
         .await
     }
@@ -183,7 +202,10 @@ impl PolicyEngine for OPA {
 
 #[cfg(test)]
 mod tests {
-    use crate::rvps::{RvpsApi, RvpsError};
+    use crate::{
+        config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        rvps::{RvpsApi, RvpsError},
+    };
     use anyhow::anyhow;
     use ear::TrustVector;
     use rstest::rstest;
@@ -225,6 +247,10 @@ mod tests {
     ) {
         let opa = OPA {
             policy_dir_path: PathBuf::from("./src/token/"),
+            #[cfg(feature = "policy-artifact-server")]
+            artifact_server_client: Arc::new(
+                artifact_resolve_sdk::Client::new(DEFAULT_ARTIFACT_SERVER_ADDRESS).unwrap(),
+            ),
         };
         let default_policy_id = "ear_default_policy_cpu".to_string();
 
@@ -265,7 +291,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_policy_management() {
-        let opa = OPA::new(PathBuf::from("tests/tmp"), "default", "default.rego").unwrap();
+        let opa = OPA::new(
+            PathBuf::from("tests/tmp"),
+            "default",
+            "default.rego",
+            DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
         let policy = "package policy
 default allow = true"
             .to_string();
@@ -346,7 +378,13 @@ minimum = query_reference_value("minimum")
 svn_again = query_reference_value("svn")
 "#;
         let tmp = tempfile::tempdir().unwrap();
-        let opa = OPA::new(tmp.path().to_path_buf(), policy, "query.rego").unwrap();
+        let opa = OPA::new(
+            tmp.path().to_path_buf(),
+            policy,
+            "query.rego",
+            DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
         let rvps = Arc::new(CountingRvps {
             keyed_queries: AtomicUsize::new(0),
             bulk_queries: AtomicUsize::new(0),
@@ -434,7 +472,13 @@ svn_again = query_reference_value("svn")
 allow = query_reference_value("svn") == [7]
 "#;
         let tmp = tempfile::tempdir().unwrap();
-        let opa = OPA::new(tmp.path().to_path_buf(), policy, "query.rego").unwrap();
+        let opa = OPA::new(
+            tmp.path().to_path_buf(),
+            policy,
+            "query.rego",
+            DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
         let resolver = Arc::new(ReferenceValueResolver::new(Arc::new(UnavailableRvps {
             timeout,
         })));

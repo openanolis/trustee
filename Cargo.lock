@@ -477,6 +477,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
+name = "artifact-resolve-sdk"
+version = "0.1.0"
+source = "git+https://github.com/aliyun/artifact-server-rust-sdk.git?tag=v0.1.0#d4be739f76f03bea3574726975e984e6a9303685"
+dependencies = [
+ "reqwest 0.12.12",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "asn1-rs"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -588,6 +599,7 @@ dependencies = [
  "aes-gcm",
  "aes-kw",
  "anyhow",
+ "artifact-resolve-sdk",
  "assert-json-diff",
  "async-trait",
  "base64 0.21.7",
@@ -7791,7 +7803,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

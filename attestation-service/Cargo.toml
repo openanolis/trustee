@@ -4,60 +4,94 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = [ "restful-bin", "rvps-grpc", "all-verifier", "fs", "policy-rvps" ]
+default = [
+    "restful-bin",
+    "rvps-grpc",
+    "all-verifier",
+    "fs",
+    "policy-rvps",
+    "policy-artifact-server",
+]
 
 # Filesystem-backed implementations: config-from-file, on-disk OPA policy engine,
 # rvps local_json/local_fs storage, nonce-key persistence, signer transparency
 # file, signer key/cert read by path. Turn off (`default-features = false`) for a
 # pure, fs-free library (e.g. wasm builds).
-fs = [ "tokio/fs", "reference-value-provider-service/fs" ]
+fs = ["tokio/fs", "reference-value-provider-service/fs"]
 # Runtime bridge used by synchronous Regorus extensions to make bounded
 # asynchronous RVPS queries. Normal AS binaries enable this through `fs`.
-policy-rvps = [ "tokio/rt", "tokio/time" ]
-all-verifier = [ "verifier/all-verifier" ]
+policy-rvps = ["tokio/rt", "tokio/time"]
+all-verifier = ["verifier/all-verifier"]
 # Like `all-verifier`, but the TDX verifier uses the dcap-qvl backend and SGX is
 # dropped (it would still link the DCAP shared library). See
 # deps/verifier/src/tdx/verify/native.rs.
-all-verifier-rust = [ "verifier/all-verifier-rust" ]
+all-verifier-rust = ["verifier/all-verifier-rust"]
 # `tdx-verifier` keeps its historical meaning (DCAP shared library backend) for
 # backward compatibility. The dcap-qvl backend is opt-in via `tdx-dcap-rust`.
-tdx-verifier = [ "verifier/tdx-dcap-ffi" ]
-tdx-dcap-ffi = [ "verifier/tdx-dcap-ffi" ]
-tdx-dcap-rust = [ "verifier/tdx-dcap-rust" ]
-sgx-verifier = [ "verifier/sgx-verifier" ]
-az-snp-vtpm-verifier = [ "verifier/az-snp-vtpm-verifier" ]
-az-tdx-vtpm-verifier = [ "verifier/az-tdx-vtpm-verifier" ]
-snp-verifier = [ "verifier/snp-verifier" ]
-csv-verifier = [ "verifier/csv-verifier" ]
+tdx-verifier = ["verifier/tdx-dcap-ffi"]
+tdx-dcap-ffi = ["verifier/tdx-dcap-ffi"]
+tdx-dcap-rust = ["verifier/tdx-dcap-rust"]
+sgx-verifier = ["verifier/sgx-verifier"]
+az-snp-vtpm-verifier = ["verifier/az-snp-vtpm-verifier"]
+az-tdx-vtpm-verifier = ["verifier/az-tdx-vtpm-verifier"]
+snp-verifier = ["verifier/snp-verifier"]
+csv-verifier = ["verifier/csv-verifier"]
 hygon-dcu-verifier = ["verifier/hygon-dcu-verifier"]
 # cca-verifier = [ "verifier/cca-verifier" ]
-se-verifier  = [ "verifier/se-verifier" ]
-system-verifier = [ "verifier/system-verifier" ]
-tpm-verifier = [ "verifier/tpm-verifier" ]
+se-verifier = ["verifier/se-verifier"]
+system-verifier = ["verifier/system-verifier"]
+tpm-verifier = ["verifier/tpm-verifier"]
 
-rvps-grpc = [ "prost", "tonic", "tokio/sync" ]
+rvps-grpc = ["prost", "tonic", "tokio/sync"]
+
+# For Artifact Server.
+policy-artifact-server = ["artifact-resolve-sdk", "tokio/rt"]
 
 # For building gRPC CoCo-AS binary
-grpc-bin = [ "clap", "env_logger", "prost", "tonic", "tokio/full", "fs", "policy-rvps" ]
+grpc-bin = [
+    "clap",
+    "env_logger",
+    "prost",
+    "tonic",
+    "tokio/full",
+    "fs",
+    "policy-rvps",
+    "policy-artifact-server",
+]
 
 # For restful CoCo-AS binary
-restful-bin = [ "actix-cors", "actix-web/openssl", "clap", "env_logger", "openssl", "tokio/full", "fs", "policy-rvps" ]
+restful-bin = [
+    "actix-cors",
+    "actix-web/openssl",
+    "clap",
+    "env_logger",
+    "openssl",
+    "tokio/full",
+    "fs",
+    "policy-rvps",
+    "policy-artifact-server",
+]
 
 # For attestation-challenge-client binary
-attestation-challenge-client = [ "tokio/full", "fs", "policy-rvps" ]
+attestation-challenge-client = [
+    "tokio/full",
+    "fs",
+    "policy-rvps",
+    "policy-artifact-server",
+]
 
 [[bin]]
 name = "grpc-as"
-required-features = [ "grpc-bin" ]
+required-features = ["grpc-bin"]
 
 [[bin]]
 name = "restful-as"
-required-features = [ "restful-bin" ]
+required-features = ["restful-bin"]
 
 [[bin]]
 name = "attestation-challenge-client"
 path = "src/bin/attestation-challenge-client/main.rs"
-required-features = [ "attestation-challenge-client" ]
+required-features = ["attestation-challenge-client"]
 
 [dependencies]
 # Pinned to 0.7.0: actix-cors 0.7.1 pulls in derive_more 2.x which requires
@@ -68,6 +102,7 @@ actix-web = { workspace = true, optional = true }
 aes-gcm = "0.10"
 aes-kw = "0.2"
 anyhow.workspace = true
+artifact-resolve-sdk = { git = "https://github.com/aliyun/artifact-server-rust-sdk.git", tag = "v0.1.0", optional = true }
 async-trait.workspace = true
 base64.workspace = true
 canon-json = { git = "https://github.com/inclavare-containers/canon-json-rs" }
@@ -113,6 +148,7 @@ uuid = { version = "1.1.2", features = ["v4", "js"] }
 getrandom = { version = "0.2", features = ["js"] }
 web-time.workspace = true
 
+
 [build-dependencies]
 shadow-rs.workspace = true
 tonic-build.workspace = true
@@ -126,4 +162,7 @@ serial_test.workspace = true
 sha2.workspace = true
 testing_logger = "0.1.1"
 tokio = { workspace = true, features = ["full"] }
-x509-cert = { version = "0.2.5", default-features = false, features = ["pem", "std"] }
+x509-cert = { version = "0.2.5", default-features = false, features = [
+    "pem",
+    "std",
+] }

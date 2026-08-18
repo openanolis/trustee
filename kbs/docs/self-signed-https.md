@@ -81,6 +81,7 @@ policy_path = "/opa/confidential-containers/kbs/policy.rego"
 type = "coco_as_builtin"
 work_dir = "/opt/confidential-containers/attestation-service"
 policy_engine = "opa"
+artifact_server_address = "https://attest-pre.aliyuncs.com"
 
     [attestation_serivce.attestation_token_broker]
     type = "Ear"

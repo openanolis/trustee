@@ -147,11 +147,12 @@ pub struct OIDCAttestationTokenBroker {
 
 impl OIDCAttestationTokenBroker {
     #[cfg(feature = "fs")]
-    pub fn from_config(config: Configuration) -> Result<Self> {
+    pub fn from_config(config: Configuration, artifact_server_address: &str) -> Result<Self> {
         let policy_engine = crate::policy_engine::PolicyEngineType::OPA.to_policy_engine(
             std::path::Path::new(&config.policy_dir),
             DEFAULT_POLICY,
             DEFAULT_POLICY_ID,
+            artifact_server_address,
         )?;
         log::info!("Loading default AS policy \"oidc_default_policy.rego\"");
 
@@ -561,7 +562,11 @@ mod tests {
         // use default config with no signer.
         // this will sign the token with an ephemeral key.
         let config = Configuration::default();
-        let broker = OIDCAttestationTokenBroker::from_config(config).unwrap();
+        let broker = OIDCAttestationTokenBroker::from_config(
+            config,
+            crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
 
         let _token = broker
             .issue(
@@ -588,7 +593,11 @@ mod tests {
             policy_dir: policy_dir.path().to_string_lossy().into_owned(),
             ..Configuration::default()
         };
-        let broker = OIDCAttestationTokenBroker::from_config(config).unwrap();
+        let broker = OIDCAttestationTokenBroker::from_config(
+            config,
+            crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
         let claims = TeeClaims {
             tee: Tee::Snp,
             tee_class: "cpu".to_string(),
@@ -638,10 +647,14 @@ mod tests {
         // registered under the `policy-rvps` feature — off under
         // `--no-default-features`.
         const TRIVIAL_ALLOW_POLICY: &str = "package policy\ndefault allow = true";
-        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(OPAInMemory::with_raw_default_policy(
-            TRIVIAL_ALLOW_POLICY,
-            super::DEFAULT_POLICY_ID,
-        ));
+        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(
+            OPAInMemory::with_raw_default_policy(
+                TRIVIAL_ALLOW_POLICY,
+                super::DEFAULT_POLICY_ID,
+                crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+            )
+            .unwrap(),
+        );
         let broker = OIDCAttestationTokenBroker::from_components(
             super::TokenBrokerSettings::default(),
             Arc::new(EphemeralSigner::<RsaPrivateKey>::new().unwrap()),
@@ -768,8 +781,11 @@ frJCGYDUg+8c
             ..Configuration::default()
         };
 
-        let broker = OIDCAttestationTokenBroker::from_config(config)
-            .expect("broker construction with signer + cert chain must succeed");
+        let broker = OIDCAttestationTokenBroker::from_config(
+            config,
+            crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .expect("broker construction with signer + cert chain must succeed");
 
         let jwks = serde_json::from_str::<serde_json::Value>(
             &broker.pubkey_jwks().expect("pubkey_jwks must succeed"),
@@ -840,8 +856,11 @@ frJCGYDUg+8c
             }),
             ..Configuration::default()
         };
-        let broker =
-            OIDCAttestationTokenBroker::from_config(cfg).expect("configured broker must construct");
+        let broker = OIDCAttestationTokenBroker::from_config(
+            cfg,
+            crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .expect("configured broker must construct");
         let jwks = broker
             .configured_signer_jwks()
             .await
@@ -853,10 +872,14 @@ frJCGYDUg+8c
 
         // Ephemeral signer → not published (None).
         const TRIVIAL_ALLOW_POLICY: &str = "package policy\ndefault allow = true";
-        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(OPAInMemory::with_raw_default_policy(
-            TRIVIAL_ALLOW_POLICY,
-            super::DEFAULT_POLICY_ID,
-        ));
+        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(
+            OPAInMemory::with_raw_default_policy(
+                TRIVIAL_ALLOW_POLICY,
+                super::DEFAULT_POLICY_ID,
+                crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+            )
+            .unwrap(),
+        );
         let ephemeral = OIDCAttestationTokenBroker::from_components(
             super::TokenBrokerSettings::default(),
             Arc::new(EphemeralSigner::<RsaPrivateKey>::new().unwrap()),

@@ -9,6 +9,7 @@ insecure_key = true
 type = "coco_as_builtin"
 work_dir = "/opt/confidential-containers/attestation-service"
 policy_engine = "opa"
+artifact_server_address = "https://attest-pre.aliyuncs.com"
 
 [attestation_service.attestation_token_broker]
 type = "Ear"

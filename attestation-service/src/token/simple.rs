@@ -115,11 +115,12 @@ pub struct SimpleAttestationTokenBroker {
 
 impl SimpleAttestationTokenBroker {
     #[cfg(feature = "fs")]
-    pub fn from_config(config: Configuration) -> Result<Self> {
+    pub fn from_config(config: Configuration, artifact_server_address: &str) -> Result<Self> {
         let policy_engine = crate::policy_engine::PolicyEngineType::OPA.to_policy_engine(
             std::path::Path::new(&config.policy_dir),
             DEFAULT_POLICY,
             DEFAULT_POLICY_ID,
+            artifact_server_address,
         )?;
         log::info!("Loading default AS policy \"simple_default_policy.rego\"");
 
@@ -465,7 +466,11 @@ mod tests {
         // use default config with no signer.
         // this will sign the token with an ephemeral key.
         let config = Configuration::default();
-        let broker = SimpleAttestationTokenBroker::from_config(config).unwrap();
+        let broker = SimpleAttestationTokenBroker::from_config(
+            config,
+            crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
 
         let _token = broker
             .issue(
@@ -503,10 +508,14 @@ mod tests {
         // `query_reference_value` regorus extension, which is only registered
         // under the `policy-rvps` feature — off under `--no-default-features`.
         const TRIVIAL_ALLOW_POLICY: &str = "package policy\ndefault allow = true";
-        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(OPAInMemory::with_raw_default_policy(
-            TRIVIAL_ALLOW_POLICY,
-            super::DEFAULT_POLICY_ID,
-        ));
+        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(
+            OPAInMemory::with_raw_default_policy(
+                TRIVIAL_ALLOW_POLICY,
+                super::DEFAULT_POLICY_ID,
+                crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+            )
+            .unwrap(),
+        );
         let broker = SimpleAttestationTokenBroker::from_components(
             super::TokenBrokerSettings::default(),
             Arc::new(EphemeralSigner::<RsaPrivateKey>::new().unwrap()),
@@ -699,8 +708,11 @@ frJCGYDUg+8c
             ..Configuration::default()
         };
 
-        let broker = SimpleAttestationTokenBroker::from_config(config)
-            .expect("broker construction with signer + cert chain must succeed");
+        let broker = SimpleAttestationTokenBroker::from_config(
+            config,
+            crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .expect("broker construction with signer + cert chain must succeed");
 
         let jwks = serde_json::from_str::<serde_json::Value>(
             &broker.pubkey_jwks().expect("pubkey_jwks must succeed"),

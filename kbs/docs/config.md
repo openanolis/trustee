@@ -81,6 +81,7 @@ When `type` is set to `coco_as_builtin`, the following properties can be set.
 | `work_dir`                 | String                      | The location for Attestation Service to store data. |  First try from env `AS_WORK_DIR`. If no this env, then use `/opt/confidential-containers/attestation-service`       |
 | `policy_engine`            | String                      | Policy engine type. Valid values: `opa`             |  `opa`       |
 | `rvps_config`              | [RVPSConfiguration][2]      | RVPS configuration                                  |  See [RVPSConfiguration][2]       |
+| `artifact_server_address`  | String                      | Artifact Server URL used by policy `query_artifact_server`. | `https://attest-pre.aliyuncs.com` |
 | `attestation_token_broker` | [AttestationTokenConfig][1] | Attestation result token configuration.             |  See [AttestationTokenConfig][1]       |
 
 [1]: #attestationtokenbroker
@@ -502,6 +503,7 @@ insecure_api = true
 type = "coco_as_builtin"
 work_dir = "/opt/confidential-containers/attestation-service"
 policy_engine = "opa"
+artifact_server_address = "https://attest-pre.aliyuncs.com"
 
 [attestation_service.attestation_token_broker]
 type = "Ear"
@@ -554,6 +556,7 @@ insecure_api = true
 type = "coco_as_builtin"
 work_dir = "/opt/confidential-containers/attestation-service"
 policy_engine = "opa"
+artifact_server_address = "https://attest-pre.aliyuncs.com"
 
 [attestation_service.attestation_token_broker]
 type = "Ear"

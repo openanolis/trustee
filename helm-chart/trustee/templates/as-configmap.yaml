@@ -20,6 +20,7 @@ data:
           "address":"http://rvps:{{ .Values.rvps.service.port }}"
           {{- end }}
         },
+        "artifact_server_address": "https://attest-pre.aliyuncs.com",
         "attestation_token_broker": {
             "type": "Ear",
             "duration_min": 5,
