@@ -50,6 +50,10 @@ pub enum PolicyError {
     InvalidClaimValue,
     #[error("Cannot delete default policy")]
     CannotDeleteDefaultPolicy,
+
+    #[cfg(feature = "policy-artifact-server")]
+    #[error("Failed to create artifact server client: {0}")]
+    ArtifactServerClientCreationFailed(#[source] artifact_resolve_sdk::Error),
 }
 
 #[derive(Debug, EnumString, Deserialize)]
@@ -66,12 +70,14 @@ impl PolicyEngineType {
         work_dir: &Path,
         default_policy: &str,
         default_policy_id: &str,
+        artifact_server_address: &str,
     ) -> Result<Arc<dyn PolicyEngine>> {
         match self {
             PolicyEngineType::OPA => Ok(Arc::new(opa::OPA::new(
                 work_dir.to_path_buf(),
                 default_policy,
                 default_policy_id,
+                artifact_server_address,
             )?) as Arc<dyn PolicyEngine>),
         }
     }
@@ -105,7 +111,7 @@ pub trait PolicyEngine: Send + Sync {
     /// - `reference_value_resolver`: the per-attestation RVPS snapshot. Policies
     /// can query it through `query_reference_value(key)`. Legacy
     /// `data.reference` policies are populated lazily by the engine.
-    ///
+    /// Artifact Server queries use the address configured on the engine.
     async fn evaluate(
         &self,
         input: &str,

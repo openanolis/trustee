@@ -6,6 +6,7 @@
             "type": "LocalFs"
 	}
     },
+    "artifact_server_address": "https://attest-pre.aliyuncs.com",
     "attestation_token_broker": {
         "type": "Simple",
         "duration_min": 5

@@ -9,6 +9,7 @@ use thiserror::Error;
 /// Environment macro for Attestation Service work dir.
 const AS_WORK_DIR: &str = "AS_WORK_DIR";
 pub const DEFAULT_WORK_DIR: &str = "/opt/confidential-containers/attestation-service";
+pub const DEFAULT_ARTIFACT_SERVER_ADDRESS: &str = "https://attest-pre.aliyuncs.com";
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Config {
@@ -19,6 +20,10 @@ pub struct Config {
     /// Configurations for RVPS.
     #[serde(default)]
     pub rvps_config: RvpsConfig,
+
+    /// Artifact Server address used by policy `query_artifact_server`.
+    #[serde(default = "default_artifact_server_address")]
+    pub artifact_server_address: String,
 
     /// The Attestation Result Token Broker Config
     #[serde(default)]
@@ -35,6 +40,10 @@ pub struct Config {
 
 fn default_work_dir() -> PathBuf {
     PathBuf::from(std::env::var(AS_WORK_DIR).unwrap_or_else(|_| DEFAULT_WORK_DIR.to_string()))
+}
+
+fn default_artifact_server_address() -> String {
+    DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string()
 }
 
 #[derive(Error, Debug)]
@@ -55,6 +64,7 @@ impl Default for Config {
         Config {
             work_dir: default_work_dir(),
             rvps_config: RvpsConfig::default(),
+            artifact_server_address: default_artifact_server_address(),
             attestation_token_broker: AttestationTokenConfig::default(),
             challenge_key_path: None,
         }
@@ -72,6 +82,7 @@ impl TryFrom<&Path> for Config {
     ///            }
     ///            "store_config": {},
     ///        },
+    ///        "artifact_server_address": "https://attest-pre.aliyuncs.com",
     ///        "attestation_token_broker": {
     ///            "type": "Ear",
     ///            "duration_min": 5
@@ -89,7 +100,7 @@ mod tests {
     use rstest::rstest;
     use std::path::PathBuf;
 
-    use super::Config;
+    use super::{Config, DEFAULT_ARTIFACT_SERVER_ADDRESS};
     use crate::rvps::RvpsCrateConfig;
     use crate::{
         rvps::RvpsConfig,
@@ -112,6 +123,7 @@ mod tests {
             policy_dir: "/var/lib/attestation-service/policies".into(),
         }),
         challenge_key_path: None,
+        artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
     #[case("./tests/configs/example2.json", Config {
         work_dir: PathBuf::from("/var/lib/attestation-service/"),
@@ -131,6 +143,7 @@ mod tests {
             }),
         }),
         challenge_key_path: None,
+        artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
     #[case("./tests/configs/example3.json", Config {
         work_dir: PathBuf::from("/var/lib/attestation-service/"),
@@ -149,6 +162,7 @@ mod tests {
             policy_dir: "/var/lib/attestation-service/policies".into(),
         }),
         challenge_key_path: None,
+        artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
     #[case("./tests/configs/example4.json", Config {
         work_dir: PathBuf::from("/var/lib/attestation-service/"),
@@ -171,6 +185,7 @@ mod tests {
             }),
         }),
         challenge_key_path: None,
+        artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
     #[case("./tests/configs/example5.json", Config {
         work_dir: PathBuf::from("/var/lib/attestation-service/"),
@@ -198,6 +213,7 @@ mod tests {
             policy_dir: "/var/lib/attestation-service/policies".into(),
         }),
         challenge_key_path: None,
+        artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
     fn read_config(#[case] config: &str, #[case] expected: Config) {
         let config = std::fs::read_to_string(config).unwrap();
@@ -226,6 +242,7 @@ mod tests {
             settings,
             signer,
             policy_dir,
+            ..
         } = match cfg {
             AttestationTokenConfig::Simple(c) => c,
             _ => unreachable!(),
@@ -250,6 +267,7 @@ mod tests {
             settings,
             signer,
             policy_dir,
+            ..
         } = match cfg {
             AttestationTokenConfig::Ear(c) => c,
             _ => unreachable!(),
@@ -276,6 +294,7 @@ mod tests {
             settings,
             signer,
             policy_dir,
+            ..
         } = match cfg {
             AttestationTokenConfig::OIDC(c) => c,
             _ => unreachable!(),

@@ -258,7 +258,9 @@ impl AttestationService {
             .await
             .map_err(ServiceError::Rvps)?;
 
-        let token_broker = config.attestation_token_broker.to_token_broker()?;
+        let token_broker = config
+            .attestation_token_broker
+            .to_token_broker(&config.artifact_server_address)?;
 
         let challenger: JwtChallenger = match config.challenge_key_path {
             Some(path) => JwtChallenger::new_with_private_key_path(&path).await?,

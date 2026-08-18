@@ -5,6 +5,7 @@
         "type": "GrpcRemote",
         "address": "http://rvps:50003"
     },
+    "artifact_server_address": "https://attest-pre.aliyuncs.com",
     "attestation_token_broker": {
 	"type": "Ear",
         "duration_min": 5,

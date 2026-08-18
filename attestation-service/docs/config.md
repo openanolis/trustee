@@ -17,6 +17,7 @@ section:
 |----------------------------|-----------------------------|-----------------------------------------------------|----------|---------|
 | `work_dir`                 | String                      | The location for Attestation Service to store data. | False      | Firstly try to read from ENV `AS_WORK_DIR`. If not any, use `/opt/confidential-containers/attestation-service`       |
 | `rvps_config`              | [RVPSConfiguration][2]      | RVPS configuration                                  | False      | -       |
+| `artifact_server_address`  | String                      | Artifact Server URL used by policy `query_artifact_server`. | False | `https://attest-pre.aliyuncs.com` |
 | `attestation_token_broker` | [AttestationTokeBroker][1]  | Attestation result token configuration.             | False      | -       |
 | `challenge_key_path`       | String                      | Path to the RSA private key (PEM) used to sign and verify attestation challenge (nonce) tokens. The key is generated atomically on the first challenge request if the file does not exist, and is reloaded for every signing and verification request. | False | `/etc/trustee/attestation-service/nonce_token_issuer/key.pem` |
 
@@ -121,6 +122,7 @@ Running with a built-in RVPS:
             "file_path": "/var/lib/attestation-service/reference-values"
         }
     },
+    "artifact_server_address": "https://attest-pre.aliyuncs.com",
     "attestation_token_broker": {
         "type": "Ear",
         "duration_min": 5
@@ -138,6 +140,7 @@ Running with a remote RVPS:
         "type": "GrpcRemote",
         "address": "127.0.0.1:50003"
     },
+    "artifact_server_address": "https://attest-pre.aliyuncs.com",
     "attestation_token_broker": {
 	"type": "Ear",
         "duration_min": 5
@@ -155,6 +158,7 @@ Configurations for token signer
         "type": "GrpcRemote",
         "address": "127.0.0.1:50003"
     },
+    "artifact_server_address": "https://attest-pre.aliyuncs.com",
     "attestation_token_broker": {
 	"type": "Ear",
         "duration_min": 5,

@@ -2,9 +2,9 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(feature = "policy-rvps")]
-use anyhow::{anyhow, bail};
-use anyhow::{Context, Result};
+#[cfg(any(feature = "policy-rvps", feature = "policy-artifact-server"))]
+use anyhow::bail;
+use anyhow::{anyhow, Context, Result};
 use log::debug;
 #[cfg(feature = "policy-rvps")]
 use log::warn;
@@ -118,12 +118,64 @@ fn query_reference_value_extension(
     })
 }
 
+#[cfg(feature = "policy-artifact-server")]
+fn query_artifact_server_extension(
+    client: Arc<artifact_resolve_sdk::Client>,
+    runtime_handle: tokio::runtime::Handle,
+) -> Box<dyn Extension> {
+    Box::new(move |params: Vec<regorus::Value>| {
+        use artifact_resolve_sdk::{Measurement, ReleaseManifest};
+
+        if params.len() != 1 {
+            bail!("query_artifact_server requires exactly one parameter");
+        }
+        let slices = params[0]
+            .as_object()
+            .context("query_artifact_server parameter must be an object")?;
+
+        debug!("query artifact value from artifact server: {slices:?}");
+
+        let measurements = slices
+            .iter()
+            .map(|(key, value)| -> Result<Measurement> {
+                let key = key.as_string().context("key is not a string")?.to_string();
+                let value = value
+                    .as_string()
+                    .context("value is not a string")?
+                    .to_string();
+                Ok(Measurement::text(key, value))
+            })
+            .collect::<Result<Vec<Measurement>>>()?;
+        let resolve_request =
+            artifact_resolve_sdk::ResolveRequest::new(ReleaseManifest::new(measurements));
+        match runtime_handle.block_on(client.resolve(&resolve_request)) {
+            Ok(resp) => {
+                if resp.status != "resolved" {
+                    bail!(
+                        "query_artifact_server returned unexpected status {:?}",
+                        resp.status
+                    );
+                }
+                Ok(regorus::Value::Bool(true))
+            }
+            Err(err) if err.is_measurement_not_found() || err.is_measurement_revoked() => {
+                debug!("query_artifact_server denied: {err}");
+                Ok(regorus::Value::Bool(false))
+            }
+            Err(err) => Err(anyhow!("query_artifact_server failed: {err}")),
+        }
+    })
+}
+
 async fn common_evaluate(
     policy: String,
     input: String,
     policy_id: String,
     evaluation_rules: Vec<String>,
     reference_value_resolver: Arc<ReferenceValueResolver>,
+    #[cfg(feature = "policy-artifact-server")] artifact_server_client: Arc<
+        artifact_resolve_sdk::Client,
+    >,
 ) -> Result<EvaluationResult, PolicyError> {
     let data = if policy_uses_legacy_reference(&policy)? {
         let reference_values = reference_value_resolver
@@ -135,13 +187,29 @@ async fn common_evaluate(
         "{}".to_string()
     };
 
+    #[cfg(any(feature = "policy-rvps", feature = "policy-artifact-server"))]
+    let mut query_extensions = vec![];
+
     #[cfg(feature = "policy-rvps")]
     {
         let runtime_handle = tokio::runtime::Handle::current();
-        let query_extension = Some(query_reference_value_extension(
-            reference_value_resolver,
-            runtime_handle,
+        query_extensions.push((
+            "query_reference_value".to_string(),
+            query_reference_value_extension(reference_value_resolver, runtime_handle),
         ));
+    }
+
+    #[cfg(feature = "policy-artifact-server")]
+    {
+        let runtime_handle = tokio::runtime::Handle::current();
+        query_extensions.push((
+            "query_artifact_server".to_string(),
+            query_artifact_server_extension(artifact_server_client, runtime_handle),
+        ));
+    }
+
+    #[cfg(any(feature = "policy-rvps", feature = "policy-artifact-server"))]
+    {
         tokio::task::spawn_blocking(move || {
             evaluate_sync(
                 policy,
@@ -149,7 +217,7 @@ async fn common_evaluate(
                 policy_id,
                 evaluation_rules,
                 data,
-                query_extension,
+                query_extensions,
             )
         })
         .await
@@ -158,8 +226,10 @@ async fn common_evaluate(
         })?
     }
 
-    #[cfg(not(feature = "policy-rvps"))]
-    evaluate_sync(policy, input, policy_id, evaluation_rules, data, None)
+    #[cfg(not(any(feature = "policy-rvps", feature = "policy-artifact-server")))]
+    {
+        evaluate_sync(policy, input, policy_id, evaluation_rules, data, vec![])
+    }
 }
 
 fn evaluate_sync(
@@ -168,7 +238,7 @@ fn evaluate_sync(
     policy_id: String,
     evaluation_rules: Vec<String>,
     data: String,
-    query_extension: Option<Box<dyn Extension>>,
+    query_extensions: Vec<(String, Box<dyn Extension>)>,
 ) -> Result<EvaluationResult, PolicyError> {
     let mut engine = regorus::Engine::new();
 
@@ -193,9 +263,9 @@ fn evaluate_sync(
         .context("set input")
         .map_err(PolicyError::SetInputDataFailed)?;
 
-    if let Some(query_extension) = query_extension {
+    for (name, query_extension) in query_extensions {
         engine
-            .add_extension("query_reference_value".to_string(), 1, query_extension)
+            .add_extension(name, 1, query_extension)
             .map_err(PolicyError::EvalPolicyFailed)?;
     }
 

@@ -115,20 +115,32 @@ impl Default for AttestationTokenConfig {
 
 impl AttestationTokenConfig {
     #[cfg(feature = "fs")]
-    pub fn to_token_broker(&self) -> Result<Box<dyn AttestationTokenBroker + Send + Sync>> {
+    pub fn to_token_broker(
+        &self,
+        artifact_server_address: &str,
+    ) -> Result<Box<dyn AttestationTokenBroker + Send + Sync>> {
         match self {
-            AttestationTokenConfig::Simple(cfg) => Ok(Box::new(
-                simple::SimpleAttestationTokenBroker::from_config(cfg.clone())?,
-            )
-                as Box<dyn AttestationTokenBroker + Send + Sync>),
-            AttestationTokenConfig::Ear(cfg) => Ok(Box::new(
-                ear_broker::EarAttestationTokenBroker::from_config(cfg.clone())?,
-            )
-                as Box<dyn AttestationTokenBroker + Send + Sync>),
-            AttestationTokenConfig::OIDC(cfg) => Ok(Box::new(
-                oidc::OIDCAttestationTokenBroker::from_config(cfg.clone())?,
-            )
-                as Box<dyn AttestationTokenBroker + Send + Sync>),
+            AttestationTokenConfig::Simple(cfg) => {
+                Ok(Box::new(simple::SimpleAttestationTokenBroker::from_config(
+                    cfg.clone(),
+                    artifact_server_address,
+                )?)
+                    as Box<dyn AttestationTokenBroker + Send + Sync>)
+            }
+            AttestationTokenConfig::Ear(cfg) => {
+                Ok(Box::new(ear_broker::EarAttestationTokenBroker::from_config(
+                    cfg.clone(),
+                    artifact_server_address,
+                )?)
+                    as Box<dyn AttestationTokenBroker + Send + Sync>)
+            }
+            AttestationTokenConfig::OIDC(cfg) => {
+                Ok(Box::new(oidc::OIDCAttestationTokenBroker::from_config(
+                    cfg.clone(),
+                    artifact_server_address,
+                )?)
+                    as Box<dyn AttestationTokenBroker + Send + Sync>)
+            }
         }
     }
 }

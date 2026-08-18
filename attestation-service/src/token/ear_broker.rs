@@ -158,11 +158,12 @@ impl EarAttestationTokenBroker {
     /// (`key_path`, fs-gated) and builds the `PolicyEngine` from
     /// `policy_dir` (OPA fs / InMemory). Replaces the old `new(config)`.
     #[cfg(feature = "fs")]
-    pub fn from_config(config: Configuration) -> Result<Self> {
+    pub fn from_config(config: Configuration, artifact_server_address: &str) -> Result<Self> {
         let policy_engine = crate::policy_engine::PolicyEngineType::OPA.to_policy_engine(
             std::path::Path::new(&config.policy_dir),
             DEFAULT_POLICY,
             DEFAULT_POLICY_ID,
+            artifact_server_address,
         )?;
         log::info!("Loading default AS policy \"default.rego\"");
 
@@ -531,7 +532,11 @@ mod tests {
         // use default config with no signer.
         // this will sign the token with an ephemeral key.
         let config = Configuration::default();
-        let broker = EarAttestationTokenBroker::from_config(config).unwrap();
+        let broker = EarAttestationTokenBroker::from_config(
+            config,
+            crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
 
         let _token = broker
             .issue(
@@ -566,7 +571,11 @@ mod tests {
         let mut config = Configuration::default();
         config.signer = Some(signer);
 
-        let broker = EarAttestationTokenBroker::from_config(config).unwrap();
+        let broker = EarAttestationTokenBroker::from_config(
+            config,
+            crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
         let token = broker
             .issue(
                 vec![TeeClaims {
@@ -596,7 +605,11 @@ mod tests {
             policy_dir: policy_dir.path().to_string_lossy().into_owned(),
             ..Configuration::default()
         };
-        let broker = EarAttestationTokenBroker::from_config(config).unwrap();
+        let broker = EarAttestationTokenBroker::from_config(
+            config,
+            crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
         let token = broker
             .issue(
                 vec![TeeClaims {
@@ -659,10 +672,14 @@ default configuration := 36
 default file_system := 35
 "#;
         use crate::policy_engine::opa::OPAInMemory;
-        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(OPAInMemory::with_raw_default_policy(
-            TRIVIAL_EAR_POLICY,
-            DEFAULT_POLICY_ID,
-        ));
+        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(
+            OPAInMemory::with_raw_default_policy(
+                TRIVIAL_EAR_POLICY,
+                DEFAULT_POLICY_ID,
+                crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+            )
+            .unwrap(),
+        );
         let broker = EarAttestationTokenBroker::from_components(
             TokenBrokerSettings::default(),
             Arc::new(crate::token::signer::EphemeralSigner::<SecretKey>::new()),
