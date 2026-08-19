@@ -18,7 +18,11 @@ section:
 | `work_dir`                 | String                      | The location for Attestation Service to store data. | False      | Firstly try to read from ENV `AS_WORK_DIR`. If not any, use `/opt/confidential-containers/attestation-service`       |
 | `rvps_config`              | [RVPSConfiguration][2]      | RVPS configuration                                  | False      | -       |
 | `attestation_token_broker` | [AttestationTokeBroker][1]  | Attestation result token configuration.             | False      | -       |
-| `challenge_key_path`       | String                      | Path to the RSA private key (PEM) used to sign and verify attestation challenge (nonce) tokens. The key is generated on first use if the file does not exist. | False | `/etc/trustee/attestation-service/nonce_token_issuer/key.pem` |
+| `challenge_key_path`       | String                      | Path to the RSA private key (PEM) used to sign and verify attestation challenge (nonce) tokens. The key is generated atomically on the first challenge request if the file does not exist, and is reloaded for every signing and verification request. | False | `/etc/trustee/attestation-service/nonce_token_issuer/key.pem` |
+
+To rotate the challenge key without restarting AS, replace the key file
+atomically. Outstanding challenge tokens signed by the previous key become
+invalid immediately after replacement.
 
 [1]: #attestationtokenbroker
 [2]: #rvps-configuration
