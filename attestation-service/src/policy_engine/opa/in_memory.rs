@@ -110,6 +110,10 @@ impl PolicyEngine for OPAInMemory {
             let src =
                 std::str::from_utf8(&bytes).map_err(|e| PolicyError::InvalidPolicy(e.into()))?;
             let mut engine = regorus::Engine::new();
+            // regorus 0.11 defaults to rego.v1; keep accepting legacy
+            // `allow { ... }` (rego.v0) policies that were saved before the
+            // rego.v1 migration. `import rego.v1` policies still work.
+            engine.set_rego_v0(true);
             engine
                 .add_policy(policy_id.clone(), src.to_string())
                 .map_err(PolicyError::InvalidPolicy)?;

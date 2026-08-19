@@ -34,6 +34,10 @@ impl PolicyEngineInterface for Opa {
         input_claims: &str,
     ) -> Result<bool, KbsPolicyEngineError> {
         let mut engine = regorus::Engine::new();
+        // regorus 0.11 defaults to rego.v1; keep accepting legacy `allow { ... }`
+        // (rego.v0) policies saved before the rego.v1 migration. `import
+        // rego.v1` policies still work under this mode.
+        engine.set_rego_v0(true);
 
         // Add policy as data
         engine
@@ -66,6 +70,10 @@ impl PolicyEngineInterface for Opa {
             let policy_content = String::from_utf8(policy_bytes.clone())
                 .map_err(|e| KbsPolicyEngineError::InvalidPolicy(e.into()))?;
             let mut engine = regorus::Engine::new();
+            // regorus 0.11 defaults to rego.v1; keep accepting legacy
+            // `allow { ... }` (rego.v0) policies that were saved before the
+            // rego.v1 migration. `import rego.v1` policies still work.
+            engine.set_rego_v0(true);
             engine
                 .add_policy(String::from("default"), policy_content)
                 .map_err(KbsPolicyEngineError::InvalidPolicy)?;
