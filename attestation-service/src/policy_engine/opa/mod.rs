@@ -240,6 +240,10 @@ fn evaluate_sync(
     query_extensions: Vec<(String, Box<dyn Extension>)>,
 ) -> Result<EvaluationResult, PolicyError> {
     let mut engine = regorus::Engine::new();
+    // regorus 0.11 defaults to rego.v1; keep accepting legacy `allow { ... }`
+    // (rego.v0) policies that were saved before the rego.v1 migration.
+    // `import rego.v1` policies still work under this mode.
+    engine.set_rego_v0(true);
 
     let policy_hash = {
         let mut hasher = sha2::Sha384::new();
@@ -504,5 +508,99 @@ allow = query_artifact_server({"tdx.td-shim": "582f8ed2"})
         assert!(error.contains("query_artifact_server failed"));
         assert!(error.contains("internal_error"));
         server.join().unwrap();
+    }
+
+    // regorus 0.11 defaults to rego.v1 (`Engine::new()` -> rego_v1 = true),
+    // which rejects legacy `allow { ... }` (rego.v0) policies. The production
+    // engine creation sites call `engine.set_rego_v0(true)` to keep those
+    // pre-migration policies working. The four tests below pin the
+    // compatibility behaviour of that mode for each policy shape.
+
+    // Pins the full parse/eval matrix across both engine modes so that a
+    // default-mode or v0-mode behavioural shift is caught. The v0-mode
+    // columns are also asserted individually by the `rego_v0_mode_*` tests.
+    #[test]
+    fn rego_v0_v1_parse_compat_matrix() {
+        let new_no_import = "package policy\nallow if { true }";
+        let new_with_import = "package policy\nimport rego.v1\nallow if { true }";
+        let old_no_import = "package policy\nallow { true }";
+        let old_with_import = "package policy\nimport rego.v1\nallow { true }";
+
+        let eval_allow = |policy: &str, v0_mode: bool| {
+            let mut engine = regorus::Engine::new();
+            if v0_mode {
+                engine.set_rego_v0(true);
+            }
+            engine.add_policy("p.rego".to_string(), policy.to_string())?;
+            let results = engine.eval_query("data.policy.allow".to_string(), false)?;
+            Ok::<_, anyhow::Error>(
+                results
+                    .result
+                    .first()
+                    .and_then(|r| r.expressions.first())
+                    .and_then(|e| e.value.as_bool().ok().copied())
+                    == Some(true),
+            )
+        };
+
+        // Default (rego.v1) engine: new dialect works with or without the import.
+        assert!(eval_allow(new_no_import, false).unwrap());
+        assert!(eval_allow(new_with_import, false).unwrap());
+        // Legacy `allow { ... }` policies break under the default engine.
+        assert!(eval_allow(old_no_import, false).is_err());
+        assert!(eval_allow(old_with_import, false).is_err());
+
+        // `set_rego_v0(true)` restores backward compatibility: legacy policies
+        // parse again, and the new dialect still works (with or without import).
+        assert!(eval_allow(old_no_import, true).unwrap());
+        assert!(eval_allow(new_no_import, true).unwrap());
+        assert!(eval_allow(new_with_import, true).unwrap());
+        // Legacy body shape + `import rego.v1` stays invalid in either mode.
+        assert!(eval_allow(old_with_import, true).is_err());
+    }
+
+    fn eval_allow_v0_mode(policy: &str) -> Result<bool, anyhow::Error> {
+        let mut engine = regorus::Engine::new();
+        engine.set_rego_v0(true);
+        engine.add_policy("p.rego".to_string(), policy.to_string())?;
+        let results = engine.eval_query("data.policy.allow".to_string(), false)?;
+        Ok(results
+            .result
+            .first()
+            .and_then(|r| r.expressions.first())
+            .and_then(|e| e.value.as_bool().ok().copied())
+            == Some(true))
+    }
+
+    #[test]
+    fn rego_v0_mode_accepts_new_format_without_import() {
+        // rego.v1 syntax (`allow if { ... }`) but without `import rego.v1`.
+        // Accepted: the `if` keyword is recognised even in rego.v0 mode.
+        let policy = "package policy\nallow if { true }";
+        assert!(eval_allow_v0_mode(policy).unwrap());
+    }
+
+    #[test]
+    fn rego_v0_mode_accepts_new_format_with_import() {
+        // rego.v1 syntax with an explicit `import rego.v1`.
+        let policy = "package policy\nimport rego.v1\nallow if { true }";
+        assert!(eval_allow_v0_mode(policy).unwrap());
+    }
+
+    #[test]
+    fn rego_v0_mode_accepts_legacy_format_without_import() {
+        // Legacy rego.v0 `allow { ... }` body (no `if`). This is the
+        // backward-compatibility case the v1 default would have broken.
+        let policy = "package policy\nallow { true }";
+        assert!(eval_allow_v0_mode(policy).unwrap());
+    }
+
+    #[test]
+    fn rego_v0_mode_rejects_legacy_body_with_v1_import() {
+        // Legacy `allow { ... }` body shape combined with `import rego.v1`
+        // is self-contradictory: the import turns on rego.v1 for the module,
+        // which then requires `if`. This stays a parse error in either mode.
+        let policy = "package policy\nimport rego.v1\nallow { true }";
+        assert!(eval_allow_v0_mode(policy).is_err());
     }
 }

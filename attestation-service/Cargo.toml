@@ -147,6 +147,11 @@ uuid = { version = "1.1.2", features = ["v4"] }
 [target.'cfg(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"))'.dependencies]
 uuid = { version = "1.1.2", features = ["v4", "js"] }
 getrandom = { version = "0.2", features = ["js"] }
+# regorus 0.11 pulls rand 0.10 -> getrandom 0.4, which needs the `wasm_js`
+# feature to compile for wasm32-unknown-unknown (the 0.2 line above only
+# covers rand 0.8). Declared as a renamed dep so feature unification turns
+# `wasm_js` on for the getrandom 0.4 that rand 0.10 transitively resolves to.
+getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 web-time.workspace = true
 
 
