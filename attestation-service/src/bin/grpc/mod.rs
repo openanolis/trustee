@@ -1,5 +1,4 @@
 use anyhow::bail;
-use attestation_service::challenge::verify_challenge_and_extract_nonce_b64url;
 use attestation_service::HashAlgorithm;
 use attestation_service::{
     config::Config, config::ConfigError, AttestationService as Service, ServiceError, Tee,
@@ -176,13 +175,6 @@ impl AttestationService for Arc<RwLock<AttestationServer>> {
                         let structured: serde_json::Value = serde_json::from_str(&structured)
                             .map_err(|e| Status::aborted(format!(
                                 "parse structured runtime data: {e}")))?;
-                        if let Some(jwt) = structured.get("challenge_token").and_then(|x| x.as_str()) {
-                            let challenge_key_path =
-                                self.read().await.attestation_service.challenge_key_path();
-                            verify_challenge_and_extract_nonce_b64url(jwt, &challenge_key_path)
-                                .map_err(|e| Status::aborted(format!(
-                                    "verify challenge_token failed: {e}")))?;
-                        }
                         Some(attestation_service::RuntimeData::Structured(structured))
                     }
                 },
