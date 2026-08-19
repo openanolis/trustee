@@ -2,7 +2,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use actix_web::{http::StatusCode, web, HttpRequest, HttpResponse, Responder, ResponseError};
 use anyhow::{anyhow, bail, Context};
-use attestation_service::challenge::verify_challenge_and_extract_nonce_b64url;
 use attestation_service::{
     AttestationError, AttestationService, HashAlgorithm, InitDataInput as InnerInitDataInput,
     RuntimeData as InnerRuntimeData, VerificationRequest,
@@ -127,23 +126,6 @@ impl Error {
         )
     }
 
-    fn unauthorized(
-        code: &'static str,
-        title: &'static str,
-        detail: impl Into<String>,
-        source: anyhow::Error,
-    ) -> Self {
-        Self::new(
-            ErrorKind::Unauthorized,
-            code,
-            title,
-            detail,
-            false,
-            None,
-            source,
-        )
-    }
-
     fn internal(source: anyhow::Error) -> Self {
         Self::new(
             ErrorKind::InternalError,
@@ -195,6 +177,16 @@ impl Error {
                     Some(format!("verification_requests[{request_index}].tee")),
                 )),
                 AttestationError::Verification { .. } => None,
+                AttestationError::InvalidChallengeToken { request_index, .. } => Some((
+                    ErrorKind::Unauthorized,
+                    "AS.CHALLENGE.INVALID_TOKEN",
+                    "Invalid challenge token",
+                    "The challenge token is invalid or expired.".to_string(),
+                    false,
+                    Some(format!(
+                        "verification_requests[{request_index}].runtime_data.challenge_token"
+                    )),
+                )),
             }
         });
 
@@ -503,19 +495,6 @@ pub async fn attestation(
 
         let runtime_data = match attestation_request.runtime_data {
             Some(RuntimeData::Structured(v)) => {
-                if let Some(jwt) = v.get("challenge_token").and_then(|x| x.as_str()) {
-                    // 验证 token，但不修改 runtime_data 内容
-                    let challenge_key_path = cocoas.read().await.challenge_key_path();
-                    let _ = verify_challenge_and_extract_nonce_b64url(jwt, &challenge_key_path)
-                        .map_err(|source| {
-                            Error::unauthorized(
-                                "AS.CHALLENGE.INVALID_TOKEN",
-                                "Invalid challenge token",
-                                "The challenge token is invalid or expired.",
-                                source,
-                            )
-                        })?;
-                }
                 Some(parse_runtime_data(RuntimeData::Structured(v))?)
             }
             Some(RuntimeData::Raw(raw)) => Some(parse_runtime_data(RuntimeData::Raw(raw))?),

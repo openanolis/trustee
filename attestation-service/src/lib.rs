@@ -12,9 +12,11 @@ pub mod token;
 mod composite;
 
 use crate::{rvps::ReferenceValueResolver, token::AttestationTokenBroker};
+pub use challenge::JwtChallenger;
 
 use anyhow::{anyhow, Context, Result};
 use canon_json::CanonicalFormatter;
+#[cfg(feature = "fs")]
 use config::Config;
 pub use kbs_types::{Attestation, Tee};
 use log::info;
@@ -160,6 +162,12 @@ pub enum AttestationError {
         #[source]
         source: anyhow::Error,
     },
+    #[error("verification request {request_index} uses an invalid challenge token")]
+    InvalidChallengeToken {
+        request_index: usize,
+        #[source]
+        source: anyhow::Error,
+    },
 }
 
 /// Initdata defined in
@@ -210,9 +218,9 @@ pub struct VerificationRequest {
 }
 
 pub struct AttestationService {
-    _config: Config,
     rvps: Arc<dyn RvpsApi>,
     token_broker: Box<dyn AttestationTokenBroker + Send + Sync>,
+    challenger: JwtChallenger,
 }
 
 /// Transport-neutral runtime status exposed by REST and gRPC AS binaries.
@@ -227,9 +235,19 @@ pub struct ServiceStatus {
 }
 
 impl AttestationService {
-    /// Create a new Attestation Service instance.
+    /// Create a new Attestation Service instance from a parsed [`Config`].
+    ///
+    /// Config-file / CLI entry point, kept for backward compatibility. It
+    /// constructs the RVPS and token-broker *instances* from the config,
+    /// picks a [`JwtChallenger`] (loaded from the configured path, or the
+    /// built-in default path when unset), and assembles them via
+    /// [`Self::from_components`]. Pure-lib / wasm consumers that do not want
+    /// to depend on [`Config`] should call [`Self::from_components`] directly
+    /// with their own component instances.
     #[cfg(feature = "fs")]
     pub async fn new(config: Config) -> Result<Self, ServiceError> {
+        // Historical `new()` created the work dir at construction time. Kept
+        // as a standalone mkdir purely for behavior parity.
         if !config.work_dir.as_path().exists() {
             fs::create_dir_all(&config.work_dir)
                 .await
@@ -242,11 +260,27 @@ impl AttestationService {
 
         let token_broker = config.attestation_token_broker.to_token_broker()?;
 
-        Ok(Self {
-            _config: config,
+        let challenger: JwtChallenger = match config.challenge_key_path {
+            Some(path) => JwtChallenger::new_with_private_key_path(&path).await?,
+            None => JwtChallenger::new_with_private_key_default_path().await?,
+        };
+
+        Ok(Self::from_components(rvps, token_broker, challenger))
+    }
+
+    /// Assemble an [`AttestationService`] from already-constructed component
+    /// instances — the fs-free / pure-lib / wasm entry point. No [`Config`],
+    /// no filesystem: supply your own RVPS, token broker, and challenger.
+    pub fn from_components(
+        rvps: Arc<dyn RvpsApi>,
+        token_broker: Box<dyn AttestationTokenBroker + Send + Sync>,
+        challenger: JwtChallenger,
+    ) -> Self {
+        Self {
             rvps,
             token_broker,
-        })
+            challenger,
+        }
     }
 
     /// Return AS and verifier dependency status without performing network I/O.
@@ -308,8 +342,6 @@ impl AttestationService {
         verification_requests: Vec<VerificationRequest>,
         policy_ids: Vec<String>,
     ) -> Result<String> {
-        let mut tee_claims: Vec<TeeClaims> = vec![];
-
         if verification_requests.is_empty() {
             return Err(AttestationError::InvalidRequest {
                 request_index: None,
@@ -321,7 +353,22 @@ impl AttestationService {
 
         composite::verify_composite_bindings(&verification_requests)?;
 
+        let mut tee_claims: Vec<TeeClaims> = vec![];
+
         for (request_index, verification_request) in verification_requests.into_iter().enumerate() {
+            // Verify challenge token
+            if let Some(RuntimeData::Structured(v)) = &verification_request.runtime_data {
+                if let Some(challenge_token) = v.get("challenge_token").and_then(|x| x.as_str()) {
+                    self.challenger
+                        .verify_challenge_token(challenge_token)
+                        .await
+                        .map_err(|source| AttestationError::InvalidChallengeToken {
+                            request_index,
+                            source,
+                        })?;
+                }
+            }
+
             let verifier = verifier::to_verifier(&verification_request.tee).map_err(|source| {
                 AttestationError::UnsupportedTee {
                     request_index,
@@ -450,23 +497,13 @@ impl AttestationService {
             .await
     }
 
-    /// Filesystem path of the RSA private key used to sign and verify
-    /// attestation challenge (nonce) tokens. Falls back to the built-in
-    /// default when not set in the config.
-    pub fn challenge_key_path(&self) -> std::path::PathBuf {
-        self._config
-            .challenge_key_path
-            .clone()
-            .unwrap_or_else(challenge::default_challenge_key_path)
-    }
-
     pub async fn generate_challenge(
         &self,
         tee: Option<Tee>,
         tee_parameters: Option<String>,
     ) -> Result<String> {
         match tee {
-            None => challenge::generate_common_challenge(&self.challenge_key_path()),
+            None => self.challenger.generate_challenge_json().await,
             Some(t) => {
                 self.generate_supplemental_challenge(t, tee_parameters.unwrap_or_default())
                     .await
