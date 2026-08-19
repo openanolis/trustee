@@ -369,13 +369,14 @@ default allow = true"
     #[tokio::test]
     async fn query_extension_is_keyed_cached_and_returns_null_for_missing() {
         let policy = r#"package policy
+import rego.v1
 default allow = false
-allow {
+allow if {
     query_reference_value("svn") == [7]
     query_reference_value("missing") == null
 }
-minimum = query_reference_value("minimum")
-svn_again = query_reference_value("svn")
+minimum := query_reference_value("minimum")
+svn_again := query_reference_value("svn")
 "#;
         let tmp = tempfile::tempdir().unwrap();
         let opa = OPA::new(
