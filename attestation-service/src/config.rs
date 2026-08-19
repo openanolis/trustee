@@ -27,7 +27,8 @@ pub struct Config {
     /// Optional path to the RSA private key used to sign and verify
     /// attestation challenge (nonce) tokens. When unset, a built-in default
     /// path (`/etc/trustee/attestation-service/nonce_token_issuer/key.pem`)
-    /// is used, and the key is generated on first use if it does not exist.
+    /// is used. The key is reloaded for every request and is atomically
+    /// generated on the first challenge request if it does not exist.
     #[serde(default)]
     pub challenge_key_path: Option<PathBuf>,
 }

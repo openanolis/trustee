@@ -239,8 +239,8 @@ impl AttestationService {
     ///
     /// Config-file / CLI entry point, kept for backward compatibility. It
     /// constructs the RVPS and token-broker *instances* from the config,
-    /// picks a [`JwtChallenger`] (loaded from the configured path, or the
-    /// built-in default path when unset), and assembles them via
+    /// picks a file-backed [`JwtChallenger`] (using the configured path, or
+    /// the built-in default path when unset), and assembles them via
     /// [`Self::from_components`]. Pure-lib / wasm consumers that do not want
     /// to depend on [`Config`] should call [`Self::from_components`] directly
     /// with their own component instances.
