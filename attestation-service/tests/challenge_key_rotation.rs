@@ -40,6 +40,7 @@ fn config(work_dir: &Path, challenge_key_path: &Path) -> Config {
             policy_dir: work_dir.join("policies").to_string_lossy().into_owned(),
         }),
         challenge_key_path: Some(challenge_key_path.to_path_buf()),
+        ..Config::default()
     }
 }
 
