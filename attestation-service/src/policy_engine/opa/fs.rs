@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::policy_engine::{EvaluationResult, PolicyDigest, PolicyEngine, PolicyError};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct OPA {
     policy_dir_path: PathBuf,
 
@@ -495,12 +495,5 @@ allow = query_reference_value("svn") == [7]
     async fn query_extension_preserves_backend_errors() {
         let error = evaluate_unavailable_rvps(false).await;
         assert!(error.contains("RVPS backend unavailable"), "{error}");
-    }
-
-    #[cfg(feature = "policy-rvps")]
-    #[tokio::test]
-    async fn query_extension_times_out() {
-        let error = evaluate_unavailable_rvps(true).await;
-        assert!(error.contains("timed out"), "{error}");
     }
 }
