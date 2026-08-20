@@ -1,10 +1,10 @@
-%define alinux_release 3
+%define alinux_release 1
 %global config_dir /etc/trustee
 %global debug_package %{nil}
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.8.7
+Version:        1.9.0
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -145,6 +145,21 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Thu Aug 20 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.9.0-1
+- KBS/Gateway: complete EncryptedDb compatibility and resource key lifecycle APIs
+- Verifier/TDX: add age-based collateral cache health and improve PCCS resilience
+- Verifier/SNP: verify SVSM vTPM evidence, enforce composite bindings, and support
+  Turin v2 reports with offline VCEKs and a default appraisal policy
+- Verifier/Keylime: canonicalize agent UUIDs before registrar verification
+- AS: add stable evidence errors, configurable HTTP keep-alive, and remove the
+  synthetic request ID from attestation results
+- AS/RVPS: support on-demand reference queries, in-memory policy/RVPS engines,
+  filesystem-free evaluation, and wasm32-compatible core libraries
+- AS token/challenge: introduce generic signers and JWT challengers, reload
+  challenge keys per request, and publish JWKS only for configured signers
+- CI: add wasm32 compile checks, parallelize container builds, and update the
+  SLSA manifest tooling
+
 * Tue Jul 21 2026 Jiale Zhang <xinjian.zjl@alibaba-inc.com> -1.8.7-3
 - Gateway: expose the resource public-key, key reload, rewrap, and rotation
   APIs required by EncryptedDb and EncryptedLocalFs deployments
