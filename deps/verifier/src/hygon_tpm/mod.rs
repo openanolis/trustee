@@ -114,7 +114,7 @@ async fn verify_registrar_binding(evidence: &HygonTpmEvidence, uuid: &str) -> Re
             .get(k)
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or_else(|| anyhow!(format!("Missing '{}' in registrar results", k)))
+            .ok_or_else(|| anyhow!(format!("Missing '{k}' in registrar results")))
     };
 
     let ekcert_b64 = get_str("ekcert")?;
@@ -124,26 +124,26 @@ async fn verify_registrar_binding(evidence: &HygonTpmEvidence, uuid: &str) -> Re
         anyhow!("EK certificate missing in evidence while Keylime UUID is provided")
     })?;
     let evidence_ek_der = X509::from_pem(evidence_ek_pem.as_bytes())
-        .map_err(|e| anyhow!(format!("parse evidence EK cert (PEM): {}", e)))?
+        .map_err(|e| anyhow!(format!("parse evidence EK cert (PEM): {e}")))?
         .to_der()
-        .map_err(|e| anyhow!(format!("encode evidence EK cert (DER): {}", e)))?;
+        .map_err(|e| anyhow!(format!("encode evidence EK cert (DER): {e}")))?;
     let engine = base64::engine::general_purpose::STANDARD;
     let registrar_ek_der = engine
         .decode(ekcert_b64)
-        .map_err(|e| anyhow!(format!("decode registrar EK cert (base64 DER): {}", e)))?;
+        .map_err(|e| anyhow!(format!("decode registrar EK cert (base64 DER): {e}")))?;
     if registrar_ek_der != evidence_ek_der {
         bail!("EK certificate mismatch with keylime registrar");
     }
 
     let registrar_ak_raw = engine
         .decode(aik_tpm_b64)
-        .map_err(|e| anyhow!(format!("decode registrar AK (TPM2B_PUBLIC base64): {}", e)))?;
+        .map_err(|e| anyhow!(format!("decode registrar AK (TPM2B_PUBLIC base64): {e}")))?;
     if registrar_ak_raw.len() <= 2 {
         bail!("Invalid registrar AK (TPM2B_PUBLIC) length (<= 2)");
     }
     let ak_bytes = &registrar_ak_raw[2..];
     let registrar_ak = pkey_from_tpm2b_public(ak_bytes)
-        .map_err(|e| anyhow!(format!("parse registrar AK (TPM2B_PUBLIC): {}", e)))?;
+        .map_err(|e| anyhow!(format!("parse registrar AK (TPM2B_PUBLIC): {e}")))?;
     let evidence_ak = create_sm2_pkey(&evidence.ak_pubkey)?;
     if registrar_ak.public_key_to_der()? != evidence_ak.public_key_to_der()? {
         bail!("AK public key mismatch with keylime registrar");
@@ -315,13 +315,13 @@ fn parse_boot_services_event(
 
     if device_path_str.contains("shim") {
         parsed_claims.insert(
-            format!("measurement.shim.{}", event_digest_algorithm),
+            format!("measurement.shim.{event_digest_algorithm}"),
             serde_json::Value::String(hex::encode(event_digest)),
         );
     }
     if device_path_str.contains("grub") {
         parsed_claims.insert(
-            format!("measurement.grub.{}", event_digest_algorithm),
+            format!("measurement.grub.{event_digest_algorithm}"),
             serde_json::Value::String(hex::encode(event_digest)),
         );
     }
@@ -346,7 +346,7 @@ fn parse_measurements_from_event(
     }
 
     if event_data.contains("Kernel") || event_data.starts_with("/boot/vmlinuz") {
-        let kernel_claim_key = format!("measurement.kernel.{}", event_digest_algorithm);
+        let kernel_claim_key = format!("measurement.kernel.{event_digest_algorithm}");
         parsed_claims.insert(
             kernel_claim_key,
             serde_json::Value::String(hex::encode(event_digest)),
@@ -358,7 +358,7 @@ fn parse_measurements_from_event(
         || event_data.starts_with("grub_kernel_cmdline")
     {
         let kernel_cmdline_claim_key =
-            format!("measurement.kernel_cmdline.{}", event_digest_algorithm);
+            format!("measurement.kernel_cmdline.{event_digest_algorithm}");
         parsed_claims.insert(
             kernel_cmdline_claim_key,
             serde_json::Value::String(hex::encode(event_digest)),
@@ -370,7 +370,7 @@ fn parse_measurements_from_event(
     }
 
     if event_data.contains("Initrd") || event_data.starts_with("/boot/initramfs") {
-        let initrd_claim_key = format!("measurement.initrd.{}", event_digest_algorithm);
+        let initrd_claim_key = format!("measurement.initrd.{event_digest_algorithm}");
         parsed_claims.insert(
             initrd_claim_key,
             serde_json::Value::String(hex::encode(event_digest)),
@@ -498,7 +498,7 @@ fn pkey_from_tpm2b_public(tpm2b_public: &[u8]) -> Result<PKey<openssl::pkey::Pub
     use tss_esapi::structures::Public;
 
     let public = Public::unmarshall(tpm2b_public)
-        .map_err(|e| anyhow!(format!("unmarshall TPM2B_PUBLIC: {}", e)))?;
+        .map_err(|e| anyhow!(format!("unmarshall TPM2B_PUBLIC: {e}")))?;
 
     match public {
         Public::Ecc {

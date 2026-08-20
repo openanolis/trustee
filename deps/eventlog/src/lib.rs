@@ -167,7 +167,7 @@ fn accumulate_hash(alg: TcgAlgorithm, materials: Vec<u8>, digest: &[u8]) -> Resu
         TcgAlgorithm::Sha384 => hash_with::<Sha384>(&materials, digest),
         TcgAlgorithm::Sha512 => hash_with::<Sha512>(&materials, digest),
         TcgAlgorithm::Sm3 => hash_with::<Sm3>(&materials, digest),
-        _ => bail!("Unsupported Hash algorithm {:?}", alg),
+        _ => bail!("Unsupported Hash algorithm {alg:?}"),
     };
 
     Ok(result)
@@ -220,7 +220,7 @@ fn parse_initial_entry(
         .map_err(|_| anyhow!("Cannot read event type number"))?;
 
     let event_type = TcgEventType::try_from(event_type_num)
-        .map_err(|_| anyhow!("Unknown event type detected: {:#x}", event_type_num))?;
+        .map_err(|_| anyhow!("Unknown event type detected: {event_type_num:#x}"))?;
 
     *index += 20;
     let event_data_size = data
@@ -252,7 +252,7 @@ fn parse_eventlog_entry(
 ) -> Result<(Option<EventlogEntry>, usize)> {
     let stop_flag = data
         .gread_with::<u64>(&mut index, LE)
-        .map_err(|e| anyhow::anyhow!("Failed to read potential stop flag: {:?}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to read potential stop flag: {e:?}"))?;
     index -= size_of::<u64>();
     if stop_flag == 0xFFFFFFFFFFFFFFFF || stop_flag == 0x0000000000000000 {
         return Ok((None, 0));
@@ -267,7 +267,7 @@ fn parse_eventlog_entry(
         .map_err(|_| anyhow!("Cannot read event type number"))?;
 
     let event_type = TcgEventType::try_from(event_type_num)
-        .map_err(|_| anyhow!("Unknown event type detected: {:#x}", event_type_num))?;
+        .map_err(|_| anyhow!("Unknown event type detected: {event_type_num:#x}"))?;
 
     let digests;
     (digests, index) = parse_digests(data, index, digest_size_map)?;
@@ -277,10 +277,7 @@ fn parse_eventlog_entry(
         .map_err(|_| anyhow!("Cannot read event data size"))? as usize;
 
     if data.len() < event_data_size {
-        bail!(
-            "Data is too short: expected at least {} bytes",
-            event_data_size
-        );
+        bail!("Data is too short: expected at least {event_data_size} bytes");
     }
 
     let event_data_raw = data[index..(index + event_data_size)].to_vec();
@@ -319,7 +316,7 @@ fn parse_digest_sizes(
             .map_err(|_| anyhow!("Cannot read algorithm size"))?;
 
         let algorithm = TcgAlgorithm::try_from(algo_id as u32)
-            .map_err(|_| anyhow!("Unknown algorithm type detected: {:x}", algo_id))?;
+            .map_err(|_| anyhow!("Unknown algorithm type detected: {algo_id:x}"))?;
 
         digest_size_map.insert(algorithm, size);
     }
@@ -345,11 +342,11 @@ fn parse_digests(
             .map_err(|_| anyhow!("Cannot read algorithm id"))?;
 
         let algorithm = TcgAlgorithm::try_from(algo_id as u32)
-            .map_err(|_| anyhow!("Unknown algorithm type detected: {:x}", algo_id))?;
+            .map_err(|_| anyhow!("Unknown algorithm type detected: {algo_id:x}"))?;
 
         let size = *digest_size_map
             .get(&algorithm)
-            .ok_or_else(|| anyhow!("Missing digest size for algorithm: {:x}", algo_id))?
+            .ok_or_else(|| anyhow!("Missing digest size for algorithm: {algo_id:x}"))?
             as usize;
 
         let digest = data[index..index + size].to_vec();

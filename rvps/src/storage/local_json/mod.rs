@@ -41,7 +41,7 @@ impl LocalJson {
         let parent_dir = path.parent().ok_or_else(|| {
             anyhow!("Illegal `file_path` for LocalJson's config without a parent dir.")
         })?;
-        debug!("create path for LocalJson: {:?}", parent_dir);
+        debug!("create path for LocalJson: {parent_dir:?}");
         fs::create_dir_all(parent_dir)?;
 
         if !path.exists() {

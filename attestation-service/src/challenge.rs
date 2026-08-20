@@ -280,10 +280,10 @@ fn build_challenge_json(key: &RsaPrivateKey) -> Result<String> {
     let claims_b64 = URL_SAFE_NO_PAD.encode(claims_string.as_bytes());
 
     // sign
-    let signing_input = format!("{}.{}", header_b64, claims_b64);
+    let signing_input = format!("{header_b64}.{claims_b64}");
     let signature = rs384_sign(key, signing_input.as_bytes())?;
     let signature_b64 = URL_SAFE_NO_PAD.encode(signature);
-    let jwt = format!("{}.{}", signing_input, signature_b64);
+    let jwt = format!("{signing_input}.{signature_b64}");
 
     // output json
     let output = json!({

@@ -645,7 +645,7 @@ fn get_common_name(cert: &x509::X509) -> Result<String> {
         bail!("No CN found");
     }
 
-    Ok(e.data().as_utf8()?.to_string())
+    Ok(e.data().to_string()?)
 }
 
 #[cfg(test)]
@@ -692,7 +692,7 @@ mod tests {
     fn check_oid_ints(cert: &TbsCertificate) {
         let oids = vec![UCODE_SPL_OID, SNP_SPL_OID, TEE_SPL_OID, LOADER_SPL_OID];
         for oid in oids {
-            get_oid_int(&cert, oid).unwrap();
+            get_oid_int(cert, oid).unwrap();
         }
     }
 
@@ -745,7 +745,7 @@ mod tests {
 
     #[test]
     fn check_vcek_signature_failure() {
-        let mut vcek = VCEK.clone();
+        let mut vcek = *VCEK;
 
         // corrupt some byte, while it should remain a valid cert
         vcek[42] += 1;
@@ -765,7 +765,7 @@ mod tests {
 
     #[test]
     fn check_vlek_signature_failure() {
-        let mut vlek = VLEK.clone();
+        let mut vlek = *VLEK;
 
         // corrupt some byte, while it should remain a valid cert
         vlek[42] += 1;
@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn check_report_signature_failure() {
-        let mut bytes = VCEK_REPORT.clone();
+        let mut bytes = *VCEK_REPORT;
 
         // corrupt some byte
         bytes[42] += 1;
@@ -839,7 +839,7 @@ mod tests {
 
     #[test]
     fn check_vlek_report_signature_failure() {
-        let mut bytes = VLEK_REPORT.clone();
+        let mut bytes = *VLEK_REPORT;
 
         // corrupt some byte
         bytes[42] += 1;

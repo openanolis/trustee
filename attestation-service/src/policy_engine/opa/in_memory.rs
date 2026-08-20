@@ -189,15 +189,11 @@ mod tests {
             DEFAULT_ARTIFACT_SERVER_ADDRESS,
         )
         .unwrap();
-        eng.set_policy("test".into(), allow_policy().into())
-            .await
-            .unwrap();
+        eng.set_policy("test".into(), allow_policy()).await.unwrap();
         let got = eng.get_policy("test".into()).await.unwrap();
         assert_eq!(got, allow_policy());
         // setting again overwrites cleanly
-        eng.set_policy("test".into(), allow_policy().into())
-            .await
-            .unwrap();
+        eng.set_policy("test".into(), allow_policy()).await.unwrap();
         assert_eq!(eng.get_policy("test".into()).await.unwrap(), allow_policy());
     }
 

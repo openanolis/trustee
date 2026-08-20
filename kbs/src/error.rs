@@ -82,7 +82,7 @@ impl ResponseError for Error {
         let mut detail = String::new();
 
         // The write macro here will only raise error when OOM of the string.
-        write!(&mut detail, "{}", self).expect("Failed to write error");
+        write!(&mut detail, "{self}").expect("Failed to write error");
         let info = ErrorInformation {
             error_type: format!("{ERROR_TYPE_PREFIX}/{}", self.as_ref()),
             detail,

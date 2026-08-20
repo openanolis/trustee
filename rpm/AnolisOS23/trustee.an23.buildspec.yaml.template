@@ -41,10 +41,6 @@ environment:
     - name: "perl-FindBin"
       version: "1.53-17.an23"
   tools:
-    - name: "cargo"
-      version: "1.84.1-4.an23"
-    - name: "rust"
-      version: "1.84.1-4.an23"
     - name: "gcc"
       version: "12.3.0-13.an23"
     - name: "clang"
@@ -59,12 +55,13 @@ environment:
 phases:
   prepare:
     commands:
+      - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0 && ln -sf /root/.cargo/bin/cargo /usr/local/bin/cargo && ln -sf /root/.cargo/bin/rustc /usr/local/bin/rustc
       - mkdir -p /home/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
       - tar -xzf "/home/build-artifacts-v${VERSION}.tar.gz" -C /home/rpmbuild/SOURCES/
       - tar -xzf /home/rpmbuild/SOURCES/trustee-${VERSION}.tar.gz -C /home/rpmbuild/SPECS --strip-components=2 trustee-${VERSION}/rpm/trustee.spec
   build:
     commands:
-      - rpmbuild --define "_topdir /home/rpmbuild" -ba /home/rpmbuild/SPECS/trustee.spec
+      - rpmbuild --define "_topdir /home/rpmbuild" --define 'with_rustup 1' -ba /home/rpmbuild/SPECS/trustee.spec
 
 outputs:
   - path: /home/rpmbuild/SRPMS/trustee-${VERSION}-${RELEASE}.an23.src.rpm

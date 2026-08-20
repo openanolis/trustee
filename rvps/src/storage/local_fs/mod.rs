@@ -128,8 +128,7 @@ mod tests {
                     .await
                     .expect("set rv failed.")
                     .is_none(),
-                "the storage has previous key of {}",
-                KEY
+                "the storage has previous key of {KEY}"
             );
             let got = storage
                 .get(KEY)
@@ -164,8 +163,7 @@ mod tests {
                     .await
                     .expect("set rv failed.")
                     .is_none(),
-                "the storage has previous key of {}",
-                KEY
+                "the storage has previous key of {KEY}"
             );
 
             let got = storage

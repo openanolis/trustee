@@ -220,9 +220,7 @@ fn verify_rekor_v1_consistency(value: &Value) -> Result<()> {
         .ok_or_else(|| anyhow!("Rekor v1 dsse body missing payloadHash.value"))?;
     if rekor_payload_hash != payload_hash {
         bail!(
-            "Rekor v1 payload hash mismatch: rekor=`{}`, payload_sha256=`{}`",
-            rekor_payload_hash,
-            payload_hash
+            "Rekor v1 payload hash mismatch: rekor=`{rekor_payload_hash}`, payload_sha256=`{payload_hash}`"
         );
     }
 
@@ -283,9 +281,7 @@ fn verify_rekor_v2_consistency(value: &Value) -> Result<()> {
 
     if rekor_payload_digest != payload_sha256_b64 {
         bail!(
-            "Rekor v2 digest mismatch: rekor=`{}`, payload_sha256_b64=`{}`",
-            rekor_payload_digest,
-            payload_sha256_b64
+            "Rekor v2 digest mismatch: rekor=`{rekor_payload_digest}`, payload_sha256_b64=`{payload_sha256_b64}`"
         );
     }
 
@@ -353,8 +349,7 @@ mod tests {
         let manifest = r#"{"measurements":{"cvm_uki":{"algorithm":"sha384","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"schemaVersion":1}"#;
         let payload = base64::engine::general_purpose::STANDARD.encode(manifest.as_bytes());
         let dsse = format!(
-            r#"{{"payloadType":"{}","payload":"{payload}","signatures":[{{"sig":"abc"}}]}}"#,
-            RV_RELEASE_PAYLOAD_TYPE
+            r#"{{"payloadType":"{RV_RELEASE_PAYLOAD_TYPE}","payload":"{payload}","signatures":[{{"sig":"abc"}}]}}"#
         );
         let docs = parse_release_manifest_documents_from_material(dsse.as_bytes()).unwrap();
         assert_eq!(docs.len(), 1);

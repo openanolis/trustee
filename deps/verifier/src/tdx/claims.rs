@@ -485,7 +485,7 @@ mod tests {
     ) {
         let msg = format!(
             "test: params: {:?}, result: {result:?}",
-            String::from_utf8_lossy(&params.to_vec())
+            String::from_utf8_lossy(params)
         );
 
         let actual_result = parse_kernel_parameters(params);
