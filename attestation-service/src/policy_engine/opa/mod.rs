@@ -101,8 +101,7 @@ fn query_reference_value_extension(
                 .await
                 .map_err(|_| {
                     anyhow!(
-                        "query_reference_value({reference_value_id:?}) timed out after {:?}",
-                        REFERENCE_QUERY_TIMEOUT
+                        "query_reference_value({reference_value_id:?}) timed out after {REFERENCE_QUERY_TIMEOUT:?}"
                     )
                 })?
             })

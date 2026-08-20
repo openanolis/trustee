@@ -25,7 +25,7 @@ impl MessagingSubType {
             0x05 => Ok(MessagingSubType::Usb),
             0x0B => Ok(MessagingSubType::Mac),
             0x0C => Ok(MessagingSubType::Ipv4),
-            _ => Err(anyhow!("Unknown Messaging subtype: {:#04x}", sub_type)),
+            _ => Err(anyhow!("Unknown Messaging subtype: {sub_type:#04x}")),
         }
     }
 
@@ -80,8 +80,7 @@ impl DeviceSubTypeParser for UsbParser {
         let controller_int_number = &data[1];
 
         Ok(format!(
-            "USB({},{})",
-            parent_hub_port_num, controller_int_number
+            "USB({parent_hub_port_num},{controller_int_number})"
         ))
     }
 }
@@ -99,7 +98,7 @@ impl DeviceSubTypeParser for MacParser {
         let mac_address = binding.trim_end_matches('0').to_uppercase();
         let if_type = &data[32];
 
-        Ok(format!("Mac({},{:#04x})", mac_address, if_type))
+        Ok(format!("Mac({mac_address},{if_type:#04x})"))
     }
 }
 
@@ -112,20 +111,20 @@ impl DeviceSubTypeParser for Ipv4Parser {
         let local_ip = data
             .gread_with::<u32>(&mut index, LE)
             .map(Ipv4Addr::from)
-            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 local address: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 local address: {e:?}"))?;
         let remote_ip = data
             .gread_with::<u32>(&mut index, LE)
             .map(Ipv4Addr::from)
-            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 remote address: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 remote address: {e:?}"))?;
         let _local_port: u16 = data
             .gread_with(&mut index, LE)
-            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 local port: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 local port: {e:?}"))?;
         let _remote_port: u16 = data
             .gread_with(&mut index, LE)
-            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 remote port: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 remote port: {e:?}"))?;
         let protocol = match data
             .gread_with::<u16>(&mut index, LE)
-            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 protocol: {:?}", e))?
+            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 protocol: {e:?}"))?
         {
             6 => "TCP",
             17 => "UDP",
@@ -133,7 +132,7 @@ impl DeviceSubTypeParser for Ipv4Parser {
         };
         let ip_addr_type = match data
             .gread_with::<u8>(&mut index, LE)
-            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 address type: {:?}", e))?
+            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 address type: {e:?}"))?
         {
             0 => "DHCP",
             1 => "Static",
@@ -142,19 +141,18 @@ impl DeviceSubTypeParser for Ipv4Parser {
 
         let gateway_ip_address: u32 = data
             .gread_with(&mut index, LE)
-            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 gateway: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 gateway: {e:?}"))?;
         let subnet_mask: u32 = data
             .gread_with(&mut index, LE)
-            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 subnet: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read IPv4 subnet: {e:?}"))?;
         let gateway_subnet = if gateway_ip_address != 0 || subnet_mask != 0 {
-            format!(",{},{}", gateway_ip_address, subnet_mask)
+            format!(",{gateway_ip_address},{subnet_mask}")
         } else {
             "".to_string()
         };
 
         Ok(format!(
-            "IPv4({},{},{},{}{})",
-            remote_ip, protocol, ip_addr_type, local_ip, gateway_subnet
+            "IPv4({remote_ip},{protocol},{ip_addr_type},{local_ip}{gateway_subnet})"
         ))
     }
 }

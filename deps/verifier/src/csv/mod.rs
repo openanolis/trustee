@@ -118,7 +118,7 @@ impl Verifier for CsvVerifier {
                     "HSK_CEK: {}",
                     cert_data
                         .iter()
-                        .map(|b| format!("{:02x}", b))
+                        .map(|b| format!("{b:02x}"))
                         .collect::<Vec<String>>()
                         .join("")
                 );
@@ -219,7 +219,7 @@ impl Verifier for CsvVerifier {
                 if let Some(el) = cc_eventlog {
                     let ccel_data = base64::engine::general_purpose::STANDARD.decode(el)?;
                     let ccel = CcEventLog::try_from(ccel_data)
-                        .map_err(|e| anyhow!("Parse CC Eventlog failed: {:?}", e))?;
+                        .map_err(|e| anyhow!("Parse CC Eventlog failed: {e:?}"))?;
                     let compare_obj: Vec<ReferenceMeasurement> = vec![
                         ReferenceMeasurement {
                             index: 1,
@@ -265,7 +265,7 @@ async fn try_load_hskcek_offline(chip_id: &str) -> Option<Vec<u8>> {
 }
 
 async fn download_hskcek_from_kds(chip_id: &str) -> Result<Vec<u8>> {
-    let kds_url: String = format!("https://cert.hygon.cn/hsk_cek?snumber={}", chip_id);
+    let kds_url: String = format!("https://cert.hygon.cn/hsk_cek?snumber={chip_id}");
 
     debug!("KDS URL: {kds_url}");
     let hsk_cek_rsp: ReqwestResponse = get(kds_url)

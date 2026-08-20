@@ -17,7 +17,7 @@ impl HardwareSubType {
     fn from_u8(sub_type: u8) -> Result<Self> {
         match sub_type {
             0x01 => Ok(HardwareSubType::Pci),
-            _ => Err(anyhow!("Unknown Hardware subtype: {:#04x}", sub_type)),
+            _ => Err(anyhow!("Unknown Hardware subtype: {sub_type:#04x}")),
         }
     }
 
@@ -47,7 +47,7 @@ impl DeviceSubTypeParser for PciParser {
         }
         let func_num = data[0];
         let device_num = data[1];
-        Ok(format!("Pci({},{})", func_num, device_num))
+        Ok(format!("Pci({func_num},{device_num})"))
     }
 }
 

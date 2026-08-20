@@ -120,7 +120,7 @@ impl SlsaVerifierSettings {
 
         let status = cmd
             .status()
-            .with_context(|| format!("execute slsa-verifier via {:?}", cmd))?;
+            .with_context(|| format!("execute slsa-verifier via {cmd:?}"))?;
 
         if !status.success() {
             return Err(anyhow!(

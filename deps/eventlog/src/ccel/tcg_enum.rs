@@ -44,8 +44,7 @@ impl TcgAlgorithm {
             TcgAlgorithm::Sha512 => Ok(64),
             TcgAlgorithm::Sm3 => Ok(32),
             _ => Err(anyhow!(
-                "Failed to get digest size for unsupported algorithm: {:?}",
-                alg
+                "Failed to get digest size for unsupported algorithm: {alg:?}"
             )),
         }
     }

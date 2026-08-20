@@ -42,7 +42,7 @@ impl PolicyEngineInterface for Opa {
 
         // Add resource path as data
         let resource_path_object =
-            regorus::Value::from_json_str(&format!("{{\"resource-path\":\"{}\"}}", resource_path))
+            regorus::Value::from_json_str(&format!("{{\"resource-path\":\"{resource_path}\"}}"))
                 .map_err(|_| KbsPolicyEngineError::ResourcePathError)?;
 
         engine
@@ -223,7 +223,7 @@ mod tests {
         } else if let Err(actual) = res {
             assert!(compare_errors(
                 actual,
-                expected.err().expect("Result is Err, but test expects Ok"),
+                expected.expect_err("Result is Err, but test expects Ok"),
             ));
         }
     }

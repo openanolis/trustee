@@ -8,6 +8,9 @@ use std::collections::HashMap;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ProvenanceSource {
+    // Parsed from provenance-source config; reserved for future protocol
+    // dispatch (the OCI fetcher currently infers scheme from the URI prefix).
+    #[allow(dead_code)]
     pub protocol: String,
     pub uri: String,
     #[serde(default)]
