@@ -701,7 +701,7 @@ pub async fn get_certificate(
             }))
         }
         Err(e) => {
-            error!("Failed to get certificate: {}", e);
+            error!("Failed to get certificate: {e}");
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Failed to get certificate: {}", e)
             }))
@@ -727,7 +727,7 @@ pub async fn get_jwks(
             }))
         }
         Err(e) => {
-            error!("Failed to get public key: {}", e);
+            error!("Failed to get public key: {e}");
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Failed to get public key: {}", e)
             }))
@@ -753,7 +753,7 @@ pub async fn get_openid_configuration(
             }))
         }
         Err(e) => {
-            error!("Failed to get OpenID config: {}", e);
+            error!("Failed to get OpenID config: {e}");
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Failed to get OpenID config: {}", e)
             }))

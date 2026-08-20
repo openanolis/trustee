@@ -118,7 +118,7 @@ impl ExternalKmsBackend {
             .map_err(|e| anyhow!("external KMS provider lock poisoned: {e}"))?;
         let ret = unsafe { (self.init)() };
         if ret != 0 {
-            bail!("kms_provider_init failed with code {}", ret);
+            bail!("kms_provider_init failed with code {ret}");
         }
         Ok(())
     }
@@ -153,8 +153,7 @@ impl ExternalKmsBackend {
                 let actual_len = buffer_len as usize;
                 if actual_len > buffer.len() {
                     bail!(
-                        "kms_provider_get_secret_data returned length {} larger than buffer",
-                        actual_len
+                        "kms_provider_get_secret_data returned length {actual_len} larger than buffer"
                     );
                 }
                 return Ok(buffer[..actual_len].to_vec());
@@ -180,9 +179,9 @@ impl ExternalKmsBackend {
                     .to_string()
             };
             if error_message.is_empty() {
-                bail!("kms_provider_get_secret_data failed with code {}", ret);
+                bail!("kms_provider_get_secret_data failed with code {ret}");
             }
-            bail!("kms_provider_get_secret_data failed: {}", error_message);
+            bail!("kms_provider_get_secret_data failed: {error_message}");
         }
 
         bail!("kms_provider_get_secret_data failed after retries");

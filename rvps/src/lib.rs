@@ -162,10 +162,7 @@ impl Rvps {
             if let Some(old) = self.storage.get(&name).await? {
                 // If the policy-facing payload is identical, skip and do not replace.
                 if reference_payload_eq(&old, v) {
-                    info!(
-                        "Reference value of {} unchanged (same hashes); skip update.",
-                        name
-                    );
+                    info!("Reference value of {name} unchanged (same hashes); skip update.");
                     continue;
                 }
 
@@ -293,7 +290,7 @@ impl Rvps {
 
             if let Some(old) = self.storage.get(&name).await? {
                 if hash_set(&old) == hash_set(&rv) {
-                    info!("Reference value of {} unchanged; skip update.", name);
+                    info!("Reference value of {name} unchanged; skip update.");
                     continue;
                 }
 
@@ -301,16 +298,16 @@ impl Rvps {
                     ReferenceValueOperation::Add => {
                         let merged = merge_reference_values(old.clone(), rv.clone());
                         let _ = self.storage.set(name.clone(), merged).await?;
-                        info!("Reference value of {} extended (add).", name);
+                        info!("Reference value of {name} extended (add).");
                     }
                     ReferenceValueOperation::Refresh => {
                         let _ = self.storage.set(name.clone(), rv.clone()).await?;
-                        info!("Reference value of {} refreshed.", name);
+                        info!("Reference value of {name} refreshed.");
                     }
                 }
             } else {
                 let _ = self.storage.set(name.clone(), rv.clone()).await?;
-                info!("Reference value of {} is added.", name);
+                info!("Reference value of {name} is added.");
             }
         }
 
@@ -382,7 +379,7 @@ impl Rvps {
                 Ok(true)
             }
             None => {
-                warn!("Reference value {} not found for deletion.", name);
+                warn!("Reference value {name} not found for deletion.");
                 Ok(false)
             }
         }
@@ -585,9 +582,7 @@ fn verify_rekor_v2_consistency(value: &Value) -> Result<()> {
 
     if rekor_payload_digest != payload_sha256_b64 {
         bail!(
-            "Rekor v2 digest mismatch: rekor=`{}`, payload_sha256_b64=`{}`",
-            rekor_payload_digest,
-            payload_sha256_b64
+            "Rekor v2 digest mismatch: rekor=`{rekor_payload_digest}`, payload_sha256_b64=`{payload_sha256_b64}`"
         );
     }
 

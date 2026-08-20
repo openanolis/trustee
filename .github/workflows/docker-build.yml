@@ -28,6 +28,9 @@ jobs:
           - name: RVPS
             dockerfile: Dockerfile.rvps
             image: rvps:latest
+          - name: RVDS
+            dockerfile: Dockerfile.rvds
+            image: rvds:latest
           - name: KBS
             dockerfile: Dockerfile.kbs
             image: kbs:latest

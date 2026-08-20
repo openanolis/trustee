@@ -106,7 +106,7 @@ impl JwkAttestationTokenVerifier {
         for path in &config.trusted_jwk_sets {
             match get_jwks_from_file_or_url(&client, path).await {
                 Ok(mut jwkset) => trusted_jwk_sets.keys.append(&mut jwkset.keys),
-                Err(e) => bail!("error getting JWKS: {:?}", e),
+                Err(e) => bail!("error getting JWKS: {e:?}"),
             }
         }
 
@@ -118,9 +118,9 @@ impl JwkAttestationTokenVerifier {
             })?;
             let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(&cert_content)
                 .collect::<Result<Vec<_>, _>>()
-                .with_context(|| format!("Failed to parse PEM certificate {}", path))?;
+                .with_context(|| format!("Failed to parse PEM certificate {path}"))?;
             if certs.is_empty() {
-                bail!("no certificate found in PEM file {}", path);
+                bail!("no certificate found in PEM file {path}");
             }
             trusted_certs.extend(certs);
         }
@@ -150,7 +150,7 @@ impl JwkAttestationTokenVerifier {
 
         let leaf_cert = CertificateDer::from(leaf_der);
         let end_entity = EndEntityCert::try_from(&leaf_cert)
-            .map_err(|e| anyhow!("Failed to parse end entity certificate: {}", e))?;
+            .map_err(|e| anyhow!("Failed to parse end entity certificate: {e}"))?;
 
         let trust_anchors: Vec<_> = self
             .trusted_certs
@@ -189,7 +189,7 @@ impl JwkAttestationTokenVerifier {
                 None,
                 None,
             )
-            .map_err(|e| anyhow!("JWK cannot be validated by trust anchor: {}", e))?;
+            .map_err(|e| anyhow!("JWK cannot be validated by trust anchor: {e}"))?;
 
         Ok(())
     }
@@ -264,7 +264,7 @@ impl JwkAttestationTokenVerifier {
 
     pub async fn verify(&self, token: String) -> anyhow::Result<Value> {
         let header = decode_header(&token)
-            .map_err(|e| anyhow!("Failed to decode attestation token header: {}", e))?;
+            .map_err(|e| anyhow!("Failed to decode attestation token header: {e}"))?;
 
         let key = self.get_verification_jwk(&header)?;
         let key_alg = key
@@ -283,7 +283,7 @@ impl JwkAttestationTokenVerifier {
         validation.validate_nbf = true;
 
         let token_data = decode::<Value>(&token, &dkey, &validation)
-            .map_err(|e| anyhow!("Failed to decode attestation token: {}", e))?;
+            .map_err(|e| anyhow!("Failed to decode attestation token: {e}"))?;
 
         Ok(token_data.claims)
     }
@@ -325,7 +325,7 @@ mod tests {
         let tmp_dir = tempfile::tempdir().expect("to get tmpdir");
         let jwks_file = tmp_dir.path().join("test.jwks");
 
-        let _ = std::fs::write(&jwks_file, json).expect("to get testdata written to tmpdir");
+        std::fs::write(&jwks_file, json).expect("to get testdata written to tmpdir");
         let p = "file://".to_owned() + jwks_file.to_str().expect("to get path as str");
 
         assert_eq!(

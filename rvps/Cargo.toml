@@ -2,6 +2,7 @@
 name = "reference-value-provider-service"
 version = "0.1.0"
 edition = "2021"
+rust-version.workspace = true
 
 [features]
 # The library core (the `Rvps` struct, storage, extractors, rekor/provenance

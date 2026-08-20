@@ -49,7 +49,7 @@ impl Verifier for Sample {
             .await
             .context("Evidence's identity verification error.")?;
 
-        debug!("TEE-Evidence<sample>: {:?}", tee_evidence);
+        debug!("TEE-Evidence<sample>: {tee_evidence:?}");
 
         let claims = parse_tee_evidence(&tee_evidence)?;
         Ok((claims, "cpu".to_string()))
@@ -94,7 +94,7 @@ async fn verify_tee_evidence(
             .decode(el)
             .map_err(|e| anyhow!("Decode sample CC Eventlog: {e}"))?;
         let ccel = CcEventLog::try_from(ccel_data)
-            .map_err(|e| anyhow!("Parse CC Eventlog failed: {:?}", e))?;
+            .map_err(|e| anyhow!("Parse CC Eventlog failed: {e:?}"))?;
         let compare_obj: Vec<ReferenceMeasurement> = vec![ReferenceMeasurement {
             index: 1,
             algorithm: TcgAlgorithm::Sha256,
@@ -118,7 +118,7 @@ fn parse_tee_evidence(quote: &SampleTeeEvidence) -> Result<TeeEvidenceParsedClai
             .decode(el)
             .context("Decode sample CC Eventlog when parsing claims")?;
         let ccel = CcEventLog::try_from(ccel_data)
-            .map_err(|e| anyhow!("Parse CC Eventlog failed when parsing claims: {:?}", e))?;
+            .map_err(|e| anyhow!("Parse CC Eventlog failed when parsing claims: {e:?}"))?;
         serde_json::to_value(ccel)
             .map(Some)
             .context("Serialize parsed CC Eventlog for claims")?

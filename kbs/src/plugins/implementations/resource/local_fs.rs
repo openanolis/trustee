@@ -84,7 +84,7 @@ impl StorageBackend for LocalFs {
 
         // Check if the resource file exists
         if !resource_path.exists() {
-            return Err(anyhow::anyhow!("Resource not found: {}", resource_desc));
+            return Err(anyhow::anyhow!("Resource not found: {resource_desc}"));
         }
 
         tokio::fs::remove_file(&resource_path)

@@ -119,10 +119,10 @@ impl<K: Send + Sync> SignKeyProvider<K> for FsSigner<K> {
             use std::io::Read as _;
             // Read certificate from file
             let mut file = std::fs::File::open(path)
-                .map_err(|e| anyhow::anyhow!("Failed to open certificate file: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to open certificate file: {e}"))?;
             let mut content = Vec::new();
             file.read_to_end(&mut content)
-                .map_err(|e| anyhow::anyhow!("Failed to read certificate file: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to read certificate file: {e}"))?;
             Ok(content)
         })
     }

@@ -28,10 +28,7 @@ impl EventDataParser for EvBootServicesAppParser {
         let dev_path_offset_end = dev_path_offset_start + size_of::<u64>();
 
         if data.len() < dev_path_offset_end {
-            bail!(
-                "Data is too short: expected at least {} bytes",
-                dev_path_offset_end
-            );
+            bail!("Data is too short: expected at least {dev_path_offset_end} bytes");
         }
 
         let dev_path_len =
@@ -67,7 +64,7 @@ fn get_nested_paths(device_path_bytes: &[u8], mut result: EventDetails) -> Resul
     let efi_length = u16::from_le_bytes(device_path_bytes[2..4].try_into()?) as usize;
 
     if device_path_bytes.len() < efi_length {
-        bail!("Data is too short: expected at least {} bytes", efi_length);
+        bail!("Data is too short: expected at least {efi_length} bytes");
     }
 
     let vendor_data_raw = &device_path_bytes[4..efi_length];

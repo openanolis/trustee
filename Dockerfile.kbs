@@ -20,9 +20,12 @@ ARG ENCRYPTED_LOCAL_FS=true
 WORKDIR /usr/src/kbs
 COPY . .
 
-RUN yum install -y cargo curl clang perl protobuf-devel git libgudev-devel openssl-devel
+RUN yum install -y curl clang perl protobuf-devel git libgudev-devel openssl-devel
 
-RUN sed -i 's/version = 4/version = 3/g' Cargo.lock
+# Install Rust via rustup — the alinux3 base image's cargo is too old for MSRV 1.88
+ARG RUSTC_VERSION=1.88.0
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${RUSTC_VERSION}
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN if [ -n "$CARGO_JOBS" ]; then \
       [ ! -d /root/.cargo ] && mkdir /root/.cargo; \

@@ -60,14 +60,12 @@ async fn get_region_id() -> Result<String> {
     let client = client.timeout(std::time::Duration::from_secs(METADATA_TIMEOUT));
     let client = client
         .build()
-        .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
+        .map_err(|e| anyhow!("Failed to create HTTP client: {e}"))?;
 
-    let response = client.get(ALIYUN_METADATA_URL).send().await.map_err(|e| {
-        anyhow!(
-            "Cannot get region_id: please check if in aliyun environment: {}",
-            e
-        )
-    })?;
+    let response =
+        client.get(ALIYUN_METADATA_URL).send().await.map_err(|e| {
+            anyhow!("Cannot get region_id: please check if in aliyun environment: {e}")
+        })?;
 
     if !response.status().is_success() {
         return Err(anyhow!(
@@ -79,7 +77,7 @@ async fn get_region_id() -> Result<String> {
     let region_id = response
         .text()
         .await
-        .map_err(|e| anyhow!("Unknown error to get region_id: {}", e))?
+        .map_err(|e| anyhow!("Unknown error to get region_id: {e}"))?
         .trim()
         .to_string();
 
@@ -87,7 +85,7 @@ async fn get_region_id() -> Result<String> {
         return Err(anyhow!("Empty region_id received from metadata service"));
     }
 
-    info!("Retrieved region_id from aliyun metadata: {}", region_id);
+    info!("Retrieved region_id from aliyun metadata: {region_id}");
     Ok(region_id)
 }
 
@@ -101,25 +99,23 @@ async fn get_region_id() -> Result<String> {
 async fn get_rim_service_url() -> Result<String> {
     if let Some(url) = RIM_SERVICE_URL_OVERRIDE.read().unwrap().clone() {
         if !url.is_empty() {
-            debug!("Using injected RIM service URL: {}", url);
+            debug!("Using injected RIM service URL: {url}");
             return Ok(url);
         }
     }
 
     // Environment variable
     if let Ok(url) = env::var("NV_RIM_URL") {
-        debug!("Using RIM URL from environment variable: {}", url);
+        debug!("Using RIM URL from environment variable: {url}");
         return Ok(url);
     }
 
     // Try to get region_id from Aliyun metadata service
     match get_region_id().await {
         Ok(region_id) => {
-            let url = format!(
-                "https://attest-vpc.{}.aliyuncs.com/nvcc/certification/v1/rim/",
-                region_id
-            );
-            info!("Constructed RIM service URL: {}", url);
+            let url =
+                format!("https://attest-vpc.{region_id}.aliyuncs.com/nvcc/certification/v1/rim/");
+            info!("Constructed RIM service URL: {url}");
 
             // Send a HEAD request to the URL for testing
             let client = reqwest::Client::builder();
@@ -131,13 +127,13 @@ async fn get_rim_service_url() -> Result<String> {
             let client = client.timeout(std::time::Duration::from_secs(METADATA_TIMEOUT));
             let client = client
                 .build()
-                .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
+                .map_err(|e| anyhow!("Failed to create HTTP client: {e}"))?;
 
             let resp = client.head(&url).send().await;
 
             match resp {
                 Ok(r) if r.status().is_success() => {
-                    info!("RIM service URL is accessible: {}", url);
+                    info!("RIM service URL is accessible: {url}");
                     Ok(url)
                 }
                 Ok(r) => {
@@ -145,18 +141,14 @@ async fn get_rim_service_url() -> Result<String> {
                     Ok(DEFAULT_RIM_SERVICE_BASE_URL.to_string())
                 }
                 Err(e) => {
-                    debug!(
-                        "RIM service URL is not accessible: {}, falling back to default URL",
-                        e
-                    );
+                    debug!("RIM service URL is not accessible: {e}, falling back to default URL");
                     Ok(DEFAULT_RIM_SERVICE_BASE_URL.to_string())
                 }
             }
         }
         Err(e) => {
             debug!(
-                "Failed to get region_id from aliyun metadata: {}, falling back to default URL",
-                e
+                "Failed to get region_id from aliyun metadata: {e}, falling back to default URL"
             );
             Ok(DEFAULT_RIM_SERVICE_BASE_URL.to_string())
         }
@@ -262,7 +254,7 @@ impl RimParser {
                     }
                 }
                 Ok(Event::Eof) => break,
-                Err(e) => return Err(anyhow!("XML parsing error: {}", e)),
+                Err(e) => return Err(anyhow!("XML parsing error: {e}")),
                 _ => {}
             }
             buf.clear();
@@ -273,7 +265,7 @@ impl RimParser {
             return Err(anyhow!("RIM version information not found"));
         }
 
-        debug!("Parsed RIM information: {:?}", rim_info);
+        debug!("Parsed RIM information: {rim_info:?}");
         Ok(rim_info)
     }
 
@@ -283,7 +275,7 @@ impl RimParser {
         rim_info: &mut RimInfo,
     ) -> Result<()> {
         for attr in element.attributes() {
-            let attr = attr.map_err(|e| anyhow!("Attribute parsing error: {}", e))?;
+            let attr = attr.map_err(|e| anyhow!("Attribute parsing error: {e}"))?;
             match attr.key.as_ref() {
                 b"name" => {
                     rim_info.name = String::from_utf8_lossy(&attr.value).to_string();
@@ -303,7 +295,7 @@ impl RimParser {
         rim_info: &mut RimInfo,
     ) -> Result<()> {
         for attr in element.attributes() {
-            let attr = attr.map_err(|e| anyhow!("Attribute parsing error: {}", e))?;
+            let attr = attr.map_err(|e| anyhow!("Attribute parsing error: {e}"))?;
             match attr.key.as_ref() {
                 b"colloquialVersion" => {
                     rim_info.version = String::from_utf8_lossy(&attr.value).to_string();
@@ -342,7 +334,7 @@ impl RimParser {
 
         // Parse basic attributes
         for attr in element.attributes() {
-            let attr = attr.map_err(|e| anyhow!("Attribute parsing error: {}", e))?;
+            let attr = attr.map_err(|e| anyhow!("Attribute parsing error: {e}"))?;
             let value_str = String::from_utf8_lossy(&attr.value);
 
             match attr.key.as_ref() {
@@ -354,7 +346,7 @@ impl RimParser {
                 b"index" => {
                     measurement.index = value_str
                         .parse()
-                        .map_err(|e| anyhow!("Invalid index value: {}", e))?;
+                        .map_err(|e| anyhow!("Invalid index value: {e}"))?;
                 }
                 b"name" => {
                     measurement.name = value_str.to_string();
@@ -365,12 +357,12 @@ impl RimParser {
                 b"alternatives" => {
                     measurement.alternatives = value_str
                         .parse()
-                        .map_err(|e| anyhow!("Invalid alternative count: {}", e))?;
+                        .map_err(|e| anyhow!("Invalid alternative count: {e}"))?;
                 }
                 b"size" => {
                     measurement.size = value_str
                         .parse()
-                        .map_err(|e| anyhow!("Invalid size value: {}", e))?;
+                        .map_err(|e| anyhow!("Invalid size value: {e}"))?;
                 }
                 _ => {
                     // Check if it's a hash value attribute
@@ -379,7 +371,7 @@ impl RimParser {
                     if let Some(caps) = hash_regex.captures(&key_str) {
                         let hash_index: usize = caps[1]
                             .parse()
-                            .map_err(|e| anyhow!("Invalid hash index: {}", e))?;
+                            .map_err(|e| anyhow!("Invalid hash index: {e}"))?;
 
                         // Ensure values vector is large enough
                         while measurement.values.len() <= hash_index {
@@ -426,19 +418,19 @@ pub async fn get_driver_rim(driver_version: &str) -> Result<String> {
     let gpu_arch = env::var("GPU_ARCH_NAME").unwrap_or_else(|_| "HOPPER".to_string());
 
     let rim_id = match gpu_arch.as_str() {
-        "HOPPER" => format!("NV_GPU_DRIVER_GH100_{}", driver_version),
-        "BLACKWELL" => format!("NV_GPU_CC_DRIVER_GB100_{}", driver_version),
-        _ => format!("NV_GPU_DRIVER_GH100_{}", driver_version), // Default to HOPPER
+        "HOPPER" => format!("NV_GPU_DRIVER_GH100_{driver_version}"),
+        "BLACKWELL" => format!("NV_GPU_CC_DRIVER_GB100_{driver_version}"),
+        _ => format!("NV_GPU_DRIVER_GH100_{driver_version}"), // Default to HOPPER
     };
 
-    info!("Driver RIM ID: {}", rim_id);
+    info!("Driver RIM ID: {rim_id}");
 
     // Check cache first
     let cache = get_rim_cache().await;
     {
         let cache_guard = cache.lock().unwrap();
         if let Some(cached_content) = cache_guard.get(&rim_id) {
-            info!("Found Driver RIM in cache: {}", rim_id);
+            info!("Found Driver RIM in cache: {rim_id}");
             return Ok(cached_content.clone());
         }
     }
@@ -471,18 +463,17 @@ pub async fn get_vbios_rim(
     let chip_sku_upper = chip_sku.to_uppercase();
 
     let rim_id = format!(
-        "NV_GPU_VBIOS_{}_{}_{}_{}",
-        project_upper, project_sku_upper, chip_sku_upper, vbios_version_formatted
+        "NV_GPU_VBIOS_{project_upper}_{project_sku_upper}_{chip_sku_upper}_{vbios_version_formatted}"
     );
 
-    info!("VBIOS RIM ID: {}", rim_id);
+    info!("VBIOS RIM ID: {rim_id}");
 
     // Check cache first
     let cache = get_rim_cache().await;
     {
         let cache_guard = cache.lock().unwrap();
         if let Some(cached_content) = cache_guard.get(&rim_id) {
-            info!("Found VBIOS RIM in cache: {}", rim_id);
+            info!("Found VBIOS RIM in cache: {rim_id}");
             return Ok(cached_content.clone());
         }
     }
@@ -502,19 +493,19 @@ pub async fn get_vbios_rim(
 async fn fetch_rim_file(base_url: &str, file_id: &str) -> Result<String> {
     // Construct complete URL
     let url = if base_url.ends_with('/') {
-        format!("{}{}", base_url, file_id)
+        format!("{base_url}{file_id}")
     } else {
-        format!("{}/{}", base_url, file_id)
+        format!("{base_url}/{file_id}")
     };
 
-    info!("Fetching from RIM service: {}", url);
+    info!("Fetching from RIM service: {url}");
 
     // Prepare HTTP headers
     let mut headers = HashMap::new();
 
     // Add authentication header if service key is set
     if let Ok(service_key) = env::var("NVIDIA_ATTESTATION_SERVICE_KEY") {
-        let auth_value = format!("nv-sak {}", service_key);
+        let auth_value = format!("nv-sak {service_key}");
         headers.insert("Authorization".to_string(), auth_value);
         debug!("Using service key for authentication");
     } else {
@@ -531,7 +522,7 @@ async fn fetch_rim_file(base_url: &str, file_id: &str) -> Result<String> {
     let client = client.timeout(std::time::Duration::from_secs(MAX_NETWORK_TIME_DELAY));
     let client = client
         .build()
-        .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
+        .map_err(|e| anyhow!("Failed to create HTTP client: {e}"))?;
 
     // Build request
     let mut request_builder = client.get(&url);
@@ -544,40 +535,34 @@ async fn fetch_rim_file(base_url: &str, file_id: &str) -> Result<String> {
     // Send request
     debug!("Sending HTTP GET request...");
     let response = request_builder.send().await.map_err(|e| {
-        anyhow!(
-            "HTTP request failed: {} - Please check network connection and RIM service status",
-            e
-        )
+        anyhow!("HTTP request failed: {e} - Please check network connection and RIM service status")
     })?;
 
     let status = response.status();
-    debug!("HTTP response status: {}", status);
+    debug!("HTTP response status: {status}");
 
     // Check response status
     if !status.is_success() {
         let error_msg = match status.as_u16() {
-            404 => format!("RIM file not found: {} - Please check if version information is correct", file_id),
+            404 => format!("RIM file not found: {file_id} - Please check if version information is correct"),
             401 => "Authentication failed - Please check NVIDIA_ATTESTATION_SERVICE_KEY environment variable".to_string(),
             403 => "Access denied - Please check service key permissions".to_string(),
             500..=599 => "RIM service internal error - Please try again later".to_string(),
-            _ => format!("HTTP error: {}", status),
+            _ => format!("HTTP error: {status}"),
         };
-        return Err(anyhow!("{}", error_msg));
+        return Err(anyhow!("{error_msg}"));
     }
 
     // Parse response
     let response_text = response
         .text()
         .await
-        .map_err(|e| anyhow!("Failed to read response content: {}", e))?;
+        .map_err(|e| anyhow!("Failed to read response content: {e}"))?;
 
     debug!("Response content length: {} bytes", response_text.len());
 
     let json_object: Value = serde_json::from_str(&response_text).map_err(|e| {
-        anyhow!(
-            "Failed to parse JSON response: {} - Response may not be valid JSON format",
-            e
-        )
+        anyhow!("Failed to parse JSON response: {e} - Response may not be valid JSON format")
     })?;
 
     // Extract base64 encoded RIM content
@@ -593,14 +578,11 @@ async fn fetch_rim_file(base_url: &str, file_id: &str) -> Result<String> {
     // Decode base64
     let decoded_bytes = general_purpose::STANDARD
         .decode(base64_data)
-        .map_err(|e| anyhow!("Base64 decode failed: {} - RIM content may be corrupted", e))?;
+        .map_err(|e| anyhow!("Base64 decode failed: {e} - RIM content may be corrupted"))?;
 
     // Convert to UTF-8 string
     let rim_content = String::from_utf8(decoded_bytes).map_err(|e| {
-        anyhow!(
-            "UTF-8 decode failed: {} - RIM content contains non-UTF-8 characters",
-            e
-        )
+        anyhow!("UTF-8 decode failed: {e} - RIM content contains non-UTF-8 characters")
     })?;
 
     info!(

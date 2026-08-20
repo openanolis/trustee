@@ -295,8 +295,8 @@ pub enum QuoteV5Body {
 impl fmt::Display for QuoteV5Body {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            QuoteV5Body::Tdx10(body) => write!(f, "{}", body),
-            QuoteV5Body::Tdx15(body) => write!(f, "{}", body),
+            QuoteV5Body::Tdx10(body) => write!(f, "{body}"),
+            QuoteV5Body::Tdx15(body) => write!(f, "{body}"),
         }
     }
 }
@@ -379,13 +379,13 @@ pub fn parse_tdx_quote(quote_bin: &[u8]) -> Result<Quote> {
     })?;
     let header = quote_header
         .pread::<QuoteHeader>(0)
-        .map_err(|e| anyhow!("Parse TD quote header failed: {:?}", e))?;
+        .map_err(|e| anyhow!("Parse TD quote header failed: {e:?}"))?;
 
     match header.version {
         [4, 0] => {
             let body: ReportBody2 = quote_bin
                 .pread::<ReportBody2>(QUOTE_HEADER_SIZE)
-                .map_err(|e| anyhow!("Parse TD quote v4 body failed: {:?}", e))?;
+                .map_err(|e| anyhow!("Parse TD quote v4 body failed: {e:?}"))?;
             Ok(Quote::V4 { header, body })
         }
         [5, 0] => {
@@ -411,7 +411,7 @@ pub fn parse_tdx_quote(quote_bin: &[u8]) -> Result<Quote> {
                     let offset = size_end;
                     let body: ReportBody2 = quote_bin
                         .pread::<ReportBody2>(offset)
-                        .map_err(|e| anyhow!("Parse TD quote v5 TDX1.0 body failed: {:?}", e))?;
+                        .map_err(|e| anyhow!("Parse TD quote v5 TDX1.0 body failed: {e:?}"))?;
                     Ok(Quote::V5 {
                         header,
                         r#type,
@@ -423,7 +423,7 @@ pub fn parse_tdx_quote(quote_bin: &[u8]) -> Result<Quote> {
                     let offset = size_end;
                     let body: ReportBody2v15 = quote_bin
                         .pread::<ReportBody2v15>(offset)
-                        .map_err(|e| anyhow!("Parse TD quote v5 TDX1.5 body failed: {:?}", e))?;
+                        .map_err(|e| anyhow!("Parse TD quote v5 TDX1.5 body failed: {e:?}"))?;
                     Ok(Quote::V5 {
                         header,
                         r#type,

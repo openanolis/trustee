@@ -19,8 +19,7 @@ impl BiosSubType {
         match sub_type {
             0x01 => Ok(BiosSubType::Bbs),
             _ => Err(anyhow!(
-                "Unknown Bios Boot Specification subtype: {:#04x}",
-                sub_type
+                "Unknown Bios Boot Specification subtype: {sub_type:#04x}"
             )),
         }
     }
@@ -50,7 +49,7 @@ impl DeviceSubTypeParser for BbsParser {
 
         let device_type = match data
             .gread_with::<u16>(&mut index, LE)
-            .map_err(|e| anyhow::anyhow!("Failed to read device type: {:?}", e))?
+            .map_err(|e| anyhow::anyhow!("Failed to read device type: {e:?}"))?
         {
             0x01 => "FLOPPY".to_string(),
             0x02 => "HARD_DRIVE".to_string(),
@@ -65,7 +64,7 @@ impl DeviceSubTypeParser for BbsParser {
 
         let status_flag: u16 = data
             .gread_with(&mut index, LE)
-            .map_err(|e| anyhow::anyhow!("Failed to read status flag: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read status flag: {e:?}"))?;
 
         let desc_bytes = &data[index..];
 
@@ -75,12 +74,9 @@ impl DeviceSubTypeParser for BbsParser {
             .unwrap_or(desc_bytes.len());
 
         let description = from_utf8(&desc_bytes[..desc_end])
-            .map_err(|e| anyhow::anyhow!("Failed to parse description: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to parse description: {e:?}"))?;
 
-        Ok(format!(
-            "BBS({},{},{})",
-            device_type, description, status_flag
-        ))
+        Ok(format!("BBS({device_type},{description},{status_flag})"))
     }
 }
 

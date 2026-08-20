@@ -56,7 +56,7 @@ impl ReferenceValueProviderService for RvpsServer {
                 .map_err(|e| Status::aborted(format!("Serialize reference value: {e}")))?
                 .unwrap_or_default()
         };
-        info!("Reference values: {}", reference_value_results);
+        info!("Reference values: {reference_value_results}");
 
         let res = ReferenceValueQueryResponse {
             reference_value_results,

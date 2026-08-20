@@ -21,8 +21,16 @@ Source5:  challenge-ra-policy.rego
 
 Requires: openssl tzdata sqlite-libs libtdx-verify
 
-BuildRequires:  cargo clang perl protobuf-devel git libtdx-attest-devel libtdx-verify-devel libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel
+BuildRequires:  clang perl protobuf-devel git libtdx-attest-devel libtdx-verify-devel libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel
 BuildRequires:  ca-certificates gcc golang
+
+# Dual toolchain mode. When `with_rustup` is defined, cargo is provided by rustup
+# and these BuildRequires are skipped. When it is not defined, build against the
+# system rust toolchain.
+%if 0%{!?with_rustup:1}
+BuildRequires: cargo >= 1.88.0
+BuildRequires: rust >= 1.88.0
+%endif
 
 %description
 Trustee are daemon services for attestation and secret distribution.
@@ -47,7 +55,6 @@ trustee services including KBS, AS, RVPS, and Gateway.
 %prep
 %autosetup -n trustee-%{version}
 tar -xvf %{SOURCE1}
-sed -i 's/version = 4/version = 3/g' Cargo.lock
 mkdir -p .cargo
 cp %{SOURCE2} .cargo/
 tar -xvf %{SOURCE3} -C trustee-gateway

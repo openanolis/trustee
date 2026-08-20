@@ -70,7 +70,7 @@ async fn verify_evidence(
                 .decode(el)
                 .map_err(|e| anyhow!("Decode system CC Eventlog: {e}"))?;
             let ccel = CcEventLog::try_from(ccel_data)
-                .map_err(|e| anyhow!("Parse CC Eventlog failed: {:?}", e))?;
+                .map_err(|e| anyhow!("Parse CC Eventlog failed: {e:?}"))?;
             let compare_obj: Vec<ReferenceMeasurement> = vec![ReferenceMeasurement {
                 index: 1,
                 algorithm: TcgAlgorithm::Sha384,
@@ -111,7 +111,7 @@ fn parse_evidence(quote: &SystemEvidence) -> Result<TeeEvidenceParsedClaim> {
             .decode(el)
             .context("Decode system CC Eventlog when parsing claims")?;
         let ccel = CcEventLog::try_from(ccel_data)
-            .map_err(|e| anyhow!("Parse CC Eventlog failed when parsing claims: {:?}", e))?;
+            .map_err(|e| anyhow!("Parse CC Eventlog failed when parsing claims: {e:?}"))?;
         serde_json::to_value(ccel.log)
             .map(Some)
             .context("Serialize parsed CC Eventlog for claims")?

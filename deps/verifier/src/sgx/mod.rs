@@ -67,7 +67,7 @@ impl Verifier for SgxVerifier {
 
         let claims = verify_evidence(expected_report_data, expected_init_data_hash, tee_evidence)
             .await
-            .map_err(|e| anyhow!("SGX Verifier: {:?}", e))?;
+            .map_err(|e| anyhow!("SGX Verifier: {e:?}"))?;
 
         Ok((claims, "cpu".to_string()))
     }
@@ -77,7 +77,7 @@ pub fn parse_sgx_quote(quote: &[u8]) -> Result<sgx_quote3_t> {
     let quote_body = &quote[..QUOTE_SIZE];
     quote_body
         .pread::<sgx_quote3_t>(0)
-        .map_err(|e| anyhow!("Parse SGX quote failed: {:?}", e))
+        .map_err(|e| anyhow!("Parse SGX quote failed: {e:?}"))
 }
 
 async fn verify_evidence(
