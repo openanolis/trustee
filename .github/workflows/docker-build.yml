@@ -34,6 +34,7 @@ jobs:
           - name: Trustee Gateway
             dockerfile: Dockerfile.trustee-gateway
             image: trustee-gateway:latest
+            build_args: --build-arg GOPROXY=https://proxy.golang.org,direct
           - name: Trustee Frontend
             dockerfile: Dockerfile.frontend
             image: trustee-frontend:latest
@@ -44,4 +45,4 @@ jobs:
 
     - name: Build ${{ matrix.name }} Container Image
       run: |
-        DOCKER_BUILDKIT=1 docker build -t ${{ matrix.image }} . -f ${{ matrix.dockerfile }}
+        DOCKER_BUILDKIT=1 docker build ${{ matrix.build_args }} -t ${{ matrix.image }} . -f ${{ matrix.dockerfile }}
