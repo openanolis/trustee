@@ -21,7 +21,8 @@ RUN wget https://mirrors.aliyun.com/golang/go1.21.6.linux-amd64.tar.gz && \
 
 ENV PATH=$PATH:/usr/local/go/bin
 
-RUN go env -w GOPROXY=https://mirrors.aliyun.com/goproxy
+ARG GOPROXY=https://mirrors.aliyun.com/goproxy
+RUN go env -w GOPROXY=${GOPROXY}
 
 RUN cd trustee-gateway && CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags="-s -w" -o gateway cmd/server/main.go
 
