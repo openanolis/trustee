@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(any(feature = "policy-rvps", feature = "policy-artifact-server"))]
-use anyhow::bail;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail};
+use anyhow::{Context, Result};
 use log::debug;
 #[cfg(feature = "policy-rvps")]
 use log::warn;
@@ -299,6 +299,16 @@ fn evaluate_sync(
 mod tests {
     use super::*;
 
+    #[cfg(feature = "policy-artifact-server")]
+    use crate::policy_engine::PolicyEngine;
+    #[cfg(feature = "policy-artifact-server")]
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread::JoinHandle,
+        time::Duration,
+    };
+
     #[test]
     fn detects_legacy_reference_without_comment_or_string_false_positives() {
         assert!(policy_uses_legacy_reference(
@@ -316,5 +326,184 @@ mod tests {
                allow := true"#
         )
         .unwrap());
+    }
+
+    #[cfg(feature = "policy-artifact-server")]
+    fn mock_artifact_server(
+        status: u16,
+        response_body: serde_json::Value,
+    ) -> (String, JoinHandle<Vec<u8>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+
+            let mut request = Vec::new();
+            loop {
+                let mut buffer = [0; 4096];
+                let bytes_read = stream.read(&mut buffer).unwrap();
+                if bytes_read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..bytes_read]);
+
+                if let Some(header_end) =
+                    request.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    let headers = String::from_utf8_lossy(&request[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or_default();
+                    if request.len() >= header_end + 4 + content_length {
+                        break;
+                    }
+                }
+            }
+
+            let reason = match status {
+                200 => "OK",
+                404 => "Not Found",
+                409 => "Conflict",
+                500 => "Internal Server Error",
+                _ => "Unknown",
+            };
+            let response_body = response_body.to_string();
+            let response = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            request
+        });
+
+        (format!("http://{address}"), server)
+    }
+
+    #[cfg(feature = "policy-artifact-server")]
+    async fn call_artifact_server_extension(base_url: String) -> Result<bool> {
+        let http_client = reqwest::Client::builder().no_proxy().build()?;
+        let client = Arc::new(
+            artifact_resolve_sdk::Client::builder()
+                .base_url(base_url)
+                .http_client(http_client)
+                .build()?,
+        );
+        let runtime_handle = tokio::runtime::Handle::current();
+
+        tokio::task::spawn_blocking(move || {
+            let mut extension = query_artifact_server_extension(client, runtime_handle);
+            let argument = regorus::Value::from_json_str(r#"{"tdx.td-shim":"582f8ed2"}"#)?;
+            let result = extension(vec![argument])?;
+            Ok(*result
+                .as_bool()
+                .context("query_artifact_server result must be a boolean")?)
+        })
+        .await
+        .context("query_artifact_server blocking task failed")?
+    }
+
+    #[cfg(feature = "policy-artifact-server")]
+    fn request_json(request: &[u8]) -> serde_json::Value {
+        let body_start = request
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        serde_json::from_slice(&request[body_start..]).unwrap()
+    }
+
+    #[cfg(feature = "policy-artifact-server")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn artifact_server_policy_sends_text_measurement_and_returns_true() {
+        let (base_url, server) = mock_artifact_server(
+            200,
+            serde_json::json!({
+                "status": "resolved",
+                "release_manifest": {
+                    "schemaVersion": "1.0.0",
+                    "measurements": [{
+                        "type": "tdx.td-shim",
+                        "value": "582f8ed2"
+                    }]
+                },
+                "log_entries": []
+            }),
+        );
+
+        let policy = r#"package policy
+default allow = false
+allow = query_artifact_server({"tdx.td-shim": "582f8ed2"})
+"#;
+        let engine =
+            OPAInMemory::with_raw_default_policy(policy, "artifact.rego", &base_url).unwrap();
+        let result = engine
+            .evaluate(
+                "{}",
+                "artifact",
+                vec!["allow".to_string()],
+                crate::rvps::test_resolver(HashMap::new()),
+            )
+            .await
+            .unwrap();
+        assert!(result.rules_result.get("allow").unwrap().as_bool().unwrap());
+
+        let request = server.join().unwrap();
+        assert_eq!(
+            request_json(&request),
+            serde_json::json!({
+                "release_manifest": {
+                    "schemaVersion": "1.0.0",
+                    "measurements": [{
+                        "type": "tdx.td-shim",
+                        "value": "582f8ed2"
+                    }]
+                }
+            })
+        );
+    }
+
+    #[cfg(feature = "policy-artifact-server")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn artifact_server_missing_or_revoked_measurement_returns_false() {
+        for (status, error_code) in [(404, "measurement_not_found"), (409, "measurement_revoked")] {
+            let (base_url, server) = mock_artifact_server(
+                status,
+                serde_json::json!({
+                    "error_code": error_code,
+                    "error_message": "measurement denied"
+                }),
+            );
+
+            assert!(!call_artifact_server_extension(base_url).await.unwrap());
+            server.join().unwrap();
+        }
+    }
+
+    #[cfg(feature = "policy-artifact-server")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn artifact_server_infrastructure_error_is_propagated() {
+        let (base_url, server) = mock_artifact_server(
+            500,
+            serde_json::json!({
+                "error_code": "internal_error",
+                "error_message": "server unavailable"
+            }),
+        );
+
+        let error = call_artifact_server_extension(base_url)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("query_artifact_server failed"));
+        assert!(error.contains("internal_error"));
+        server.join().unwrap();
     }
 }
