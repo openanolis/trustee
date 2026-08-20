@@ -35,6 +35,9 @@ impl OPAInMemory {
         default_policy_id: &str,
         artifact_server_address: &str,
     ) -> Result<Self, PolicyError> {
+        #[cfg(not(feature = "policy-artifact-server"))]
+        let _ = artifact_server_address;
+
         let stem = default_policy_id.trim_end_matches(".rego");
         let mut policies = HashMap::new();
         policies.insert(stem.to_string(), raw_default_policy.as_bytes().to_vec());

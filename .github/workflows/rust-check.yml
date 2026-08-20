@@ -170,6 +170,8 @@ jobs:
       - name: Run cargo test
         run: |
           sudo -E PATH="$PATH" -s cargo test -p attestation-service -p verifier
+          sudo -E PATH="$PATH" -s cargo test -p attestation-service --lib --no-default-features
+          sudo -E PATH="$PATH" -s cargo test -p attestation-service --lib --no-default-features --features policy-artifact-server
 
       - name: Run pure-Rust TDX verifier tests
         run: |
