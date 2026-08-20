@@ -103,7 +103,7 @@ actix-web = { workspace = true, optional = true }
 aes-gcm = "0.10"
 aes-kw = "0.2"
 anyhow.workspace = true
-artifact-resolve-sdk = { git = "https://github.com/aliyun/artifact-server-rust-sdk.git", tag = "v0.1.0", optional = true }
+artifact-resolve-sdk = { git = "https://github.com/aliyun/artifact-server-rust-sdk.git", rev = "e5ce1955940fb7da29e58a89d3b7d635091500ea", optional = true }
 async-trait.workspace = true
 base64.workspace = true
 canon-json = { git = "https://github.com/inclavare-containers/canon-json-rs" }
