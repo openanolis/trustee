@@ -33,6 +33,7 @@ impl OPAInMemory {
     pub fn with_raw_default_policy(
         raw_default_policy: &str,
         default_policy_id: &str,
+        #[cfg_attr(not(feature = "policy-artifact-server"), allow(unused_variables))]
         artifact_server_address: &str,
     ) -> Result<Self, PolicyError> {
         #[cfg(not(feature = "policy-artifact-server"))]
@@ -49,12 +50,6 @@ impl OPAInMemory {
                     .map_err(PolicyError::ArtifactServerClientCreationFailed)?,
             ),
         })
-    }
-
-    fn is_valid_policy_id(policy_id: &str) -> bool {
-        policy_id
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
     }
 }
 
@@ -101,7 +96,7 @@ impl PolicyEngine for OPAInMemory {
     }
 
     async fn set_policy(&self, policy_id: String, policy: String) -> Result<(), PolicyError> {
-        if !Self::is_valid_policy_id(&policy_id) {
+        if !super::is_valid_policy_id(&policy_id) {
             return Err(PolicyError::InvalidPolicyId);
         }
         let bytes = URL_SAFE_NO_PAD.decode(policy)?;
@@ -142,7 +137,7 @@ impl PolicyEngine for OPAInMemory {
     }
 
     async fn delete_policy(&self, policy_id: String) -> Result<(), PolicyError> {
-        if !Self::is_valid_policy_id(&policy_id) {
+        if !super::is_valid_policy_id(&policy_id) {
             return Err(PolicyError::InvalidPolicyId);
         }
         if policy_id == "default" {
@@ -189,15 +184,11 @@ mod tests {
             DEFAULT_ARTIFACT_SERVER_ADDRESS,
         )
         .unwrap();
-        eng.set_policy("test".into(), allow_policy().into())
-            .await
-            .unwrap();
+        eng.set_policy("test".into(), allow_policy()).await.unwrap();
         let got = eng.get_policy("test".into()).await.unwrap();
         assert_eq!(got, allow_policy());
         // setting again overwrites cleanly
-        eng.set_policy("test".into(), allow_policy().into())
-            .await
-            .unwrap();
+        eng.set_policy("test".into(), allow_policy()).await.unwrap();
         assert_eq!(eng.get_policy("test".into()).await.unwrap(), allow_policy());
     }
 
@@ -220,5 +211,38 @@ mod tests {
             .await
             .unwrap();
         assert!(res.rules_result.contains_key("allow"));
+    }
+
+    #[cfg(feature = "policy-rvps")]
+    #[tokio::test]
+    async fn evaluate_with_host_await_reference_value() {
+        use crate::rvps::test_resolver;
+        let eng = OPAInMemory::with_raw_default_policy(
+            RAW_ALLOW_POLICY,
+            "test",
+            DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
+        let policy = r#"package policy
+import rego.v1
+allow if {
+  input.x == query_reference_value("k")
+}
+"#;
+        eng.set_policy("p".into(), URL_SAFE_NO_PAD.encode(policy))
+            .await
+            .unwrap();
+        let rvps = test_resolver(std::collections::HashMap::from([(
+            "k".to_string(),
+            serde_json::json!(1),
+        )]));
+        let res = eng
+            .evaluate(r#"{"x":1}"#, "p", vec!["allow".into()], rvps)
+            .await
+            .unwrap();
+        assert_eq!(
+            res.rules_result.get("allow"),
+            Some(&serde_json::Value::Bool(true))
+        );
     }
 }

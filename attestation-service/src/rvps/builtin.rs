@@ -10,6 +10,7 @@ pub struct BuiltinRvps {
 }
 
 impl BuiltinRvps {
+    #[allow(clippy::result_large_err)]
     pub fn new(config: Config) -> Result<Self> {
         let rvps = Rvps::new(config)?;
         Ok(Self {

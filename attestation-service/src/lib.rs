@@ -538,7 +538,7 @@ impl AttestationService {
             .get(url)
             .send()
             .await
-            .map_err(|e| anyhow!("Failed to fetch certificate from URL: {}", e))?;
+            .map_err(|e| anyhow!("Failed to fetch certificate from URL: {e}"))?;
 
         if !response.status().is_success() {
             return Err(anyhow!(
@@ -550,7 +550,7 @@ impl AttestationService {
         let content = response
             .bytes()
             .await
-            .map_err(|e| anyhow!("Failed to read certificate content: {}", e))?;
+            .map_err(|e| anyhow!("Failed to read certificate content: {e}"))?;
 
         Ok(Some(content.to_vec()))
     }

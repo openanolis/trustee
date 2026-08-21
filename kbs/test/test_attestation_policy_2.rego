@@ -1,11 +1,13 @@
 package test_policy_2
 
+import rego.v1
+
 default allow = false
 
-allow {
+allow if {
     input["submods"]["cpu"]["ear.veraison.annotated-evidence"]["sample"]
 }
 
-allow {
+allow if {
     input["submods"]["cpu"]["ear.veraison.annotated-evidence"]["sgx"]
-} 
+}

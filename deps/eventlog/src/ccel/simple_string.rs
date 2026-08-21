@@ -36,7 +36,7 @@ impl EventDataParser for SimpleStringParser {
         let end = start + length - start;
 
         if data.len() < end {
-            bail!("Data is too short: expected at least {} bytes", end);
+            bail!("Data is too short: expected at least {end} bytes");
         }
 
         let description_bytes = &data[start..end];

@@ -92,7 +92,7 @@ impl Attest for GrpcClientPool {
             .as_rpc
             .set_attestation_policy(req)
             .await
-            .map_err(|e| anyhow!("Set Policy Failed: {:?}", e))?;
+            .map_err(|e| anyhow!("Set Policy Failed: {e:?}"))?;
 
         Ok(())
     }
@@ -108,7 +108,7 @@ impl Attest for GrpcClientPool {
             .as_rpc
             .get_attestation_policy(req)
             .await
-            .map_err(|e| anyhow!("Get Policy Failed: {:?}", e))?;
+            .map_err(|e| anyhow!("Get Policy Failed: {e:?}"))?;
 
         Ok(resp.into_inner().policy)
     }
@@ -122,7 +122,7 @@ impl Attest for GrpcClientPool {
             .as_rpc
             .list_attestation_policies(req)
             .await
-            .map_err(|e| anyhow!("List Policies Failed: {:?}", e))?;
+            .map_err(|e| anyhow!("List Policies Failed: {e:?}"))?;
 
         let mut policies_map = HashMap::new();
         for policy_info in resp.into_inner().policies {
@@ -143,7 +143,7 @@ impl Attest for GrpcClientPool {
             .as_rpc
             .delete_attestation_policy(req)
             .await
-            .map_err(|e| anyhow!("Delete Policy Failed: {:?}", e))?;
+            .map_err(|e| anyhow!("Delete Policy Failed: {e:?}"))?;
 
         Ok(())
     }
@@ -248,7 +248,7 @@ impl Attest for GrpcClientPool {
             .rvps_rpc
             .register_reference_value(req)
             .await
-            .map_err(|e| anyhow!("Failed to set reference values: {:?}", e))?;
+            .map_err(|e| anyhow!("Failed to set reference values: {e:?}"))?;
 
         Ok(())
     }
@@ -264,7 +264,7 @@ impl Attest for GrpcClientPool {
             .rvps_rpc
             .set_reference_value_list(req)
             .await
-            .map_err(|e| anyhow!("Failed to set reference value list: {:?}", e))?;
+            .map_err(|e| anyhow!("Failed to set reference value list: {e:?}"))?;
 
         Ok(())
     }
@@ -282,7 +282,7 @@ impl Attest for GrpcClientPool {
             .rvps_rpc
             .query_reference_value(req)
             .await
-            .map_err(|e| anyhow!("Failed to get reference values: {:?}", e))?
+            .map_err(|e| anyhow!("Failed to get reference values: {e:?}"))?
             .into_inner();
 
         Ok(serde_json::from_str(&reference_value_results)?)
@@ -299,7 +299,7 @@ impl Attest for GrpcClientPool {
             .rvps_rpc
             .delete_reference_value(req)
             .await
-            .map_err(|e| anyhow!("Failed to delete reference value: {:?}", e))?;
+            .map_err(|e| anyhow!("Failed to delete reference value: {e:?}"))?;
 
         Ok(true)
     }

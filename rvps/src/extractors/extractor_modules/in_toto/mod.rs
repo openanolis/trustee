@@ -39,10 +39,10 @@ static INTOTO_VERSION: &str = "0.9";
 /// Provenance contains information including the following:
 /// * `version`: version field of the given in-toto metadata
 /// * `line_normalization`: whether Windows-style line separators
-/// (CRLF) are normalized to Unix-style line separators (LF) for
-/// cross-platform consistency.
+///   (CRLF) are normalized to Unix-style line separators (LF) for
+///   cross-platform consistency.
 /// * `files`: a key-value map. Keys are relative paths and the
-/// values are base64-encoded content of the file.
+///   values are base64-encoded content of the file.
 #[derive(Serialize, Deserialize)]
 pub struct Provenance {
     #[serde(default = "default_version")]
@@ -147,8 +147,7 @@ impl Extractor for InTotoExtractor {
             let payload_type = &envelope["payloadType"];
             if *payload_type != Value::String(String::from("application/vnd.in-toto+json")) {
                 bail!(
-                    "Unsupported payload type {}, only support `application/vnd.in-toto+json` now",
-                    payload_type
+                    "Unsupported payload type {payload_type}, only support `application/vnd.in-toto+json` now"
                 );
             }
 
@@ -239,7 +238,7 @@ pub mod test {
         let mut hasher = Sha256::new();
         hasher.update(&content);
         let result = hasher.finalize();
-        let result = format!("{:x}", result);
+        let result = format!("{result:x}");
         result
     }
 
@@ -255,7 +254,7 @@ pub mod test {
             }
 
             let ent = path.path();
-            let content = fs::read(&ent).unwrap();
+            let content = fs::read(ent).unwrap();
             let file_name = ent
                 .to_string_lossy()
                 .to_string()
@@ -273,8 +272,7 @@ pub mod test {
             files,
         };
 
-        let provenance = serde_json::to_string(&p).unwrap();
-        provenance
+        serde_json::to_string(&p).unwrap()
     }
 
     #[test]

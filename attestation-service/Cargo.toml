@@ -18,9 +18,7 @@ default = [
 # file, signer key/cert read by path. Turn off (`default-features = false`) for a
 # pure, fs-free library (e.g. wasm builds).
 fs = ["tokio/fs", "reference-value-provider-service/fs"]
-# Runtime bridge used by synchronous Regorus extensions to make bounded
-# asynchronous RVPS queries. Normal AS binaries enable this through `fs`.
-policy-rvps = ["tokio/rt", "tokio/time"]
+policy-rvps = ["tokio/time"]
 all-verifier = ["verifier/all-verifier"]
 # Like `all-verifier`, but the TDX verifier uses the dcap-qvl backend and SGX is
 # dropped (it would still link the DCAP shared library). See
@@ -102,7 +100,7 @@ actix-web = { workspace = true, optional = true }
 aes-gcm = "0.10"
 aes-kw = "0.2"
 anyhow.workspace = true
-artifact-resolve-sdk = { git = "https://github.com/aliyun/artifact-server-rust-sdk.git", tag = "v0.1.0", optional = true }
+artifact-resolve-sdk = { git = "https://github.com/aliyun/artifact-server-rust-sdk.git", rev = "e5ce1955940fb7da29e58a89d3b7d635091500ea", optional = true }
 async-trait.workspace = true
 base64.workspace = true
 canon-json = { git = "https://github.com/inclavare-containers/canon-json-rs" }
@@ -146,6 +144,11 @@ uuid = { version = "1.1.2", features = ["v4"] }
 [target.'cfg(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"))'.dependencies]
 uuid = { version = "1.1.2", features = ["v4", "js"] }
 getrandom = { version = "0.2", features = ["js"] }
+# regorus 0.11 pulls rand 0.10 -> getrandom 0.4, which needs the `wasm_js`
+# feature to compile for wasm32-unknown-unknown (the 0.2 line above only
+# covers rand 0.8). Declared as a renamed dep so feature unification turns
+# `wasm_js` on for the getrandom 0.4 that rand 0.10 transitively resolves to.
+getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 web-time.workspace = true
 
 

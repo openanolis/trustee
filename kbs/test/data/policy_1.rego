@@ -1,10 +1,12 @@
 package policy
 
+import rego.v1
+
 default allow = false
 
 path := split(data["resource-path"], "/")
 
-allow {
+allow if {
     count(path) == 3
     input["submods"]["cpu0"]["ear.veraison.annotated-evidence"]["sample"]["productId"] == path[1]
 }

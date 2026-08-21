@@ -23,7 +23,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTC_VERSION: 1.76.0
+  RUSTC_VERSION: 1.88.0
 
 jobs:
   kbs-check:
@@ -252,5 +252,5 @@ jobs:
         run: |
           RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p eventlog --target wasm32-unknown-unknown
           RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p reference-value-provider-service --target wasm32-unknown-unknown --no-default-features  # no "fs" feature in wasm
-          RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p attestation-service --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust
+          RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p attestation-service --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust,policy-artifact-server,policy-rvps
           RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p verifier --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust

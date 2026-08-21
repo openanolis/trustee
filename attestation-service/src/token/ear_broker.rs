@@ -213,7 +213,7 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
         policy_ids: Vec<String>,
         reference_value_resolver: Arc<ReferenceValueResolver>,
     ) -> Result<String> {
-        debug!("all_tee_claims: {:#?}", all_tee_claims);
+        debug!("all_tee_claims: {all_tee_claims:#?}");
 
         if policy_ids.len() > 1 {
             warn!("EAR token only accepts the first policy. The rest will be ignored.");
@@ -260,7 +260,7 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
                 let claim_value =
                     i8::try_from(v.as_i64().context("Policy claim value is not an integer")?)
                         .context("Policy claim value is outside the i8 range")?;
-                debug!("Policy claim: {}: {}", k, claim_value);
+                debug!("Policy claim: {k}: {claim_value}");
 
                 // The definition of Trustworthiness Claims in AR4SI
                 // (https://www.ietf.org/archive/id/draft-ietf-rats-ar4si-09.html#name-supportable-trustworthiness-cl)

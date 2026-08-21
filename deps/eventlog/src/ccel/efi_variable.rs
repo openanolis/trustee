@@ -36,11 +36,11 @@ impl EventDataParser for EvEfiVariableParser {
 
         let uname_length: u64 = data
             .gread_with(&mut index, LE)
-            .map_err(|e| anyhow::anyhow!("Failed to read unicode name length: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read unicode name length: {e:?}"))?;
 
         let var_data_length: u64 = data
             .gread_with(&mut index, LE)
-            .map_err(|e| anyhow::anyhow!("Failed to read variable data length: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read variable data length: {e:?}"))?;
 
         let desc_byte_len = uname_length
             .checked_mul(2)

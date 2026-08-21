@@ -246,10 +246,10 @@ async fn verify_evidence(
             for (index, single_gpu_evidence) in gpu_evidence.evidence_list.iter().enumerate() {
                 match serde_json::to_value(single_gpu_evidence) {
                     Result::Ok(ev) => {
-                        gpu_claims.insert(format!("nvidia_gpu.{}", index), ev);
+                        gpu_claims.insert(format!("nvidia_gpu.{index}"), ev);
                     }
                     Result::Err(err) => {
-                        warn!("GPU {} serialization failed: {}", index, err);
+                        warn!("GPU {index} serialization failed: {err}");
                     }
                 }
             }
@@ -283,13 +283,13 @@ async fn verify_evidence(
                             index,
                             std::result::Result::Ok(gpu_evidence_claims),
                         )) => {
-                            gpu_claims.insert(format!("nvidia_gpu.{}", index), gpu_evidence_claims);
+                            gpu_claims.insert(format!("nvidia_gpu.{index}"), gpu_evidence_claims);
                         }
                         std::result::Result::Ok((index, std::result::Result::Err(e))) => {
-                            warn!("GPU {} evaluation failed: {}", index, e);
+                            warn!("GPU {index} evaluation failed: {e}");
                         }
                         std::result::Result::Err(e) => {
-                            warn!("GPU task failed: {}", e);
+                            warn!("GPU task failed: {e}");
                         }
                     }
                 }

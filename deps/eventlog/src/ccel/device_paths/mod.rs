@@ -38,7 +38,7 @@ impl DevicePath {
             0x03 => Ok(DevicePath::Messaging),
             0x04 => Ok(DevicePath::Media),
             0x05 => Ok(DevicePath::BiosBootSpec),
-            _ => Err(anyhow!("Unknown Device Path Type: {:#04x}", efi_type)),
+            _ => Err(anyhow!("Unknown Device Path Type: {efi_type:#04x}")),
         }
     }
 

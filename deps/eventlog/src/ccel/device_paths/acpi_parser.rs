@@ -19,7 +19,7 @@ impl AcpiSubType {
     fn from_u8(sub_type: u8) -> Result<Self> {
         match sub_type {
             0x01 => Ok(AcpiSubType::Acpi),
-            _ => Err(anyhow!("Unknown ACPI subtype: {:#04x}", sub_type)),
+            _ => Err(anyhow!("Unknown ACPI subtype: {sub_type:#04x}")),
         }
     }
 
@@ -50,10 +50,10 @@ impl DeviceSubTypeParser for AcpiSubTypeParser {
         let mut index = 0;
         let hid: u32 = data
             .gread_with(&mut index, LE)
-            .map_err(|e| anyhow::anyhow!("Failed to read hid: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read hid: {e:?}"))?;
         let uid: u32 = data
             .gread_with(&mut index, LE)
-            .map_err(|e| anyhow::anyhow!("Failed to read uid: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read uid: {e:?}"))?;
 
         let vendor = hid & 0xFFFF;
 
@@ -68,7 +68,7 @@ impl DeviceSubTypeParser for AcpiSubTypeParser {
             vendor1 as char, vendor2 as char, vendor3 as char, device
         );
 
-        Ok(format!("ACPI({},{})", hid_formatted, uid))
+        Ok(format!("ACPI({hid_formatted},{uid})"))
     }
 }
 
