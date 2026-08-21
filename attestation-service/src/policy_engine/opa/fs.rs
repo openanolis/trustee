@@ -129,7 +129,7 @@ impl PolicyEngine for OPA {
                 .ok_or_else(|| PolicyError::PolicyDirPathToStringFailed)?,
         );
 
-        policy_file_path.push(format!("{}.rego", policy_id));
+        policy_file_path.push(format!("{policy_id}.rego"));
 
         std::fs::write(&policy_file_path, policy_bytes).map_err(PolicyError::WritePolicyFileFailed)
     }
@@ -190,7 +190,7 @@ impl PolicyEngine for OPA {
         if !policy_file_path.exists() {
             return Err(PolicyError::ReadPolicyFileFailed(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("Policy {} not found", policy_id),
+                format!("Policy {policy_id} not found"),
             )));
         }
 
@@ -369,13 +369,14 @@ default allow = true"
     #[tokio::test]
     async fn query_extension_is_keyed_cached_and_returns_null_for_missing() {
         let policy = r#"package policy
+import rego.v1
 default allow = false
-allow {
+allow if {
     query_reference_value("svn") == [7]
     query_reference_value("missing") == null
 }
-minimum = query_reference_value("minimum")
-svn_again = query_reference_value("svn")
+minimum := query_reference_value("minimum")
+svn_again := query_reference_value("svn")
 "#;
         let tmp = tempfile::tempdir().unwrap();
         let opa = OPA::new(

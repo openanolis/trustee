@@ -45,7 +45,7 @@ impl Verifier for SampleDeviceVerifier {
             .await
             .context("Evidence's identity verification error.")?;
 
-        debug!("TEE-Evidence<sample_device>: {:?}", tee_evidence);
+        debug!("TEE-Evidence<sample_device>: {tee_evidence:?}");
 
         let claims = parse_tee_evidence(&tee_evidence)?;
         Ok((claims, "gpu".to_string()))

@@ -28,10 +28,10 @@ impl EventDataParser for EvEventTagParser {
         let mut index = 0;
         let event_id = data
             .gread_with::<u32>(&mut index, LE)
-            .map_err(|e| anyhow!("Cannot read event id: {:?}", e))?;
+            .map_err(|e| anyhow!("Cannot read event id: {e:?}"))?;
         let data_size = data
             .gread_with::<u32>(&mut index, LE)
-            .map_err(|e| anyhow!("Cannot read length: {:?}", e))?;
+            .map_err(|e| anyhow!("Cannot read length: {e:?}"))?;
 
         let event_data = data
             .get(index..index + data_size as usize)

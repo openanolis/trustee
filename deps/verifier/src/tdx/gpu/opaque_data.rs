@@ -31,10 +31,7 @@ impl OpaqueData {
 
             // Map field name based on data type
             let field_name = Self::get_field_name(data_type);
-            debug!(
-                "Opaque field: {} (type={}, size={})",
-                field_name, data_type, data_size
-            );
+            debug!("Opaque field: {field_name} (type={data_type}, size={data_size})");
 
             fields.insert(field_name, field_data);
         }
@@ -48,9 +45,9 @@ impl OpaqueData {
                 // Remove trailing null characters
                 let trimmed_data: Vec<u8> = data.iter().cloned().take_while(|&b| b != 0).collect();
                 String::from_utf8(trimmed_data)
-                    .map_err(|e| anyhow!("Cannot convert field {} to string: {}", field_name, e))
+                    .map_err(|e| anyhow!("Cannot convert field {field_name} to string: {e}"))
             }
-            None => Err(anyhow!("Field {} does not exist", field_name)),
+            None => Err(anyhow!("Field {field_name} does not exist")),
         }
     }
 
@@ -59,7 +56,7 @@ impl OpaqueData {
         self.fields
             .get(field_name)
             .map(|v| v.as_slice())
-            .ok_or_else(|| anyhow!("Field {} does not exist", field_name))
+            .ok_or_else(|| anyhow!("Field {field_name} does not exist"))
     }
 
     fn get_field_name(data_type: u16) -> String {
@@ -94,7 +91,7 @@ impl OpaqueData {
             34 => "OPAQUE_DATA_VERSION".to_string(),
             35 => "CHIP_INFO".to_string(),
             255 => "INVALID".to_string(),
-            _ => format!("UNKNOWN_{}", data_type),
+            _ => format!("UNKNOWN_{data_type}"),
         }
     }
 }

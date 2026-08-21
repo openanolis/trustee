@@ -74,10 +74,7 @@ impl ExtractorModuleList {
     pub fn get_func(&self, extractor_name: &str) -> Result<&ExtractorInstantiateFunc> {
         let instantiate_func: &ExtractorInstantiateFunc =
             self.mod_list.get(extractor_name).ok_or_else(|| {
-                anyhow!(
-                    "RVPS Extractors does not support the given extractor: {}!",
-                    extractor_name
-                )
+                anyhow!("RVPS Extractors does not support the given extractor: {extractor_name}!")
             })?;
         Ok(instantiate_func)
     }

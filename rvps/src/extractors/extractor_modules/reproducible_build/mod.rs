@@ -67,7 +67,7 @@ impl ReproducibleBuildExtractor {
                 }
             }
             Err(e) => {
-                return Err(anyhow!("Docker is not installed or not in PATH: {}", e));
+                return Err(anyhow!("Docker is not installed or not in PATH: {e}"));
             }
         }
 
@@ -87,7 +87,7 @@ impl ReproducibleBuildExtractor {
                 version_output.trim().to_string()
             }
             Err(e) => {
-                return Err(anyhow!("Python 3 is not installed or not in PATH: {}", e));
+                return Err(anyhow!("Python 3 is not installed or not in PATH: {e}"));
             }
         };
 
@@ -95,8 +95,7 @@ impl ReproducibleBuildExtractor {
         // Expected format: "Python 3.x.y" or "Python 3.x"
         if !python_version.starts_with("Python 3.") {
             return Err(anyhow!(
-                "Python 3.x is required but not found. Found: {}",
-                python_version
+                "Python 3.x is required but not found. Found: {python_version}"
             ));
         }
 
@@ -110,20 +109,17 @@ impl ReproducibleBuildExtractor {
 
                 if major != 3 || minor < 7 {
                     return Err(anyhow!(
-                        "Python 3.7 or higher is required. Found: {}",
-                        python_version
+                        "Python 3.7 or higher is required. Found: {python_version}"
                     ));
                 }
             } else {
                 return Err(anyhow!(
-                    "Could not parse Python version. Found: {}",
-                    python_version
+                    "Could not parse Python version. Found: {python_version}"
                 ));
             }
         } else {
             return Err(anyhow!(
-                "Could not parse Python version string. Found: {}",
-                python_version
+                "Could not parse Python version string. Found: {python_version}"
             ));
         }
 
@@ -248,8 +244,7 @@ fn execute_build_script(temp_dir: &TempDir, buildspec_path: &std::path::Path) ->
     // Check if the build runner script exists
     if !build_runner_script.exists() {
         return Err(anyhow!(
-            "Build runner script does not exist: {:?}",
-            build_runner_script
+            "Build runner script does not exist: {build_runner_script:?}"
         ));
     }
 
@@ -272,10 +267,7 @@ fn execute_build_script(temp_dir: &TempDir, buildspec_path: &std::path::Path) ->
         .context("Failed to wait for build runner script")?;
 
     if !status.success() {
-        return Err(anyhow!(
-            "Build runner script exited with status: {}",
-            status
-        ));
+        return Err(anyhow!("Build runner script exited with status: {status}"));
     }
 
     println!("Build runner script executed successfully");
@@ -335,7 +327,7 @@ pub fn hash_subjects_from_rpm<P: AsRef<Path>>(rpm_path: P) -> Result<Vec<(String
     let file_entries = pkg
         .metadata
         .get_file_entries()
-        .map_err(|e| anyhow!("Failed to get file entries: {}", e))?;
+        .map_err(|e| anyhow!("Failed to get file entries: {e}"))?;
 
     let mut results: Vec<(String, String)> = Vec::new();
 

@@ -23,7 +23,7 @@ impl MediaSubType {
             0x01 => Ok(MediaSubType::HardDrive),
             0x03 => Ok(MediaSubType::MediaVendor),
             0x04 => Ok(MediaSubType::FilePath),
-            _ => Err(anyhow!("Unknown Media subtype: {:#04x}", sub_type)),
+            _ => Err(anyhow!("Unknown Media subtype: {sub_type:#04x}")),
         }
     }
 
@@ -78,17 +78,16 @@ impl DeviceSubTypeParser for HardDriveParser {
                 sig = format_uefi_guid(partition_signature)
             }
             _ => {
-                bail!("Unknown partition format {}", partition_format)
+                bail!("Unknown partition format {partition_format}")
             }
         }
 
         if partition_number != 0 {
-            partition_details = format!(",{:#x},{:#x}", partition_start_lba, partition_size_lba)
+            partition_details = format!(",{partition_start_lba:#x},{partition_size_lba:#x}")
         }
 
         Ok(format!(
-            "HD({},{},{}{})",
-            partition_number, prefix, sig, partition_details
+            "HD({partition_number},{prefix},{sig}{partition_details})"
         ))
     }
 }

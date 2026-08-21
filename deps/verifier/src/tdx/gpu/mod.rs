@@ -79,9 +79,9 @@ impl GpuEvidence {
             );
 
             let driver_rim_content = driver_rim_result
-                .map_err(|e| anyhow!("Cannot get Driver RIM from RIM service: {}", e))?;
+                .map_err(|e| anyhow!("Cannot get Driver RIM from RIM service: {e}"))?;
             let vbios_rim_content = vbios_rim_result
-                .map_err(|e| anyhow!("Cannot get VBIOS RIM from RIM service: {}", e))?;
+                .map_err(|e| anyhow!("Cannot get VBIOS RIM from RIM service: {e}"))?;
 
             let driver_rim = parse_rim_content(&driver_rim_content, "driver")?;
             let vbios_rim = parse_rim_content(&vbios_rim_content, "vbios")?;
@@ -136,11 +136,11 @@ fn verify_measurements(
 
                 if found_match {
                     matches += 1;
-                    debug!("Measurement index {} matches (Driver)", index);
+                    debug!("Measurement index {index} matches (Driver)");
                 } else {
                     mismatches += 1;
-                    warn!("Measurement index {} does not match (Driver)", index);
-                    warn!("   Runtime value: {}", runtime_value);
+                    warn!("Measurement index {index} does not match (Driver)");
+                    warn!("   Runtime value: {runtime_value}");
                     warn!("   Expected values: {:?}", measurement.values);
                 }
             }
@@ -161,11 +161,11 @@ fn verify_measurements(
 
                 if found_match {
                     matches += 1;
-                    debug!("Measurement index {} matches (VBIOS)", index);
+                    debug!("Measurement index {index} matches (VBIOS)");
                 } else {
                     mismatches += 1;
-                    warn!("Measurement index {} does not match (VBIOS)", index);
-                    warn!("   Runtime value: {}", runtime_value);
+                    warn!("Measurement index {index} does not match (VBIOS)");
+                    warn!("   Runtime value: {runtime_value}");
                     warn!("   Expected values: {:?}", measurement.values);
                 }
             }
@@ -173,8 +173,8 @@ fn verify_measurements(
     }
 
     info!("Measurement verification result:");
-    info!("   Matches: {}", matches);
-    info!("   Mismatches: {}", mismatches);
+    info!("   Matches: {matches}");
+    info!("   Mismatches: {mismatches}");
 
     if mismatches > 0 {
         error!("Measurement mismatch found! Device may be tampered with or using unsupported software version.");

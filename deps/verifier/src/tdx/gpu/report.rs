@@ -33,10 +33,7 @@ impl AttestationReport {
         }
 
         debug!("Raw data length: {} bytes", data.len());
-        debug!(
-            "Skipping {} bytes of request message",
-            REQUEST_MESSAGE_LENGTH
-        );
+        debug!("Skipping {REQUEST_MESSAGE_LENGTH} bytes of request message");
 
         // Skip request message and start parsing from response message
         let response_data = &data[REQUEST_MESSAGE_LENGTH..];
@@ -84,10 +81,10 @@ impl AttestationReport {
             u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], 0]);
         offset += 3;
 
-        debug!("SPDM version: 0x{:02X}", spdm_version);
-        debug!("Response code: 0x{:02X}", response_code);
-        debug!("Number of measurement blocks: {}", number_of_blocks);
-        debug!("Measurement record length: {}", measurement_record_length);
+        debug!("SPDM version: 0x{spdm_version:02X}");
+        debug!("Response code: 0x{response_code:02X}");
+        debug!("Number of measurement blocks: {number_of_blocks}");
+        debug!("Measurement record length: {measurement_record_length}");
 
         // Parse measurement record
         if offset + measurement_record_length as usize > data.len() {
@@ -123,10 +120,7 @@ impl AttestationReport {
         let opaque_length = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
         offset += 2;
 
-        debug!(
-            "Opaque data length: {} bytes, current offset: {}",
-            opaque_length, offset
-        );
+        debug!("Opaque data length: {opaque_length} bytes, current offset: {offset}");
 
         // Parse opaque data
         if offset + opaque_length > data.len() {
@@ -172,10 +166,7 @@ impl AttestationReport {
 
         for block_idx in 0..number_of_blocks {
             if offset >= data.len() {
-                debug!(
-                    "Warning: insufficient data for measurement block {}",
-                    block_idx
-                );
+                debug!("Warning: insufficient data for measurement block {block_idx}");
                 break;
             }
 
@@ -193,8 +184,7 @@ impl AttestationReport {
             offset += 2;
 
             debug!(
-                "Measurement block {}: spec=0x{:02X}, size={}",
-                index, measurement_spec, measurement_size
+                "Measurement block {index}: spec=0x{measurement_spec:02X}, size={measurement_size}"
             );
             debug!(
                 "Current offset: {}, data length: {}, need to read: {}",
@@ -206,8 +196,7 @@ impl AttestationReport {
             // Verify measurement spec is DMTF (bit 0 = 1)
             if measurement_spec & 0x01 == 0 {
                 return Err(anyhow!(
-                    "Unsupported measurement spec: 0x{:02X}",
-                    measurement_spec
+                    "Unsupported measurement spec: 0x{measurement_spec:02X}"
                 ));
             }
 
@@ -232,10 +221,7 @@ impl AttestationReport {
             measurements.insert(index, measurement_value);
         }
 
-        debug!(
-            "Measurement record parsing completed, used {} bytes",
-            offset
-        );
+        debug!("Measurement record parsing completed, used {offset} bytes");
         Ok(measurements)
     }
 
@@ -247,10 +233,7 @@ impl AttestationReport {
         let value_type = data[0];
         let value_size = u16::from_le_bytes([data[1], data[2]]) as usize;
 
-        debug!(
-            "DMTF measurement: type=0x{:02X}, size={}",
-            value_type, value_size
-        );
+        debug!("DMTF measurement: type=0x{value_type:02X}, size={value_size}");
 
         if 3 + value_size > data.len() {
             return Err(anyhow!("Insufficient DMTF measurement value data length"));

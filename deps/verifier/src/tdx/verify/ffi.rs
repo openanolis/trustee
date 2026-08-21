@@ -228,7 +228,7 @@ pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationRes
         tee_type: supp_data.tee_type,
     };
 
-    debug!("TCB verification result: {:?}", result);
+    debug!("TCB verification result: {result:?}");
 
     Ok(result)
 }
