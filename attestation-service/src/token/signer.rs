@@ -28,7 +28,7 @@ use p256::pkcs8::DecodePrivateKey as EcDecodePrivateKey;
 #[cfg(feature = "fs")]
 use rsa::pkcs1::DecodeRsaPrivateKey;
 #[cfg(feature = "fs")]
-use rustls_pki_types::pem::PemObject;
+use rustls_pki_types::pem::{PemObject, SectionKind};
 
 /// Shared RSA key size (bits) for ephemeral RSA signers.
 const RSA_KEY_BITS: u32 = 2048;
@@ -184,16 +184,61 @@ fn load_cert_chain(cert_path: &Option<String>) -> Result<Option<Vec<CertificateD
     }
 }
 
+/// Decode the first private-key PEM section in `pem`, returning its
+/// [`SectionKind`] and raw DER bytes.
+///
+/// This skips non-private-key sections — most notably the `EC PARAMETERS`
+/// block that `openssl ecparam -genkey` (without `-noout`) prepends to the
+/// `EC PRIVATE KEY` block. The rust-crypto `*_pem` decoders (`pkcs8`/`sec1`/
+/// `pkcs1`) wrap `pem_rfc7468::decode_vec`, which parses only the *first* PEM
+/// block and rejects any trailing data with `Pem(PostEncapsulationBoundary)`;
+/// a two-block EC key file is therefore rejected. The historical
+/// openssl-based signer (`EcKey::private_key_from_pem` /
+/// `Rsa::private_key_from_pem`) scanned the whole file for a recognized block
+/// — iterating sections and decoding the DER directly restores that tolerant
+/// behavior.
+#[cfg(feature = "fs")]
+fn first_private_key_section(pem: &[u8]) -> Result<(SectionKind, Vec<u8>)> {
+    for item in <(SectionKind, Vec<u8>)>::pem_slice_iter(pem) {
+        let (kind, der) = item.context("Invalid PEM private key")?;
+        match kind {
+            SectionKind::RsaPrivateKey | SectionKind::PrivateKey | SectionKind::EcPrivateKey => {
+                return Ok((kind, der));
+            }
+            // Skip non-key sections (e.g. `EC PARAMETERS`, certificates).
+            _ => continue,
+        }
+    }
+    Err(anyhow::anyhow!(
+        "No private key PEM section found in signer key file"
+    ))
+}
+
 #[cfg(feature = "fs")]
 impl FsSigner<RsaPrivateKey> {
-    /// Parse an RSA private key from `SignerConfig::key_path` (PKCS#8, with a
-    /// PKCS#1 fallback).
+    /// Parse an RSA private key from `SignerConfig::key_path`.
+    ///
+    /// Accepts either PKCS#8 (`PRIVATE KEY`) or PKCS#1 (`RSA PRIVATE KEY`)
+    /// sections, and tolerates extra non-key PEM sections in the file (the
+    /// key section is selected by its PEM label, not its position).
     pub fn from_config(signer: SignerConfig) -> Result<Self> {
-        let pem_data = std::fs::read_to_string(&signer.key_path)
-            .context("Read Token Signer private key failed")?;
-        let private_key = RsaPrivateKey::from_pkcs8_pem(&pem_data)
-            .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&pem_data))
-            .context("Parse Token Signer private key failed")?;
+        let pem_data =
+            std::fs::read(&signer.key_path).context("Read Token Signer private key failed")?;
+        let (kind, der) = first_private_key_section(&pem_data)?;
+        let private_key = match kind {
+            SectionKind::PrivateKey => {
+                RsaPrivateKey::from_pkcs8_der(&der).map_err(anyhow::Error::from)
+            }
+            SectionKind::RsaPrivateKey => {
+                RsaPrivateKey::from_pkcs1_der(&der).map_err(anyhow::Error::from)
+            }
+            kind => {
+                return Err(anyhow::anyhow!(
+                    "unexpected signer key section kind: {kind:?}"
+                ))
+            }
+        }
+        .context("Parse Token Signer private key failed")?;
         // Cache the cert chain at construction (see `cert_chain` field doc).
         let cert_chain = load_cert_chain(&signer.cert_path)?;
         Ok(Self {
@@ -207,15 +252,30 @@ impl FsSigner<RsaPrivateKey> {
 
 #[cfg(feature = "fs")]
 impl FsSigner<SecretKey> {
-    /// Parse an EC P-256 private key from `SignerConfig::key_path` (SEC1, with
-    /// a PKCS#8 fallback).
+    /// Parse an EC P-256 private key from `SignerConfig::key_path`.
+    ///
+    /// Accepts either SEC1 (`EC PRIVATE KEY`) or PKCS#8 (`PRIVATE KEY`)
+    /// sections, and tolerates extra non-key PEM sections in the file — most
+    /// notably the `EC PARAMETERS` block that `openssl ecparam -genkey`
+    /// (without `-noout`) prepends to the `EC PRIVATE KEY` block, which the
+    /// strict single-block rust-crypto `*_pem` decoders reject with a
+    /// "PEM error in post-encapsulation boundary".
     pub fn from_config(signer: SignerConfig) -> Result<Self> {
         let pem_data =
             std::fs::read(&signer.key_path).context("Read Token Signer private key failed")?;
-        let pem_str = std::str::from_utf8(&pem_data).context("Token Signer key not UTF-8")?;
-        let private_key = SecretKey::from_sec1_pem(pem_str)
-            .or_else(|_| SecretKey::from_pkcs8_pem(pem_str))
-            .context("Parse Token Signer private key failed")?;
+        let (kind, der) = first_private_key_section(&pem_data)?;
+        let private_key = match kind {
+            SectionKind::EcPrivateKey => {
+                SecretKey::from_sec1_der(&der).map_err(anyhow::Error::from)
+            }
+            SectionKind::PrivateKey => SecretKey::from_pkcs8_der(&der).map_err(anyhow::Error::from),
+            kind => {
+                return Err(anyhow::anyhow!(
+                    "unexpected signer key section kind: {kind:?}"
+                ))
+            }
+        }
+        .context("Parse Token Signer private key failed")?;
         // Cache the cert chain at construction (see `cert_chain` field doc).
         let cert_chain = load_cert_chain(&signer.cert_path)?;
         Ok(Self {
@@ -250,5 +310,93 @@ impl EphemeralSigner<SecretKey> {
 impl Default for EphemeralSigner<SecretKey> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(all(test, feature = "fs"))]
+mod tests {
+    use super::*;
+
+    /// Write `pem` to a fresh temp file and return its path.
+    fn write_key(pem: &str) -> std::path::PathBuf {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        std::fs::write(&path, pem).unwrap();
+        // Detach so the file persists for `from_config` to read; the test is
+        // short-lived and the temp dir is cleaned up by the OS.
+        std::mem::forget(file);
+        path
+    }
+
+    fn signer_config(key_path: impl Into<String>) -> SignerConfig {
+        SignerConfig {
+            key_path: key_path.into(),
+            cert_url: None,
+            cert_path: None,
+        }
+    }
+
+    // Two-block EC key produced by `openssl ecparam -genkey -name prime256v1`
+    // (without `-noout`): an `EC PARAMETERS` block precedes the
+    // `EC PRIVATE KEY` block. The strict single-block rust-crypto `_pem`
+    // decoders reject this with `Pem(PostEncapsulationBoundary)`.
+    const TWO_BLOCK_EC_PEM: &str = "-----BEGIN EC PARAMETERS-----
+BggqhkjOPQMBBw==
+-----END EC PARAMETERS-----
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIGfmZRNbfcyHw4bVXRlnol/VJegydBf67x2AAuw61DAuoAoGCCqGSM49
+AwEHoUQDQgAE8AgdguGDlcmxcaYQj6n2f7b0x6ifhHX/WN/SuYllSHdj6QCB7mDA
+KUtKTsWMoHmmSNcm3gS0XZw6Qc/P2dnd4Q==
+-----END EC PRIVATE KEY-----
+";
+
+    // Clean single-block SEC1 EC private key.
+    const SEC1_EC_PEM: &str = "-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIGfmZRNbfcyHw4bVXRlnol/VJegydBf67x2AAuw61DAuoAoGCCqGSM49
+AwEHoUQDQgAE8AgdguGDlcmxcaYQj6n2f7b0x6ifhHX/WN/SuYllSHdj6QCB7mDA
+KUtKTsWMoHmmSNcm3gS0XZw6Qc/P2dnd4Q==
+-----END EC PRIVATE KEY-----
+";
+
+    // The same P-256 key as PKCS#8 (`PRIVATE KEY`).
+    const PKCS8_EC_PEM: &str = "-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgZ+ZlE1t9zIfDhtVd
+GWeiX9Ul6DJ0F/rvHYAC7DrUMC6hRANCAATwCB2C4YOVybFxphCPqfZ/tvTHqJ+E
+df9Y39K5iWVId2PpAIHuYMApS0pOxYygeaZI1ybeBLRdnDpBz8/Z2d3h
+-----END PRIVATE KEY-----
+";
+
+    #[test]
+    fn ec_loads_two_block_key_with_ec_parameters() {
+        // Regression: `openssl ecparam -genkey` (no -noout) — must still load.
+        let path = write_key(TWO_BLOCK_EC_PEM);
+        let signer = FsSigner::<SecretKey>::from_config(signer_config(path.to_str().unwrap()))
+            .expect("two-block EC key must parse");
+        assert!(!signer.private_key().to_bytes().is_empty());
+    }
+
+    #[test]
+    fn ec_loads_clean_sec1_key() {
+        let path = write_key(SEC1_EC_PEM);
+        let signer = FsSigner::<SecretKey>::from_config(signer_config(path.to_str().unwrap()))
+            .expect("clean SEC1 EC key must parse");
+        assert!(!signer.private_key().to_bytes().is_empty());
+    }
+
+    #[test]
+    fn ec_loads_pkcs8_key() {
+        let path = write_key(PKCS8_EC_PEM);
+        let signer = FsSigner::<SecretKey>::from_config(signer_config(path.to_str().unwrap()))
+            .expect("PKCS#8 EC key must parse");
+        assert!(!signer.private_key().to_bytes().is_empty());
+    }
+
+    #[test]
+    fn ec_rejects_non_key_file() {
+        let path = write_key("not a PEM file at all");
+        let err = FsSigner::<SecretKey>::from_config(signer_config(path.to_str().unwrap()))
+            .err()
+            .expect("non-PEM content must error");
+        assert!(err.to_string().contains("No private key"));
     }
 }
