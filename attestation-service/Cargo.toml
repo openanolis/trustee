@@ -12,16 +12,38 @@ default = [
     "fs",
     "policy-rvps",
     "policy-artifact-server",
+    "regorus-interpreter",
 ]
+
+# Policy execution backend. Exactly one must be enabled (enforced at compile
+# time in src/policy_engine/opa/mod.rs); enabling neither or both is a
+# compile_error. The two backends expose the same public interface
+# (`ExtensionFunction` / `with_extra_extension_functions`) so downstream code
+# is identical regardless of which is selected.
+#
+# `regorus-interpreter` (the default) is the stable legacy path: the sync
+# regorus `Engine` + `Extension`s, driven via `tokio::task::spawn_blocking`
+# so the extensions' `block_on` never nests the runtime. Non-wasm only.
+#
+# `regorus-regovm` selects the (still unstable) Regorus VM suspendable
+# host-call path (`__builtin_host_await` + `ExecutionMode::Suspendable`),
+# which needs no tokio runtime and works on wasm32. It forwards regorus's
+# `rvm` feature (the bytecode VM module); `rvm` is NOT in the workspace
+# regorus baseline, so the interpreter build never compiles it.
+#
+# `arc` (regorus's `Rc`=`Arc` alias, making `regorus::Value` `Send`) stays
+# in the workspace baseline: BOTH backends return `regorus::Value` from
+# `Send` async extension futures, so `arc` is required under either backend,
+# not just `regorus-regovm`.
+regorus-interpreter = []
+regorus-regovm = ["regorus/rvm"]
 
 # Filesystem-backed implementations: config-from-file, on-disk OPA policy engine,
 # rvps local_json/local_fs storage, nonce-key persistence, signer transparency
 # file, signer key/cert read by path. Turn off (`default-features = false`) for a
 # pure, fs-free library (e.g. wasm builds).
 fs = ["tokio/fs", "reference-value-provider-service/fs"]
-# Runtime bridge used by synchronous Regorus extensions to make bounded
-# asynchronous RVPS queries. Normal AS binaries enable this through `fs`.
-policy-rvps = ["tokio/rt", "tokio/time"]
+policy-rvps = ["tokio/time"]
 all-verifier = ["verifier/all-verifier"]
 # Like `all-verifier`, but the TDX verifier uses the dcap-qvl backend and SGX is
 # dropped (it would still link the DCAP shared library). See

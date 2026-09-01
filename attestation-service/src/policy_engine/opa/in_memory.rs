@@ -21,6 +21,19 @@ pub struct OPAInMemory {
     policies: RwLock<HashMap<String, Vec<u8>>>,
     #[cfg(feature = "policy-artifact-server")]
     artifact_server_client: Arc<artifact_resolve_sdk::Client>,
+    /// Caller-injected functions exposed to rego policy. Generic injection
+    /// point so a downstream crate can supply functions regorus does not ship
+    /// built-in. Each entry's key becomes a rego-callable function name. `None`
+    /// keeps the built-ins-only behaviour. See [`with_extra_extension_functions`].
+    extra_extension_functions: Option<Vec<(String, super::ExtensionFunction)>>,
+    /// Compiled-RVM-program cache shared across `evaluate` calls, keyed by
+    /// `policy_id` with the content hash carried as a validation checksum. A
+    /// repeated appraisal of the same policy skips `Engine` construction, policy
+    /// parsing and compilation entirely and only runs the per-rule VM; a changed
+    /// source invalidates just that entry. The affected entry is dropped on
+    /// `set_policy`/`delete_policy`.
+    #[cfg(feature = "regorus-regovm")]
+    program_cache: Arc<super::ProgramCache>,
 }
 
 impl OPAInMemory {
@@ -33,6 +46,7 @@ impl OPAInMemory {
     pub fn with_raw_default_policy(
         raw_default_policy: &str,
         default_policy_id: &str,
+        #[cfg_attr(not(feature = "policy-artifact-server"), allow(unused_variables))]
         artifact_server_address: &str,
     ) -> Result<Self, PolicyError> {
         #[cfg(not(feature = "policy-artifact-server"))]
@@ -48,13 +62,40 @@ impl OPAInMemory {
                 artifact_resolve_sdk::Client::new(artifact_server_address)
                     .map_err(PolicyError::ArtifactServerClientCreationFailed)?,
             ),
+            extra_extension_functions: None,
+            #[cfg(feature = "regorus-regovm")]
+            program_cache: Arc::new(super::ProgramCache::default()),
         })
     }
 
-    fn is_valid_policy_id(policy_id: &str) -> bool {
-        policy_id
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    /// Inject additional functions callable from rego policy. Each `(key,
+    /// function)` pair registers a rego function named `key` that policy can
+    /// call to perform work regorus does not ship built-in. User functions are
+    /// merged after the built-in `query_reference_value` /
+    /// `query_artifact_server` extensions, so a colliding key is overridden by
+    /// the caller's explicit choice.
+    ///
+    /// This is the generic extension point that lets a downstream crate supply
+    /// host functions regorus omits by design.
+    ///
+    /// # Caller responsibility: name legality
+    ///
+    /// The caller **must** ensure each `key` is a legal rego function name (a
+    /// plain identifier, or a dotted path of identifiers such as
+    /// `pkg.func`). The key is interpolated into generated rego source, so an
+    /// illegal or hostile name can break policy compilation or inject rego
+    /// source. Trustees does not validate names here; validate upstream.
+    ///
+    /// Both backends resolve dotted names (e.g. `crypto.sha256`): the
+    /// `regorus-regovm` backend via generated function-rule wrappers, the
+    /// `regorus-interpreter` backend via regorus's `add_extension` path
+    /// resolution.
+    pub fn with_extra_extension_functions(
+        mut self,
+        functions: Vec<(String, super::ExtensionFunction)>,
+    ) -> Self {
+        self.extra_extension_functions = Some(functions);
+        self
     }
 }
 
@@ -96,12 +137,20 @@ impl PolicyEngine for OPAInMemory {
             reference_value_resolver,
             #[cfg(feature = "policy-artifact-server")]
             self.artifact_server_client.clone(),
+            // The functions are `Arc` handles, so cloning the `Vec` is cheap and
+            // lets `evaluate(&self)` hand the injected functions to
+            // `common_evaluate` without moving out of `&self`.
+            self.extra_extension_functions.clone(),
+            // Shared program cache: the first appraisal of a policy pays the
+            // compile; subsequent appraisals of the same content hit the cache.
+            #[cfg(feature = "regorus-regovm")]
+            &self.program_cache,
         )
         .await
     }
 
     async fn set_policy(&self, policy_id: String, policy: String) -> Result<(), PolicyError> {
-        if !Self::is_valid_policy_id(&policy_id) {
+        if !super::is_valid_policy_id(&policy_id) {
             return Err(PolicyError::InvalidPolicyId);
         }
         let bytes = URL_SAFE_NO_PAD.decode(policy)?;
@@ -118,6 +167,12 @@ impl PolicyEngine for OPAInMemory {
                 .add_policy(policy_id.clone(), src.to_string())
                 .map_err(PolicyError::InvalidPolicy)?;
         }
+        // Policy content changed (or was added): drop this policy_id's cached
+        // programs so the next evaluation recompiles against the new source. The
+        // hash-validation check would catch staleness anyway, but dropping the
+        // slot here frees the memory eagerly instead of at the next lazy miss.
+        #[cfg(feature = "regorus-regovm")]
+        self.program_cache.write().await.remove(&policy_id);
         let mut policies = self.policies.write().await;
         policies.insert(policy_id, bytes);
         Ok(())
@@ -146,12 +201,15 @@ impl PolicyEngine for OPAInMemory {
     }
 
     async fn delete_policy(&self, policy_id: String) -> Result<(), PolicyError> {
-        if !Self::is_valid_policy_id(&policy_id) {
+        if !super::is_valid_policy_id(&policy_id) {
             return Err(PolicyError::InvalidPolicyId);
         }
         if policy_id == "default" {
             return Err(PolicyError::CannotDeleteDefaultPolicy);
         }
+        // A deleted policy's cached programs must not outlive it.
+        #[cfg(feature = "regorus-regovm")]
+        self.program_cache.write().await.remove(&policy_id);
         let mut policies = self.policies.write().await;
         policies.remove(&policy_id);
         Ok(())
@@ -220,5 +278,140 @@ mod tests {
             .await
             .unwrap();
         assert!(res.rules_result.contains_key("allow"));
+    }
+
+    #[cfg(feature = "policy-rvps")]
+    #[tokio::test]
+    async fn evaluate_with_reference_value_extension() {
+        use crate::rvps::test_resolver;
+        let eng = OPAInMemory::with_raw_default_policy(
+            RAW_ALLOW_POLICY,
+            "test",
+            DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
+        let policy = r#"package policy
+import rego.v1
+allow if {
+  input.x == query_reference_value("k")
+}
+"#;
+        eng.set_policy("p".into(), URL_SAFE_NO_PAD.encode(policy))
+            .await
+            .unwrap();
+        let rvps = test_resolver(std::collections::HashMap::from([(
+            "k".to_string(),
+            serde_json::json!(1),
+        )]));
+        let res = eng
+            .evaluate(r#"{"x":1}"#, "p", vec!["allow".into()], rvps)
+            .await
+            .unwrap();
+        assert_eq!(
+            res.rules_result.get("allow"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    // Injects an extension under the dotted key `crypto.sha256` and verifies a
+    // rego policy can call `crypto.sha256("abc")` and receive the real sha256
+    // hex. Runs on both backends: dotted keys resolve on the `regorus-regovm`
+    // backend (via the `build_extensions` function-rule wrappers) AND on the
+    // `regorus-interpreter` backend (regorus resolves a dotted `add_extension`
+    // path to the matching policy call site).
+    #[cfg(feature = "policy-rvps")]
+    #[tokio::test]
+    async fn evaluate_with_injected_dotted_extension() {
+        use crate::policy_engine::opa::ExtensionFunction;
+        use crate::rvps::test_resolver;
+        use sha2::Digest;
+
+        let sha256_fn: ExtensionFunction = Arc::new(|argument: regorus::Value| {
+            Box::pin(async move {
+                let s = argument.as_string().map_err(|e| {
+                    PolicyError::EvalPolicyFailed(anyhow::anyhow!(
+                        "crypto.sha256 arg not a string: {e}"
+                    ))
+                })?;
+                let mut hasher = sha2::Sha256::new();
+                hasher.update(s.as_bytes());
+                Ok(regorus::Value::String(
+                    hex::encode(hasher.finalize()).into(),
+                ))
+            })
+        });
+        let policy = r#"package policy
+import rego.v1
+test_hash := crypto.sha256("abc")
+"#;
+        let eng = OPAInMemory::with_raw_default_policy(
+            policy,
+            "default",
+            DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .expect("build engine")
+        .with_extra_extension_functions(vec![("crypto.sha256".to_string(), sha256_fn)]);
+
+        let res = eng
+            .evaluate(
+                "{}",
+                "default",
+                vec!["test_hash".to_string()],
+                test_resolver(HashMap::new()),
+            )
+            .await
+            .expect("evaluate");
+        let got = res.rules_result.get("test_hash").expect("test_hash result");
+        assert_eq!(
+            got.as_str(),
+            Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        );
+    }
+
+    // Mirror of the injection test for the `regorus-interpreter` backend: a
+    // plain (non-dotted) user function registered through the async->sync
+    // `Extension` bridge, called from policy. Verifies `add_extension` wiring
+    // and the `block_on` bridge for caller-injected functions on the legacy
+    // path.
+    #[cfg(all(feature = "policy-rvps", feature = "regorus-interpreter"))]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn evaluate_with_injected_plain_extension_interpreter() {
+        use crate::policy_engine::opa::ExtensionFunction;
+        use crate::rvps::test_resolver;
+
+        let upper_fn: ExtensionFunction = Arc::new(|argument: regorus::Value| {
+            Box::pin(async move {
+                let s = argument.as_string().map_err(|e| {
+                    PolicyError::EvalPolicyFailed(anyhow::anyhow!("my_upper arg not a string: {e}"))
+                })?;
+                Ok(regorus::Value::String(s.to_uppercase().into()))
+            })
+        });
+        let policy = r#"package policy
+import rego.v1
+test_upper := my_upper("abc")
+"#;
+        let eng = OPAInMemory::with_raw_default_policy(
+            policy,
+            "default",
+            DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .expect("build engine")
+        .with_extra_extension_functions(vec![("my_upper".to_string(), upper_fn)]);
+
+        let res = eng
+            .evaluate(
+                "{}",
+                "default",
+                vec!["test_upper".to_string()],
+                test_resolver(HashMap::new()),
+            )
+            .await
+            .expect("evaluate");
+        let got = res
+            .rules_result
+            .get("test_upper")
+            .expect("test_upper result");
+        assert_eq!(got.as_str(), Some("ABC"));
     }
 }

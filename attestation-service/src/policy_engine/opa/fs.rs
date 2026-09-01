@@ -19,6 +19,13 @@ pub struct OPA {
 
     #[cfg(feature = "policy-artifact-server")]
     artifact_server_client: Arc<artifact_resolve_sdk::Client>,
+
+    /// Compiled-RVM-program cache shared across `evaluate` calls, keyed by
+    /// `policy_id` with the content hash carried as a validation checksum.
+    /// The affected entry is dropped on `set_policy`/`delete_policy`. Cloned
+    /// cheaply (the `Arc` is shared, not the cache contents).
+    #[cfg(feature = "regorus-regovm")]
+    program_cache: Arc<super::ProgramCache>,
 }
 
 impl OPA {
@@ -56,12 +63,18 @@ impl OPA {
             Ok(Self {
                 policy_dir_path,
                 artifact_server_client: Arc::new(client),
+                #[cfg(feature = "regorus-regovm")]
+                program_cache: Arc::new(super::ProgramCache::default()),
             })
         }
 
         #[cfg(not(feature = "policy-artifact-server"))]
         {
-            Ok(Self { policy_dir_path })
+            Ok(Self {
+                policy_dir_path,
+                #[cfg(feature = "regorus-regovm")]
+                program_cache: Arc::new(super::ProgramCache::default()),
+            })
         }
     }
 }
@@ -101,6 +114,10 @@ impl PolicyEngine for OPA {
             reference_value_resolver,
             #[cfg(feature = "policy-artifact-server")]
             self.artifact_server_client.clone(),
+            // fs-backed OPA has no caller-injected extension functions.
+            None,
+            #[cfg(feature = "regorus-regovm")]
+            &self.program_cache,
         )
         .await
     }
@@ -125,6 +142,13 @@ impl PolicyEngine for OPA {
                 .add_policy(policy_id.clone(), policy_content)
                 .map_err(PolicyError::InvalidPolicy)?;
         }
+
+        // Policy content changed: drop this policy_id's cached programs so the
+        // next evaluation recompiles against the new source on disk. The
+        // hash-validation check would catch staleness anyway, but dropping the
+        // slot here frees the memory eagerly.
+        #[cfg(feature = "regorus-regovm")]
+        self.program_cache.write().await.remove(&policy_id);
 
         let mut policy_file_path = PathBuf::from(
             &self
@@ -198,6 +222,10 @@ impl PolicyEngine for OPA {
             )));
         }
 
+        // A deleted policy's cached programs must not outlive it.
+        #[cfg(feature = "regorus-regovm")]
+        self.program_cache.write().await.remove(&policy_id);
+
         std::fs::remove_file(policy_file_path).map_err(PolicyError::IOError)?;
 
         Ok(())
@@ -255,6 +283,8 @@ mod tests {
             artifact_server_client: Arc::new(
                 artifact_resolve_sdk::Client::new(DEFAULT_ARTIFACT_SERVER_ADDRESS).unwrap(),
             ),
+            #[cfg(feature = "regorus-regovm")]
+            program_cache: Arc::new(crate::policy_engine::opa::ProgramCache::default()),
         };
         let default_policy_id = "ear_default_policy_cpu".to_string();
 
