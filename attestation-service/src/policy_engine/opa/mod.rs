@@ -26,7 +26,7 @@
 //!
 //! Both backends share the *same* async public type ([`ExtensionFunction`]), so a downstream crate
 //! supplies one `Vec<(String, ExtensionFunction)>` regardless of the selected backend, and dotted
-//! names (e.g. `crypto.sha256`) resolve under either.
+//! names resolve under either.
 //!
 //! # Performance (`regorus-regovm`)
 //!
@@ -124,6 +124,54 @@ fn is_valid_policy_id(policy_id: &str) -> bool {
     policy_id
         .chars()
         .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Rego reserved words a wrapper rule head may not use as a name segment.
+/// Matches regorus's own keyword set (regular keywords `as`/`default`/`else`/
+/// `import`/`package`/`not`/`some`/`with`, future keywords `contains`/`every`/
+/// `if`/`in` which the wrapper module's `import rego.v1` activates, and the
+/// literal tokens `true`/`false`/`null`). The wrapper module always enables
+/// rego.v1, so these would fail to parse as a rule head — reject up front.
+#[cfg(feature = "regorus-regovm")]
+const REGO_KEYWORDS: &[&str] = &[
+    "as", "default", "else", "import", "package", "not", "some", "with", "contains", "every", "if",
+    "in", "true", "false", "null",
+];
+
+#[cfg(feature = "regorus-regovm")]
+fn is_rego_keyword(segment: &str) -> bool {
+    REGO_KEYWORDS.contains(&segment)
+}
+
+/// One segment of a Rego identifier, matching regorus's lexer `read_ident`
+/// grammar: an ASCII letter or `_` followed by ASCII alphanumerics/`_`.
+#[cfg(feature = "regorus-regovm")]
+fn is_rego_ident_segment(segment: &str) -> bool {
+    let mut chars = segment.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// A valid caller-supplied extension function name: a dotted path of Rego
+/// identifiers.
+///
+/// Both backends accept exactly this shape: the regovm backend interpolates the
+/// key into a ref-headed wrapper rule (`name(arg) := v if { ... }`) via
+/// [`build_extensions`], and the interpreter backend registers it as a dotted
+/// builtin path through `Engine::add_extension`. Anything outside this set is
+/// rejected here — before any source interpolation — so a key carrying a
+/// newline, comment, quote, brace, or operator (the `build_extensions` source-
+/// injection vector) never reaches Rego. Dotted names are accepted because
+/// regorus's rego.v1 parser admits a ref-headed function definition and both
+/// backends resolve them (see `regovm_accepts_dotted_wrapper_function_name` and
+/// `interpreter_accepts_dotted_extension_name`).
+#[cfg(feature = "regorus-regovm")]
+pub(crate) fn is_valid_rego_extension_name(name: &str) -> bool {
+    if name.is_empty() || name.starts_with('.') || name.ends_with('.') || name.contains("..") {
+        return false;
+    }
+    name.split('.')
+        .all(|seg| !seg.is_empty() && is_rego_ident_segment(seg) && !is_rego_keyword(seg))
 }
 
 fn policy_uses_legacy_reference(policy: &str) -> Result<bool, PolicyError> {
@@ -458,7 +506,7 @@ async fn evaluate_with_regovm(
     let wrapper_module = if extension_functions.is_empty() {
         None
     } else {
-        Some(build_extensions_module(&extension_functions))
+        Some(build_extensions_module(&extension_functions)?)
     };
 
     let data_value =
@@ -745,7 +793,24 @@ async fn dispatch(
 /// [`build_extensions_module`], which wraps these definitions in their own
 /// rego.v1 module.
 #[cfg(feature = "regorus-regovm")]
-fn build_extensions(extension_functions: &HashMap<String, ExtensionFunction>) -> String {
+fn build_extensions(
+    extension_functions: &HashMap<String, ExtensionFunction>,
+) -> Result<String, PolicyError> {
+    // Validate every key before interpolation. Each key is spliced raw into a
+    // Rego rule head (`{key}(arg) := v if { ... }`) AND into a string literal
+    // (`"{key}"`); a key carrying a newline, comment, quote, or brace would
+    // inject Rego source — append `allow := true` and flip a
+    // `default allow := false`. This is the unbypassable gate: every path that
+    // generates wrapper source goes through here. See
+    // [`is_valid_rego_extension_name`].
+    if let Some(bad) = extension_functions
+        .keys()
+        .find(|key| !is_valid_rego_extension_name(key))
+    {
+        return Err(PolicyError::EvalPolicyFailed(anyhow!(
+            "invalid extension function name `{bad}`: must be a dotted path of Rego identifiers"
+        )));
+    }
     let mut ext = String::from(r#"# === trustee EXTENSIONS (generated) ==="#);
     for key in extension_functions.keys() {
         ext.push_str(&format!(
@@ -754,7 +819,7 @@ fn build_extensions(extension_functions: &HashMap<String, ExtensionFunction>) ->
 "#,
         ));
     }
-    ext
+    Ok(ext)
 }
 
 /// Module id under which the generated extension wrappers are loaded, so they
@@ -771,11 +836,13 @@ const EXTENSIONS_WRAPPER_MODULE_ID: &str = "__trustee_extensions__.rego";
 /// wrappers onto a v0 policy would force the whole module into v1 and reject
 /// legacy `allow { ... }` bodies.
 #[cfg(feature = "regorus-regovm")]
-fn build_extensions_module(extension_functions: &HashMap<String, ExtensionFunction>) -> String {
-    format!(
+fn build_extensions_module(
+    extension_functions: &HashMap<String, ExtensionFunction>,
+) -> Result<String, PolicyError> {
+    Ok(format!(
         "package policy\nimport rego.v1\n\n{}",
-        build_extensions(extension_functions)
-    )
+        build_extensions(extension_functions)?
+    ))
 }
 
 #[cfg(test)]
@@ -1128,7 +1195,7 @@ allow = query_artifact_server({"tdx.td-shim": "582f8ed2"})
     fn build_extensions_empty_returns_only_header() {
         let functions = HashMap::<String, ExtensionFunction>::new();
         assert_eq!(
-            build_extensions(&functions),
+            build_extensions(&functions).unwrap(),
             "# === trustee EXTENSIONS (generated) ==="
         );
     }
@@ -1144,7 +1211,7 @@ allow = query_artifact_server({"tdx.td-shim": "582f8ed2"})
         let mut functions = HashMap::<String, ExtensionFunction>::new();
         functions.insert("alpha".to_string(), make());
         functions.insert("beta".to_string(), make());
-        let ext = build_extensions(&functions);
+        let ext = build_extensions(&functions).unwrap();
         assert!(
             ext.contains(r#"alpha(arg) := v if { v := __builtin_host_await(arg, "alpha") }"#),
             "{ext}"
@@ -1154,6 +1221,198 @@ allow = query_artifact_server({"tdx.td-shim": "582f8ed2"})
             "{ext}"
         );
     }
+    // The regovm backend generates a per-extension Rego wrapper rule whose
+    // head *is* the extension key. A dotted key is a legitimate, working
+    // wrapper name: regorus's rego.v1 parser accepts a ref-headed function
+    // definition, so the generated module compiles and the wrapper resolves at
+    // call time. This characterizes that contract so a future `build_extensions`
+    // change does not silently break the dotted extension path.
+    #[cfg(feature = "regorus-regovm")]
+    #[tokio::test]
+    async fn regovm_accepts_dotted_wrapper_function_name() {
+        let mut functions = HashMap::new();
+        functions.insert(
+            "crypto.sha256".to_string(),
+            fixed_value_extension(regorus::Value::String(regorus::Rc::from("ok"))),
+        );
+
+        // The generated wrapper module must parse as rego.v1.
+        let wrapper = build_extensions_module(&functions).expect("wrapper must build");
+        assert!(
+            wrapper.contains(
+                r#"crypto.sha256(arg) := v if { v := __builtin_host_await(arg, "crypto.sha256") }"#
+            ),
+            "{wrapper}"
+        );
+        let mut eng = regorus::Engine::new();
+        eng.set_rego_v0(true);
+        eng.add_policy(EXTENSIONS_WRAPPER_MODULE_ID.to_string(), wrapper)
+            .expect("dotted wrapper module must compile");
+
+        // End to end: a policy calling the dotted extension resolves through
+        // the host-await wrapper to the registered function.
+        let policy = r#"package policy
+import rego.v1
+allow if { crypto.sha256("abc") == "ok" }
+"#;
+        let result = evaluate_with_regovm(
+            policy.to_string(),
+            "{}".to_string(),
+            "test".to_string(),
+            vec!["allow".to_string()],
+            "{}".to_string(),
+            functions,
+            &fresh_program_cache(),
+        )
+        .await
+        .expect("regovm eval must succeed with a dotted wrapper name");
+        assert_eq!(
+            result.rules_result.get("allow"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    // The interpreter backend registers caller extensions through
+    // `regorus::Engine::add_extension`. A dotted name is a legitimate extension
+    // path: it registers and resolves at the policy call site. This
+    // characterizes that contract so a future identifier validator on
+    // the registration path does not silently reject dotted names.
+    #[cfg(feature = "regorus-interpreter")]
+    #[test]
+    fn interpreter_accepts_dotted_extension_name() {
+        let mut engine = regorus::Engine::new();
+        engine.set_rego_v0(true);
+        engine
+            .add_policy(
+                "test".to_string(),
+                r#"package policy
+import rego.v1
+result := crypto.sha256("abc")
+"#
+                .to_string(),
+            )
+            .expect("policy must compile");
+        engine
+            .add_extension(
+                "crypto.sha256".to_string(),
+                1,
+                Box::new(|mut params: Vec<regorus::Value>| {
+                    let _ = params.remove(0);
+                    Ok(regorus::Value::String(regorus::Rc::from("ok")))
+                }),
+            )
+            .expect("add_extension must accept a dotted name");
+        engine.set_input_json("{}").expect("set input");
+        let value = engine
+            .eval_rule("data.policy.result".to_string())
+            .expect("eval_rule must resolve the dotted extension call");
+        match value {
+            regorus::Value::String(s) => assert_eq!(s.as_ref(), "ok"),
+            other => panic!("expected string \"ok\", got {other:?}"),
+        }
+    }
+
+    // The dotted-identifier contract that both backends accept, and the
+    // injection vectors that must be rejected (the `build_extensions`
+    // source-injection attack surface).
+    #[cfg(feature = "regorus-regovm")]
+    #[test]
+    fn is_valid_rego_extension_name_accepts_dotted_identifiers() {
+        // Plain and dotted names both backends resolve.
+        assert!(is_valid_rego_extension_name("crypto.sha256"));
+        assert!(is_valid_rego_extension_name("query_reference_value"));
+        assert!(is_valid_rego_extension_name("query_artifact_server"));
+        assert!(is_valid_rego_extension_name("my_async"));
+        assert!(is_valid_rego_extension_name("a.b.c"));
+        assert!(is_valid_rego_extension_name("_leading_underscore"));
+        assert!(is_valid_rego_extension_name("sha256"));
+    }
+
+    #[cfg(feature = "regorus-regovm")]
+    #[test]
+    fn is_valid_rego_extension_name_rejects_injection_vectors() {
+        let rejects = [
+            // empty / dot-only
+            "",
+            ".",
+            ".crypto.sha256",
+            "crypto.sha256.",
+            "crypto..sha256",
+            // the reviewer's attack: a name with a newline + comment that
+            // would append `allow := true` to the generated module
+            "foo(arg) := v if { v := true }\nallow := true",
+            // string-literal breakout (second interpolation site)
+            r#"foo","evil")"#,
+            // spaces / operators / braces / quotes — none appear in a dotted
+            // identifier path
+            "has space",
+            "tab\there",
+            "with#comment",
+            "semi;colon",
+            "brace{",
+            "quote\"",
+            "backslash\\",
+            "dash-name",
+            "star*",
+            // a leading digit is a Rego number, not an identifier
+            "1abc",
+            "crypto.1abc",
+            // reserved keywords as a segment (the wrapper module enables
+            // rego.v1, so these would fail to parse as a rule head)
+            "if",
+            "in",
+            "contains",
+            "crypto.if",
+            "true",
+            "package",
+        ];
+        for name in rejects {
+            assert!(
+                !is_valid_rego_extension_name(name),
+                "expected `{name}` to be rejected"
+            );
+        }
+    }
+
+    // The reviewer's injection must be blocked at the regovm entry, before
+    // `build_extensions` ever interpolates the name into Rego source. A policy
+    // with `default allow := false` must stay false even when a malicious
+    // extension name is registered.
+    #[cfg(feature = "regorus-regovm")]
+    #[tokio::test]
+    async fn regovm_rejects_injection_extension_name() {
+        let mut functions = HashMap::new();
+        functions.insert(
+            // Newline + comment that, if interpolated raw, would append
+            // `allow := true` to the wrapper module.
+            "foo\nallow := true #".to_string(),
+            fixed_value_extension(regorus::Value::Bool(true)),
+        );
+        let policy = r#"package policy
+import rego.v1
+default allow := false
+"#;
+        let result = evaluate_with_regovm(
+            policy.to_string(),
+            "{}".to_string(),
+            "test".to_string(),
+            vec!["allow".to_string()],
+            "{}".to_string(),
+            functions,
+            &fresh_program_cache(),
+        )
+        .await;
+        let err = result.expect_err("malformed extension name must be rejected");
+        assert!(
+            err.to_string().contains("invalid extension function name"),
+            "expected an invalid-name error, got: {err}"
+        );
+        assert!(
+            err.to_string().contains("allow := true"),
+            "error should name the offending key: {err}"
+        );
+    }
+
     // A fresh, empty program cache for `evaluate_with_regovm` tests. Each test
     // gets its own so cached programs never leak across cases.
     #[cfg(feature = "regorus-regovm")]
