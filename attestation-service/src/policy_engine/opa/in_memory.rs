@@ -470,6 +470,55 @@ allow := data.reference.k == 1
         );
     }
 
+    // `OPAInMemory::set_policy` must eagerly drop the policy_id's compiled
+    // programs from the cross-evaluation cache when the source changes, rather
+    // than leaving a stale entry for `resolve_programs`' hash check to evict
+    // lazily at the next miss. This pins the eager-eviction contract of the
+    // public `set_policy` entry point: after a content change, the slot is gone.
+    #[cfg(feature = "regorus-regovm")]
+    #[tokio::test]
+    async fn set_policy_drops_program_cache_slot() {
+        use crate::rvps::test_resolver;
+
+        let policy_a = r#"package policy
+import rego.v1
+allow := true
+"#;
+        let eng = OPAInMemory::with_raw_default_policy(
+            policy_a,
+            "default",
+            DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
+        let rvps = test_resolver(HashMap::new());
+
+        // Populate the program cache for "default" with an appraisal.
+        let r1 = eng
+            .evaluate("{}", "default", vec!["allow".into()], rvps.clone())
+            .await
+            .unwrap();
+        assert_eq!(r1.rules_result.get("allow"), Some(&serde_json::json!(true)));
+        assert!(
+            eng.program_cache.read().await.contains_key("default"),
+            "evaluate must populate the program cache for \"default\""
+        );
+
+        // Replace the policy source via the public `set_policy` entry point.
+        let policy_b = r#"package policy
+import rego.v1
+allow := false
+"#;
+        eng.set_policy("default".into(), URL_SAFE_NO_PAD.encode(policy_b))
+            .await
+            .unwrap();
+
+        // The slot must be gone, not left for the hash check to evict lazily.
+        assert!(
+            !eng.program_cache.read().await.contains_key("default"),
+            "set_policy must eagerly drop the cached programs for the changed policy_id"
+        );
+    }
+
     // Mirror of the injection test for the interpreter backend: a
     // plain (non-dotted) user function registered through the async->sync
     // `Extension` bridge, called from policy. Verifies `add_extension` wiring
