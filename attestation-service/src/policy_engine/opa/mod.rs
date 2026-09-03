@@ -537,7 +537,6 @@ async fn evaluate_with_regovm(
         &policy_id,
         &policy_hash,
         &policy,
-        &data_value,
         &evaluation_rules,
         &wrapper_module,
     )
@@ -644,7 +643,6 @@ async fn resolve_programs(
     policy_id: &str,
     policy_hash: &str,
     policy: &str,
-    data_value: &regorus::Value,
     evaluation_rules: &[String],
     wrapper_module: &Option<String>,
 ) -> Result<RulePrograms, PolicyError> {
@@ -669,8 +667,14 @@ async fn resolve_programs(
     if !missing.is_empty() {
         let mut engine = regorus::Engine::new();
         engine.set_rego_v0(true);
+        // The compiled program does not depend on the data document: regorus
+        // lowers `data.x` accesses to `LoadData` instructions that read the
+        // VM's runtime data store (set per-evaluation via `set_data`), so no
+        // data value is baked into the bytecode. An empty object only
+        // satisfies `compile_with_entrypoint`'s internal `prepare_for_eval`,
+        // which requires a valid (object) data document.
         engine
-            .add_data(data_value.clone())
+            .add_data(regorus::Value::new_object())
             .map_err(PolicyError::LoadPolicyFailed)?;
         engine
             .add_policy(policy_id.to_string(), policy.to_string())
