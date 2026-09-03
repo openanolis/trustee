@@ -514,71 +514,19 @@ async fn evaluate_with_regovm(
     let input_value =
         regorus::Value::from_json_str(&input).map_err(PolicyError::SetInputDataFailed)?;
 
-    // Cross-evaluation program cache, keyed by `policy_id`. A lookup is a hit
-    // only when this `policy_id` was compiled before AND its stored content hash
-    // matches the current source — a hit reuses the previously compiled per-rule
-    // RVM programs and skips Engine construction, policy parsing and compilation
-    // entirely, so only the per-rule VM runs. On a miss (first appraisal, or a
-    // changed source whose hash no longer matches) we build the Engine once for
-    // the whole evaluation (hoisted out of the per-rule loop below, instead of
-    // rebuilding it per rule as the naive path did) and compile each requested
-    // rule into its own program, then overwrite this `policy_id`'s slot in
-    // place. Keying by id (not by hash) bounds the cache to one entry per policy
-    // and makes a changed source evict the stale version automatically, so old
-    // versions never accumulate — important for the fs-backed `OPA`, which reads
-    // the policy file fresh on every `evaluate` and would otherwise leak a cache
-    // entry per content version when the file is overwritten on disk.
-    // Rules the policy does not define are skipped: regorus reports them as
-    // `not a valid rule path`, which origin/main already treated as "skip this
-    // rule"; a skipped rule is simply absent from the cached map, so a later
-    // appraisal re-attempts it (cheaply).
-    let programs: RulePrograms = {
-        let cached = program_cache.read().await.get(&policy_id).cloned();
-        match cached {
-            Some(c) if c.hash == policy_hash => c.rules,
-            _ => {
-                let mut engine = regorus::Engine::new();
-                engine.set_rego_v0(true);
-                engine
-                    .add_data(data_value.clone())
-                    .map_err(PolicyError::LoadPolicyFailed)?;
-                engine
-                    .add_policy(policy_id.clone(), policy.clone())
-                    .map_err(PolicyError::LoadPolicyFailed)?;
-                if let Some(wrapper) = &wrapper_module {
-                    engine
-                        .add_policy(EXTENSIONS_WRAPPER_MODULE_ID.to_string(), wrapper.clone())
-                        .map_err(PolicyError::LoadPolicyFailed)?;
-                }
-
-                let mut compiled: RulePrograms = HashMap::new();
-                for rule in &evaluation_rules {
-                    // regorus rejects a bare rule name with "not a valid rule
-                    // path"; use the full data.policy path. See [`common_evaluate`].
-                    let entry_point = format!("data.policy.{rule}");
-                    let cp = match engine.compile_with_entrypoint(&Rc::from(entry_point.clone())) {
-                        Ok(cp) => cp,
-                        Err(e) if e.to_string().contains("not a valid rule path") => {
-                            debug!("Policy `{policy_id}` does not check {rule}");
-                            continue;
-                        }
-                        Err(e) => return Err(PolicyError::LoadPolicyFailed(e)),
-                    };
-                    let program = Compiler::compile_from_policy(&cp, &[entry_point.as_str()])
-                        .map_err(|e| PolicyError::LoadPolicyFailed(e.into()))?;
-                    compiled.insert(rule.clone(), program);
-                }
-                program_cache.write().await.insert(
-                    policy_id.clone(),
-                    CachedPolicy {
-                        hash: policy_hash.clone(),
-                        rules: compiled.clone(),
-                    },
-                );
-                compiled
-            }
-        }
-    };
+    // Resolve the per-rule RVM programs for this evaluation, reusing the
+    // cross-evaluation cache and compiling only rules it does not already hold.
+    // See [`resolve_programs`] for the hit / full-miss / partial-miss policy.
+    let programs: RulePrograms = resolve_programs(
+        program_cache,
+        &policy_id,
+        &policy_hash,
+        &policy,
+        &data_value,
+        &evaluation_rules,
+        &wrapper_module,
+    )
+    .await?;
 
     let mut rules_result = std::collections::HashMap::new();
     for rule in &evaluation_rules {
@@ -643,6 +591,107 @@ async fn evaluate_with_regovm(
         rules_result,
         policy_hash,
     })
+}
+
+/// Resolve the per-rule RVM programs needed for an evaluation, populating the
+/// cross-evaluation cache.
+///
+/// The cache is keyed by `policy_id`. A lookup is a hit when this policy was
+/// compiled before AND its stored content hash matches the current source — a
+/// hit reuses the previously compiled per-rule programs and skips `Engine`
+/// construction, policy parsing and compilation entirely, so only the per-rule
+/// VM runs.
+///
+/// Two kinds of miss:
+/// - full miss: no entry (first appraisal) or a changed source whose hash no
+///   longer matches — start from an empty rule map.
+/// - partial miss: a hit, but this request asks for a rule the cached entry
+///   did not compile (a previous request used a different rule set). The cached
+///   map is reused and only the missing rules are compiled and merged in —
+///   otherwise a rule absent from the *first* request would be wrongly skipped
+///   as "not defined" on every later request.
+///
+/// In both miss cases the `Engine` is built once for the whole evaluation
+/// (hoisted out of the per-rule compile loop) and only the missing rules are
+/// compiled. Keying by id (not by hash) bounds the cache to one entry per
+/// policy and makes a changed source overwrite the stale slot in place, so old
+/// versions never accumulate — important for the fs-backed `OPA`, which reads
+/// the policy file fresh on every `evaluate` and would otherwise leak a cache
+/// entry per content version when the file is overwritten on disk.
+///
+/// Rules the policy does not define are skipped: regorus reports them as `not
+/// a valid rule path`, which origin/main already treated as "skip this rule";
+/// a skipped rule is absent from the returned map, so a later request for it
+/// re-attempts the compile (cheaply) and skips again.
+#[cfg(feature = "regorus-regovm")]
+async fn resolve_programs(
+    program_cache: &ProgramCache,
+    policy_id: &str,
+    policy_hash: &str,
+    policy: &str,
+    data_value: &regorus::Value,
+    evaluation_rules: &[String],
+    wrapper_module: &Option<String>,
+) -> Result<RulePrograms, PolicyError> {
+    // Start from the cached entry for this policy when its hash matches;
+    // otherwise an empty map (full miss — first appraisal or a changed source).
+    let mut programs: RulePrograms = {
+        let cached = program_cache.read().await.get(policy_id).cloned();
+        match cached {
+            Some(c) if c.hash == policy_hash => c.rules,
+            _ => HashMap::new(),
+        }
+    };
+
+    // Rules requested but not yet compiled (full miss, or a later request for
+    // rules the cached entry didn't include). Compile only these, then merge
+    // into the map and persist so the next appraisal finds them warm.
+    let missing: Vec<String> = evaluation_rules
+        .iter()
+        .filter(|rule| !programs.contains_key(*rule))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        let mut engine = regorus::Engine::new();
+        engine.set_rego_v0(true);
+        engine
+            .add_data(data_value.clone())
+            .map_err(PolicyError::LoadPolicyFailed)?;
+        engine
+            .add_policy(policy_id.to_string(), policy.to_string())
+            .map_err(PolicyError::LoadPolicyFailed)?;
+        if let Some(wrapper) = wrapper_module {
+            engine
+                .add_policy(EXTENSIONS_WRAPPER_MODULE_ID.to_string(), wrapper.clone())
+                .map_err(PolicyError::LoadPolicyFailed)?;
+        }
+        for rule in &missing {
+            // regorus rejects a bare rule name with "not a valid rule path";
+            // use the full data.policy path. See [`common_evaluate`].
+            let entry_point = format!("data.policy.{rule}");
+            let cp = match engine.compile_with_entrypoint(&Rc::from(entry_point.clone())) {
+                Ok(cp) => cp,
+                Err(e) if e.to_string().contains("not a valid rule path") => {
+                    debug!("Policy `{policy_id}` does not check {rule}");
+                    continue;
+                }
+                Err(e) => return Err(PolicyError::LoadPolicyFailed(e)),
+            };
+            let program = Compiler::compile_from_policy(&cp, &[entry_point.as_str()])
+                .map_err(|e| PolicyError::LoadPolicyFailed(e.into()))?;
+            programs.insert(rule.clone(), program);
+        }
+        // Persist the merged map (hash unchanged on a partial miss).
+        program_cache.write().await.insert(
+            policy_id.to_string(),
+            CachedPolicy {
+                hash: policy_hash.to_string(),
+                rules: programs.clone(),
+            },
+        );
+    }
+
+    Ok(programs)
 }
 
 #[cfg(feature = "regorus-interpreter")]

@@ -368,6 +368,117 @@ test_hash := crypto.sha256("abc")
         );
     }
 
+    // Regression for the per-rule program cache: a cache hit must not carry
+    // over only the *first* request's compiled rule set. Two appraisals of the
+    // same policy with different `evaluation_rules` must each return every
+    // rule the policy defines — a rule absent from the first request must be
+    // compiled on demand on the second, not skipped as "not defined". Exercises
+    // the real `OPAInMemory::evaluate` -> `evaluate_with_regovm` path and the
+    // real `ProgramCache`, both directions.
+    #[cfg(all(feature = "policy-rvps", feature = "regorus-regovm"))]
+    #[tokio::test]
+    async fn evaluate_compiles_missing_rule_on_cached_policy() {
+        use crate::rvps::test_resolver;
+        let policy = r#"package policy
+import rego.v1
+first := 1
+second := 2
+"#;
+        let eng = OPAInMemory::with_raw_default_policy(
+            policy,
+            "default",
+            DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
+        let rvps = test_resolver(HashMap::new());
+
+        // First appraisal compiles only `first`; the cache entry then holds
+        // just {first}. Requesting `second` next must compile and return it.
+        let r1 = eng
+            .evaluate("{}", "default", vec!["first".into()], rvps.clone())
+            .await
+            .unwrap();
+        assert_eq!(r1.rules_result.get("first"), Some(&serde_json::json!(1)));
+        let r2 = eng
+            .evaluate("{}", "default", vec!["second".into()], rvps.clone())
+            .await
+            .unwrap();
+        assert_eq!(r2.rules_result.get("second"), Some(&serde_json::json!(2)));
+
+        // Reverse order on a fresh engine: `second` first, then `first`.
+        let eng2 = OPAInMemory::with_raw_default_policy(
+            policy,
+            "default",
+            DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
+        let r3 = eng2
+            .evaluate("{}", "default", vec!["second".into()], rvps.clone())
+            .await
+            .unwrap();
+        assert_eq!(r3.rules_result.get("second"), Some(&serde_json::json!(2)));
+        let r4 = eng2
+            .evaluate("{}", "default", vec!["first".into()], rvps.clone())
+            .await
+            .unwrap();
+        assert_eq!(r4.rules_result.get("first"), Some(&serde_json::json!(1)));
+    }
+
+    // Regression for the data dimension of the per-rule program cache: a cache
+    // hit must not serve a stale data document from the first appraisal. The
+    // compiled RVM program is data-independent (regorus lowers `data.x` to
+    // `LoadData`, which reads the VM's runtime data store set per-evaluation
+    // via `set_data`), so the second appraisal must observe its own `data`,
+    // not the first's. Same policy_id (cache hit) with distinct reference
+    // values (distinct `data`), same rule.
+    #[cfg(all(feature = "policy-rvps", feature = "regorus-regovm"))]
+    #[tokio::test]
+    async fn evaluate_cache_hit_uses_request_data_not_stale() {
+        use crate::rvps::test_resolver;
+
+        // Legacy policy: `data.reference` is populated by `common_evaluate`
+        // from the resolver, so each appraisal receives a distinct `data`.
+        let policy = r#"package policy
+import rego.v1
+allow := data.reference.k == 1
+"#;
+        let eng = OPAInMemory::with_raw_default_policy(
+            policy,
+            "default",
+            DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .unwrap();
+
+        // First appraisal: k == 1 -> allow. Compiles and caches the program.
+        let r1 = eng
+            .evaluate(
+                "{}",
+                "default",
+                vec!["allow".into()],
+                test_resolver(HashMap::from([("k".to_string(), serde_json::json!(1))])),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r1.rules_result.get("allow"), Some(&serde_json::json!(true)));
+
+        // Second appraisal: same policy_id -> cache hit, but k == 2 -> allow
+        // must be false. If the cached program had baked in the first `data`,
+        // this would wrongly return true.
+        let r2 = eng
+            .evaluate(
+                "{}",
+                "default",
+                vec!["allow".into()],
+                test_resolver(HashMap::from([("k".to_string(), serde_json::json!(2))])),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            r2.rules_result.get("allow"),
+            Some(&serde_json::json!(false))
+        );
+    }
+
     // Mirror of the injection test for the `regorus-interpreter` backend: a
     // plain (non-dotted) user function registered through the async->sync
     // `Extension` bridge, called from policy. Verifies `add_extension` wiring
