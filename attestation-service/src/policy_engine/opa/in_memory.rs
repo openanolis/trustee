@@ -80,8 +80,7 @@ impl OPAInMemory {
     ///
     /// Both backends resolve dotted names (e.g. `crypto.sha256`): the
     /// `regorus-regovm` backend via generated function-rule wrappers, the
-    /// `regorus-interpreter` backend via regorus's `add_extension` path
-    /// resolution.
+    /// interpreter backend via regorus's `add_extension` path resolution.
     pub fn with_extra_extension_functions(
         mut self,
         functions: Vec<(String, super::ExtensionFunction)>,
@@ -309,7 +308,7 @@ allow if {
     // rego policy can call `crypto.sha256("abc")` and receive the real sha256
     // hex. Runs on both backends: dotted keys resolve on the `regorus-regovm`
     // backend (via the `build_extensions` function-rule wrappers) AND on the
-    // `regorus-interpreter` backend (regorus resolves a dotted `add_extension`
+    // interpreter backend (regorus resolves a dotted `add_extension`
     // path to the matching policy call site).
     #[cfg(feature = "policy-rvps")]
     #[tokio::test]
@@ -471,12 +470,12 @@ allow := data.reference.k == 1
         );
     }
 
-    // Mirror of the injection test for the `regorus-interpreter` backend: a
+    // Mirror of the injection test for the interpreter backend: a
     // plain (non-dotted) user function registered through the async->sync
     // `Extension` bridge, called from policy. Verifies `add_extension` wiring
     // and the `block_on` bridge for caller-injected functions on the legacy
     // path.
-    #[cfg(all(feature = "policy-rvps", feature = "regorus-interpreter"))]
+    #[cfg(all(feature = "policy-rvps", not(feature = "regorus-regovm")))]
     #[tokio::test(flavor = "multi_thread")]
     async fn evaluate_with_injected_plain_extension_interpreter() {
         use crate::policy_engine::opa::ExtensionFunction;
