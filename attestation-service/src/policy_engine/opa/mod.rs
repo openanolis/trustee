@@ -283,7 +283,7 @@ type RulePrograms = HashMap<String, Arc<regorus::rvm::Program>>;
 /// can construct or read an entry; the type is named only because it is the
 /// value type of the `pub` `ProgramCache` alias.
 #[cfg(feature = "regorus-regovm")]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CachedPolicy {
     hash: String,
     rules: RulePrograms,
@@ -1710,5 +1710,75 @@ default hardware := 2
             &serde_json::json!(2)
         );
     }
-}
 
+    // `common_evaluate` is the shared production entry point both backends
+    // dispatch through. Pin the cache contract at this layer (not only at
+    // `evaluate_with_regovm`): the per-rule program cache is keyed by
+    // `policy_id`, so appraising the same id with *different* source must
+    // invalidate the cached program. `resolve_programs` must treat a
+    // content-hash mismatch as a full miss — recompile against the new source
+    // and overwrite the slot in place — so the second appraisal observes its
+    // own policy, not the first's. This is the branch `set_policy`'s eager
+    // eviction and the fs path's read-fresh both defend in depth; here it is
+    // exercised directly through `common_evaluate`, the path both backends hit.
+    #[cfg(feature = "regorus-regovm")]
+    #[tokio::test]
+    async fn common_evaluate_invalidates_cache_when_policy_source_changes() {
+        #[cfg(feature = "policy-artifact-server")]
+        use crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS;
+        use crate::rvps::test_resolver;
+
+        let policy_a = r#"package policy
+import rego.v1
+allow := true
+"#;
+        let policy_b = r#"package policy
+import rego.v1
+allow := false
+"#;
+        let cache = fresh_program_cache();
+        let rvps = test_resolver(HashMap::new());
+
+        #[cfg(feature = "policy-artifact-server")]
+        let artifact_client =
+            Arc::new(artifact_resolve_sdk::Client::new(DEFAULT_ARTIFACT_SERVER_ADDRESS).unwrap());
+
+        // First appraisal: compiles policy_a under id "p" and caches it.
+        let r1 = common_evaluate(
+            policy_a.to_string(),
+            "{}".to_string(),
+            "p".to_string(),
+            vec!["allow".to_string()],
+            rvps.clone(),
+            #[cfg(feature = "policy-artifact-server")]
+            artifact_client.clone(),
+            None,
+            #[cfg(feature = "regorus-regovm")]
+            &cache,
+        )
+        .await
+        .unwrap();
+        assert_eq!(r1.rules_result.get("allow"), Some(&serde_json::json!(true)));
+
+        // Same policy_id "p", different source -> hash mismatch -> the cached
+        // entry is overwritten in place and the new program runs.
+        let r2 = common_evaluate(
+            policy_b.to_string(),
+            "{}".to_string(),
+            "p".to_string(),
+            vec!["allow".to_string()],
+            rvps.clone(),
+            #[cfg(feature = "policy-artifact-server")]
+            artifact_client.clone(),
+            None,
+            #[cfg(feature = "regorus-regovm")]
+            &cache,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            r2.rules_result.get("allow"),
+            Some(&serde_json::json!(false))
+        );
+    }
+}
