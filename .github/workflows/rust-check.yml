@@ -170,15 +170,15 @@ jobs:
       - name: Run cargo test
         run: |
           sudo -E PATH="$PATH" -s cargo test -p attestation-service -p verifier
-          sudo -E PATH="$PATH" -s cargo test -p attestation-service --lib --no-default-features --features regorus-interpreter
-          sudo -E PATH="$PATH" -s cargo test -p attestation-service --lib --no-default-features --features policy-artifact-server,regorus-interpreter
+          sudo -E PATH="$PATH" -s cargo test -p attestation-service --lib --no-default-features
+          sudo -E PATH="$PATH" -s cargo test -p attestation-service --lib --no-default-features --features policy-artifact-server
           # RegoVM backend: runs the suspendable host-await path and eval_bench.
           sudo -E PATH="$PATH" -s cargo test -p attestation-service --lib --no-default-features --features policy-artifact-server,policy-rvps,regorus-regovm
 
       - name: Run pure-Rust TDX verifier tests
         run: |
           sudo -E PATH="$PATH" -s cargo test -p verifier --no-default-features --features tdx-dcap-rust tdx::verify::native::tests
-          sudo -E PATH="$PATH" -s cargo build -p attestation-service --bin restful-as --no-default-features --features restful-bin,all-verifier-rust,rvps-grpc,regorus-interpreter
+          sudo -E PATH="$PATH" -s cargo build -p attestation-service --bin restful-as --no-default-features --features restful-bin,all-verifier-rust,rvps-grpc
 
       - name: Run cargo fmt check
         run: |

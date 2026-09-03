@@ -10,19 +10,22 @@
 //!
 //! # Execution backends
 //!
-//! Exactly one backend is selected by a mutually-exclusive Cargo feature, enforced by the
-//! `compile_error!` guards below (enabling neither or both fails the build):
+//! One of two Regorus execution backends is compiled in, selected by a single
+//! opt-in Cargo feature:
 //!
-//! - `regorus-interpreter` (default) — the stable path: a sync regorus [`Engine`](regorus::Engine)
-//!   with host functions registered as regorus `Extension`s. Each extension call is an async
-//!   [`ExtensionFunction`] closure adapted by `async_to_sync_extension` into a sync `Extension`
-//!   that `block_on`s the closure's future on a `tokio::task::spawn_blocking` thread, so the
-//!   `block_on` never nests the tokio runtime. Needs a multi-threaded runtime; unavailable on
-//!   single-threaded wasm32 (its own `compile_error!`).
-//! - `regorus-regovm` — the (still unstable) Regorus VM path: host functions are driven through
-//!   the suspendable `__builtin_host_await` loop (`ExecutionMode::Suspendable`), which needs no
-//!   tokio runtime and works on wasm32. Forwards regorus's `rvm` feature (the interpreter build
-//!   compiles no `regorus::rvm` code).
+//! - default (no backend feature) — the interpreter: a sync regorus
+//!   [`Engine`](regorus::Engine) with host functions registered as regorus
+//!   `Extension`s. Each extension call is an async [`ExtensionFunction`] closure
+//!   adapted by `async_to_sync_extension` into a sync `Extension` that
+//!   `block_on`s the closure's future on a `tokio::task::spawn_blocking` thread,
+//!   so the `block_on` never nests the tokio runtime. Needs a multi-threaded
+//!   runtime; unavailable on single-threaded wasm32 (its own `compile_error!`).
+//! - `regorus-regovm` — the (still unstable) Regorus VM path: host functions are
+//!   driven through the suspendable `__builtin_host_await` loop
+//!   (`ExecutionMode::Suspendable`), which needs no tokio runtime and works on
+//!   wasm32. Forwards regorus's `rvm` feature (the interpreter build compiles no
+//!   `regorus::rvm` code). When enabled it takes precedence over the interpreter,
+//!   so `--all-features` selects the VM path.
 //!
 //! Both backends share the *same* async public type ([`ExtensionFunction`]), so a downstream crate
 //! supplies one `Vec<(String, ExtensionFunction)>` regardless of the selected backend, and dotted
@@ -46,7 +49,7 @@ use regorus::languages::rego::compiler::Compiler;
 // host-call loop. Only the one compiled for the active backend is needed.
 #[cfg(feature = "regorus-regovm")]
 use regorus::rvm::vm::{ExecutionMode, ExecutionState, SuspendReason};
-#[cfg(feature = "regorus-interpreter")]
+#[cfg(not(feature = "regorus-regovm"))]
 use regorus::Extension;
 #[cfg(feature = "regorus-regovm")]
 use regorus::Rc;
@@ -68,28 +71,21 @@ use crate::rvps::ReferenceValueResolver;
 
 use super::{EvaluationResult, PolicyError};
 
-// Exactly one policy execution backend must be enabled. The two are mutually
-// exclusive and together exhaustive: `regorus-interpreter` is the stable legacy
-// path (sync `Engine` + `Extension`s via `spawn_blocking`); `regorus-regovm`
-// is the unstable Regorus VM suspendable host-call path. The public interface
+// One policy execution backend is compiled in. The interpreter is the default
+// (compiled whenever `regorus-regovm` is off); `regorus-regovm` is the opt-in
+// VM path that takes precedence when enabled. The public interface
 // (`ExtensionFunction` / `with_extra_extension_functions`) is identical under
 // either, so downstream code is unaffected by the choice.
-#[cfg(all(feature = "regorus-regovm", feature = "regorus-interpreter"))]
-compile_error!(
-    "features `regorus-regovm` and `regorus-interpreter` are mutually exclusive; enable exactly one"
-);
-#[cfg(not(any(feature = "regorus-regovm", feature = "regorus-interpreter")))]
-compile_error!("exactly one of `regorus-regovm` / `regorus-interpreter` must be enabled");
-// The legacy interpreter backend relies on a multi-threaded tokio runtime
+// The interpreter backend relies on a multi-threaded tokio runtime
 // (`Handle::current` + `spawn_blocking` + `block_on`) and cannot run on the
-// single-threaded wasm32 target; there only `regorus-regovm` is available.
+// single-threaded wasm32 target; there `regorus-regovm` must be used instead.
 #[cfg(all(
-    feature = "regorus-interpreter",
+    not(feature = "regorus-regovm"),
     target_arch = "wasm32",
     target_vendor = "unknown",
     target_os = "unknown"
 ))]
-compile_error!("`regorus-interpreter` backend is unavailable on wasm32; use `regorus-regovm`");
+compile_error!("the default interpreter backend is unavailable on wasm32; enable `regorus-regovm`");
 
 #[cfg(feature = "fs")]
 mod fs;
@@ -221,12 +217,12 @@ fn policy_uses_legacy_reference(policy: &str) -> Result<bool, PolicyError> {
 /// closure type serves both backends:
 /// - `regorus-regovm`: the VM suspends on `__builtin_host_await` and the host
 ///   resumes it with the closure's result;
-/// - `regorus-interpreter`: the closure is wrapped in a sync regorus `Extension`
+/// - interpreter (default): the closure is wrapped in a sync regorus `Extension`
 ///   that `block_on`s it on a blocking thread.
-// On wasm32 the RVPS resolver returns `?Send` futures (single-threaded async,
-// matching `RvpsApi`'s `async_trait(?Send)` cfg), so the closure and its
-// future drop the `Send` bound. Everywhere else `Send` is required because
-// the multi-threaded tokio runtime (interpreter) or the VM (regovm) needs it.
+// Send on the future only under native+regorus-regovm: the VM host-await loop
+// runs on a multi-threaded runtime, so regorus's Value must be Send (needs `arc`).
+// wasm and the interpreter use ?Send — block_on'd locally, never crossing threads,
+// so they build without `arc` (Rc, faster).
 #[cfg(all(
     target_arch = "wasm32",
     target_vendor = "unknown",
@@ -241,16 +237,36 @@ pub type ExtensionFunction = Arc<
         + Sync,
 >;
 
-#[cfg(not(all(
-    target_arch = "wasm32",
-    target_vendor = "unknown",
-    target_os = "unknown"
-)))]
+#[cfg(all(
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )),
+    feature = "regorus-regovm"
+))]
 pub type ExtensionFunction = Arc<
     dyn Fn(
             /* argument */ regorus::Value,
         )
             -> Pin<Box<dyn std::future::Future<Output = Result<regorus::Value, PolicyError>> + Send>>
+        + Send
+        + Sync,
+>;
+
+#[cfg(all(
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )),
+    not(feature = "regorus-regovm")
+))]
+pub type ExtensionFunction = Arc<
+    dyn Fn(
+            /* argument */ regorus::Value,
+        )
+            -> Pin<Box<dyn std::future::Future<Output = Result<regorus::Value, PolicyError>>>>
         + Send
         + Sync,
 >;
@@ -454,10 +470,9 @@ async fn common_evaluate(
         }
     }
 
-    // Dispatch to the selected backend. Exactly one of the two features is on
-    // (enforced by the compile_error guards at the top of this file), so only
-    // one branch is compiled. `program_cache` exists only under
-    // `regorus-regovm` (it caches compiled `regorus::rvm::Program`s, which the
+    // Dispatch to the active backend. `regorus-regovm` takes precedence when
+    // enabled; otherwise the interpreter runs. `program_cache` exists only
+    // under `regorus-regovm` (it caches compiled `regorus::rvm::Program`s the
     // interpreter path never touches), so the param itself is cfg-gated above.
     #[cfg(feature = "regorus-regovm")]
     return evaluate_with_regovm(
@@ -470,7 +485,7 @@ async fn common_evaluate(
         program_cache,
     )
     .await;
-    #[cfg(feature = "regorus-interpreter")]
+    #[cfg(not(feature = "regorus-regovm"))]
     return evaluate_with_interpreter(
         policy,
         input,
@@ -694,7 +709,7 @@ async fn resolve_programs(
     Ok(programs)
 }
 
-#[cfg(feature = "regorus-interpreter")]
+#[cfg(not(feature = "regorus-regovm"))]
 async fn evaluate_with_interpreter(
     policy: String,
     input: String,
@@ -723,7 +738,7 @@ async fn evaluate_with_interpreter(
     })?
 }
 
-#[cfg(feature = "regorus-interpreter")]
+#[cfg(not(feature = "regorus-regovm"))]
 fn evaluate_sync(
     policy: String,
     input: String,
@@ -797,7 +812,7 @@ fn evaluate_sync(
 /// the interpreter backend expects: drive the closure's future to completion
 /// on the captured tokio runtime handle. Called from a `spawn_blocking`
 /// thread, so `block_on` does not nest the runtime.
-#[cfg(feature = "regorus-interpreter")]
+#[cfg(not(feature = "regorus-regovm"))]
 fn async_to_sync_extension(
     function: ExtensionFunction,
     runtime_handle: tokio::runtime::Handle,
@@ -1326,7 +1341,7 @@ allow if { crypto.sha256("abc") == "ok" }
     // path: it registers and resolves at the policy call site. This
     // characterizes that contract so a future identifier validator on
     // the registration path does not silently reject dotted names.
-    #[cfg(feature = "regorus-interpreter")]
+    #[cfg(not(feature = "regorus-regovm"))]
     #[test]
     fn interpreter_accepts_dotted_extension_name() {
         let mut engine = regorus::Engine::new();
