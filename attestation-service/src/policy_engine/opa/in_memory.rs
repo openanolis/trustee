@@ -78,14 +78,6 @@ impl OPAInMemory {
     /// This is the generic extension point that lets a downstream crate supply
     /// host functions regorus omits by design.
     ///
-    /// # Caller responsibility: name legality
-    ///
-    /// The caller **must** ensure each `key` is a legal rego function name (a
-    /// plain identifier, or a dotted path of identifiers such as
-    /// `pkg.func`). The key is interpolated into generated rego source, so an
-    /// illegal or hostile name can break policy compilation or inject rego
-    /// source. Trustees does not validate names here; validate upstream.
-    ///
     /// Both backends resolve dotted names (e.g. `crypto.sha256`): the
     /// `regorus-regovm` backend via generated function-rule wrappers, the
     /// `regorus-interpreter` backend via regorus's `add_extension` path
