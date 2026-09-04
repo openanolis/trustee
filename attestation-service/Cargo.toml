@@ -14,14 +14,17 @@ default = [
     "policy-artifact-server",
 ]
 
+# Opt-in Regorus VM policy backend (suspendable host-await, works on wasm32);
+# the interpreter is the default when this is off. See src/policy_engine/opa/mod.rs.
+# `arc` here only: the VM needs Send regorus types; the interpreter keeps Rc.
+regorus-regovm = ["regorus/rvm", "regorus/arc"]
+
 # Filesystem-backed implementations: config-from-file, on-disk OPA policy engine,
 # rvps local_json/local_fs storage, nonce-key persistence, signer transparency
 # file, signer key/cert read by path. Turn off (`default-features = false`) for a
 # pure, fs-free library (e.g. wasm builds).
 fs = ["tokio/fs", "reference-value-provider-service/fs"]
-# Runtime bridge used by synchronous Regorus extensions to make bounded
-# asynchronous RVPS queries. Normal AS binaries enable this through `fs`.
-policy-rvps = ["tokio/rt", "tokio/time"]
+policy-rvps = ["tokio/time"]
 all-verifier = ["verifier/all-verifier"]
 # Like `all-verifier`, but the TDX verifier uses the dcap-qvl backend and SGX is
 # dropped (it would still link the DCAP shared library). See
@@ -103,7 +106,7 @@ actix-web = { workspace = true, optional = true }
 aes-gcm = "0.10"
 aes-kw = "0.2"
 anyhow.workspace = true
-artifact-resolve-sdk = { git = "https://github.com/aliyun/artifact-server-rust-sdk.git", tag = "v0.1.0", optional = true }
+artifact-resolve-sdk = { git = "https://github.com/aliyun/artifact-server-rust-sdk.git", rev = "e5ce1955940fb7da29e58a89d3b7d635091500ea", optional = true }
 async-trait.workspace = true
 base64.workspace = true
 canon-json = { git = "https://github.com/inclavare-containers/canon-json-rs" }
