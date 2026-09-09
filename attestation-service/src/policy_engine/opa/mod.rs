@@ -271,11 +271,26 @@ pub type ExtensionFunction = Arc<
         + Sync,
 >;
 
-/// Compiled RVM programs for one policy, keyed by rule name. Only rules the
-/// policy actually defines are present (undefined rules are skipped at compile
-/// time, matching regorus's `not a valid rule path` -> skip behaviour).
+/// A per-rule compilation outcome for one policy, stored as the cache value.
+/// `Program` holds the compiled RVM bytecode for a rule the policy defines;
+/// `Undefined` marks a rule the policy does NOT define (regorus reports it as
+/// `not a valid rule path`). Caching `Undefined` lets a later request for that
+/// rule hit the cache instead of rebuilding an `Engine`, re-parsing the policy
+/// and re-attempting the same failing compile, see [`resolve_programs`].
 #[cfg(feature = "regorus-regovm")]
-type RulePrograms = HashMap<String, Arc<regorus::rvm::Program>>;
+#[derive(Clone, Debug)]
+enum CachedProgram {
+    Program(Arc<regorus::rvm::Program>),
+    Undefined,
+}
+
+/// Compiled RVM programs for one policy, keyed by rule name. A rule the
+/// policy defines maps to [`CachedProgram::Program`]; a rule that was
+/// requested but is absent from the policy maps to [`CachedProgram::Undefined`]
+/// (matching regorus's `not a valid rule path` -> skip behaviour while
+/// still occupying a cache slot). Rules never requested are simply absent.
+#[cfg(feature = "regorus-regovm")]
+type RulePrograms = HashMap<String, CachedProgram>;
 
 /// One policy's cached compilation: the content hash it was compiled against
 /// (a validation checksum, if the policy source changed, this entry is stale)
@@ -544,9 +559,10 @@ async fn evaluate_with_regovm(
 
     let mut rules_result = std::collections::HashMap::new();
     for rule in &evaluation_rules {
-        // Rules absent from `programs` were skipped (policy does not define
-        // them), preserve origin/main's skip behavior on cache hits too.
-        let Some(program) = programs.get(rule) else {
+        // A rule the policy does not define is cached as `Undefined` (and a
+        // rule never requested is simply absent); both skip here, matching the "missing rule -> skip, not error" contract on cache
+        // hits too. Only a compiled `Program` runs.
+        let Some(CachedProgram::Program(program)) = programs.get(rule) else {
             continue;
         };
 
@@ -633,10 +649,13 @@ async fn evaluate_with_regovm(
 /// the policy file fresh on every `evaluate` and would otherwise leak a cache
 /// entry per content version when the file is overwritten on disk.
 ///
-/// Rules the policy does not define are skipped: regorus reports them as `not
-/// a valid rule path`, which origin/main already treated as "skip this rule";
-/// a skipped rule is absent from the returned map, so a later request for it
-/// re-attempts the compile (cheaply) and skips again.
+/// Rules the policy does not define are cached as [`CachedProgram::Undefined`]:
+/// regorus reports them as `not a valid rule path`, which the policy engine
+/// treats as "skip this rule". Caching the `Undefined` outcome (rather than
+/// leaving the slot empty) means a later request for that rule hits the cache
+/// and skips Engine construction, policy parsing and the failing compile, so a
+/// partial policy that is missing a rule still warms the cache fully after one
+/// evaluation.
 #[cfg(feature = "regorus-regovm")]
 async fn resolve_programs(
     program_cache: &ProgramCache,
@@ -691,14 +710,22 @@ async fn resolve_programs(
             let cp = match engine.compile_with_entrypoint(&Rc::from(entry_point.clone())) {
                 Ok(cp) => cp,
                 Err(e) if e.to_string().contains("not a valid rule path") => {
+                    // The policy does not define this rule. Record it as
+                    // `Undefined` so the cache warms: a later request for the
+                    // same rule hits the cache (the slot exists) and skips
+                    // Engine construction, policy parsing and the failing
+                    // compile entirely. Without this the slot stays empty,
+                    // every evaluate rebuilds the Engine for a rule that can
+                    // never compile, and the cache never warms.
                     debug!("Policy `{policy_id}` does not check {rule}");
+                    programs.insert(rule.clone(), CachedProgram::Undefined);
                     continue;
                 }
                 Err(e) => return Err(PolicyError::LoadPolicyFailed(e)),
             };
             let program = Compiler::compile_from_policy(&cp, &[entry_point.as_str()])
                 .map_err(|e| PolicyError::LoadPolicyFailed(e.into()))?;
-            programs.insert(rule.clone(), program);
+            programs.insert(rule.clone(), CachedProgram::Program(program));
         }
         // Persist the merged map (hash unchanged on a partial miss).
         program_cache.write().await.insert(
@@ -1724,7 +1751,110 @@ default hardware := 2
         );
     }
 
-    // `common_evaluate` is the shared production entry point both backends
+    // A partial policy that is missing a requested
+    // rule must still warm the cache fully. An undefined rule
+    // was skipped at compile time but *not* recorded in the cache, so
+    // `resolve_programs` treated "not yet compiled" and "genuinely undefined"
+    // the same (slot absent). Every later `evaluate` for that rule rebuilt an
+    // `Engine`, re-parsed the policy and re-attempted the same failing compile
+    // the cache never warmed. The fix caches the undefined outcome as
+    // [`CachedProgram::Undefined`], so the slot exists and a later request hits.
+    //
+    // This evaluates the same partial policy twice through the real
+    // `evaluate_with_regovm` entry point with a shared cache, then inspects the
+    // cache: `deny` (undefined) must be `Undefined` and `allow` (defined) must
+    // be `Program` after the first call. On the pre-fix code `deny` would be
+    // absent from the cache (`None`), failing that assertion; the second call
+    // would then rebuild the Engine for `deny`. The second call here returning
+    // identical results with `deny` still cached as `Undefined` confirms the
+    // cache warmed.
+    #[cfg(feature = "regorus-regovm")]
+    #[tokio::test]
+    async fn evaluate_caches_undefined_rule_across_repeated_appraisals() {
+        // `allow` is defined; `deny` is requested but not defined -> Undefined.
+        let policy = r#"package policy
+import rego.v1
+default allow := true
+"#;
+        let cache = fresh_program_cache();
+        let functions = HashMap::<String, ExtensionFunction>::new();
+        let rules = vec!["allow".to_string(), "deny".to_string()];
+
+        // First appraisal: compiles `allow`, records `deny` as Undefined.
+        let r1 = evaluate_with_regovm(
+            policy.to_string(),
+            "{}".to_string(),
+            "partial".to_string(),
+            rules.clone(),
+            "{}".to_string(),
+            functions.clone(),
+            &cache,
+        )
+        .await
+        .expect("partial policy must evaluate, skipping undefined rules");
+        assert_eq!(
+            r1.rules_result.get("allow"),
+            Some(&serde_json::json!(true)),
+            "defined rule runs"
+        );
+        assert!(
+            !r1.rules_result.contains_key("deny"),
+            "undefined rule is skipped from results"
+        );
+
+        // The cache must now hold both outcomes: `deny` as `Undefined` (the
+        // fix), not an empty slot. This is what makes the next call a hit.
+        {
+            let guard = cache.read().await;
+            let cached = guard
+                .get("partial")
+                .expect("policy `partial` must be cached after first appraisal");
+            assert!(
+                matches!(cached.rules.get("deny"), Some(CachedProgram::Undefined)),
+                "`deny` must be cached as Undefined so the cache warms; got {:?}",
+                cached.rules.get("deny")
+            );
+            assert!(
+                matches!(cached.rules.get("allow"), Some(CachedProgram::Program(_))),
+                "`allow` must be cached as Program; got {:?}",
+                cached.rules.get("allow")
+            );
+        }
+
+        // Second appraisal of the same partial policy: a true cache hit for
+        // both rules, so `resolve_programs` builds no `Engine` and recompiles
+        // nothing, identical results, `deny` still cached as `Undefined`.
+        let r2 = evaluate_with_regovm(
+            policy.to_string(),
+            "{}".to_string(),
+            "partial".to_string(),
+            rules,
+            "{}".to_string(),
+            functions,
+            &cache,
+        )
+        .await
+        .expect("second appraisal of the same partial policy must succeed");
+        assert_eq!(
+            r2.rules_result.get("allow"),
+            Some(&serde_json::json!(true)),
+            "second appraisal returns the same result for the defined rule"
+        );
+        assert!(
+            !r2.rules_result.contains_key("deny"),
+            "undefined rule is still skipped on the second appraisal"
+        );
+        {
+            let guard = cache.read().await;
+            let cached = guard.get("partial").expect("policy still cached");
+            assert!(
+                matches!(cached.rules.get("deny"), Some(CachedProgram::Undefined)),
+                "`deny` stays cached as Undefined after the second appraisal"
+            );
+        }
+    }
+
+
     // dispatch through. Pin the cache contract at this layer (not only at
     // `evaluate_with_regovm`): the per-rule program cache is keyed by
     // `policy_id`, so appraising the same id with *different* source must
