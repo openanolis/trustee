@@ -15,11 +15,12 @@
 //!
 //! - default (no backend feature), the interpreter: a sync regorus
 //!   [`Engine`](regorus::Engine) with host functions registered as regorus
-//!   `Extension`s. Each extension call is an async [`ExtensionFunction`] closure
-//!   adapted by `async_to_sync_extension` into a sync `Extension` that
-//!   `block_on`s the closure's future on a `tokio::task::spawn_blocking` thread,
-//!   so the `block_on` never nests the tokio runtime. Needs a multi-threaded
-//!   runtime; unavailable on single-threaded wasm32 (its own `compile_error!`).
+//!   `Extension`s. Without host functions, evaluation runs inline and needs no
+//!   tokio runtime. With async [`ExtensionFunction`]s, the sync evaluation runs
+//!   on tokio's blocking pool and `async_to_sync_extension` drives each future
+//!   through the current runtime handle. This needs a running tokio runtime,
+//!   but it may be either current-thread or multi-threaded. The interpreter is
+//!   unavailable on wasm32 (its own `compile_error!`).
 //! - `regorus-regovm` (opt-in), the Regorus VM path: host functions are
 //!   driven through the suspendable `__builtin_host_await` loop
 //!   (`ExecutionMode::Suspendable`), which needs no tokio runtime and works on
@@ -75,9 +76,11 @@ use super::{EvaluationResult, PolicyError};
 // VM path that takes precedence when enabled. The public interface
 // (`ExtensionFunction` / `with_extra_extension_functions`) is identical under
 // either, so downstream code is unaffected by the choice.
-// The interpreter backend relies on a multi-threaded tokio runtime
-// (`Handle::current` + `spawn_blocking` + `block_on`) and cannot run on the
-// single-threaded wasm32 target, where `regorus-regovm` is required.
+// The interpreter backend needs no tokio runtime when no async extensions are
+// registered. With extensions, it moves the sync evaluation to tokio's
+// blocking pool and drives extension futures through the current runtime
+// handle; current-thread and multi-threaded runtimes are both supported. The
+// backend itself is unavailable on wasm32, where `regorus-regovm` is required.
 #[cfg(all(
     not(feature = "regorus-regovm"),
     target_arch = "wasm32",
@@ -631,12 +634,12 @@ async fn evaluate_with_regovm(
 /// when all requested rules are already cached, returns an `Arc` clone of the
 /// rules map (a single atomic increment, no per-rule cloning).
 ///
-/// On a miss (no entry, stale hash, or a rule not yet compiled) the slow path
-/// takes a write lock, re-checks whether all requested rules are now cached
-/// (another request may have filled them while this one waited), and if not,
-/// compiles the still-missing rules under the lock and persists the full map.
-/// Compile and persist are atomic, so concurrent compiles for the same policy
-/// cannot drop each other's rules.
+/// On a miss (no entry, stale hash, or a rule not yet compiled), the slow path
+/// compiles the missing rules without holding the global cache lock. It then
+/// takes a short write lock and merges any same-hash programs another request
+/// inserted in the meantime before replacing the entry. Concurrent misses may
+/// duplicate compilation, but they neither block unrelated cache hits for the
+/// duration of compilation nor drop each other's rules.
 ///
 /// Rules the policy does not define are cached as [`CachedProgram::Undefined`]
 /// so the cache warms fully: a later request for an undefined rule hits the
@@ -650,102 +653,129 @@ async fn resolve_programs(
     evaluation_rules: &[String],
     wrapper_module: &Option<String>,
 ) -> Result<RulePrograms, PolicyError> {
-    fn policy_with_all_the_rules(
-        program_cache_ref: &HashMap<String, CachedPolicy>,
-        policy_id: &str,
-        policy_hash: &str,
-        evaluation_rules: &[String],
-    ) -> Option<RulePrograms> {
-        match program_cache_ref.get(policy_id) {
-            Some(c) => {
-                // If the hash matches and every requested rule is cached,
-                // return an Arc clone of the whole rules map (one atomic
-                // increment, zero allocations).
-                if c.hash == policy_hash
-                    && evaluation_rules
-                        .iter()
-                        .all(|rule| c.rules.contains_key(rule))
-                {
-                    Some(Arc::clone(&c.rules))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
+    #[cfg(test)]
+    {
+        return resolve_programs_inner(
+            program_cache,
+            policy_id,
+            policy_hash,
+            policy,
+            evaluation_rules,
+            wrapper_module,
+            None,
+        )
+        .await;
     }
+
+    #[cfg(not(test))]
+    resolve_programs_inner(
+        program_cache,
+        policy_id,
+        policy_hash,
+        policy,
+        evaluation_rules,
+        wrapper_module,
+    )
+    .await
+}
+
+#[cfg(feature = "regorus-regovm")]
+async fn resolve_programs_inner(
+    program_cache: &ProgramCache,
+    policy_id: &str,
+    policy_hash: &str,
+    policy: &str,
+    evaluation_rules: &[String],
+    wrapper_module: &Option<String>,
+    #[cfg(test)] before_compile: Option<&tokio::sync::Barrier>,
+) -> Result<RulePrograms, PolicyError> {
+    // Take an immutable snapshot of this hash's programs. The Arc keeps the
+    // snapshot valid if a concurrent policy update replaces the cache entry.
+    let cached_programs = {
+        let cache = program_cache.read().await;
+        match cache.get(policy_id) {
+            Some(c) if c.hash == policy_hash => Arc::clone(&c.rules),
+            _ => Arc::new(HashMap::new()),
+        }
+    };
 
     // Fast path (read lock): if all requested rules are already cached with a
     // matching hash, return an Arc clone of the rules map (one atomic bump,
     // zero allocations).
-    let programs: Option<RulePrograms> = {
-        let cache = program_cache.read().await;
-        policy_with_all_the_rules(&cache, policy_id, policy_hash, evaluation_rules)
-    };
-    if let Some(programs) = programs {
-        return Ok(programs);
-    }
-
-    // Slow path (write lock) with a double check. Another request may have
-    // filled the cache while this one waited, so re-check whether all requested
-    // rules are now cached.
-    let mut cache = program_cache.write().await;
-    if let Some(programs) =
-        policy_with_all_the_rules(&cache, policy_id, policy_hash, evaluation_rules)
-    {
-        return Ok(programs);
-    }
-
-    // Not all requested rules are cached. Compile the missing ones under the
-    // write lock.
-
-    // Start from the cached rules if the hash matches (partial hit), or an
-    // empty map (full miss).
-    let mut programs = match cache.get(policy_id) {
-        Some(c) if c.hash == policy_hash => (*c.rules).clone(),
-        _ => HashMap::new(),
-    };
-    let missing_rules: Vec<&str> = evaluation_rules
+    if evaluation_rules
         .iter()
-        .map(|rule| rule.as_str())
-        .filter(|rule| !programs.contains_key(*rule))
+        .all(|rule| cached_programs.contains_key(rule))
+    {
+        return Ok(cached_programs);
+    }
+
+    let missing_rules: Vec<String> = evaluation_rules
+        .iter()
+        .filter(|rule| !cached_programs.contains_key(*rule))
+        .cloned()
         .collect();
 
-    let mut engine = regorus::Engine::new();
-    engine.set_rego_v0(true);
-    // The compiled program does not depend on the data document: regorus lowers
-    // `data.x` accesses to `LoadData` instructions that read the VM's runtime
-    // data store (set per-evaluation via `set_data`). An empty object only
-    // satisfies `compile_with_entrypoint`'s internal `prepare_for_eval`, which
-    // requires a valid (object) data document.
-    engine
-        .add_data(regorus::Value::new_object())
-        .map_err(PolicyError::LoadPolicyFailed)?;
-    engine
-        .add_policy(policy_id.to_string(), policy.to_string())
-        .map_err(PolicyError::LoadPolicyFailed)?;
-    if let Some(wrapper) = wrapper_module {
-        engine
-            .add_policy(EXTENSIONS_WRAPPER_MODULE_ID.to_string(), wrapper.clone())
-            .map_err(PolicyError::LoadPolicyFailed)?;
-    }
-    for missing_rule in &missing_rules {
-        let entry_point = format!("data.policy.{missing_rule}");
-        let cp = match engine.compile_with_entrypoint(&Rc::from(entry_point.clone())) {
-            Ok(cp) => cp,
-            Err(e) if e.to_string().contains("not a valid rule path") => {
-                debug!("Policy `{policy_id}` does not check {missing_rule}");
-                programs.insert(missing_rule.to_string(), CachedProgram::Undefined);
-                continue;
-            }
-            Err(e) => return Err(PolicyError::LoadPolicyFailed(e)),
-        };
-        let program = Compiler::compile_from_policy(&cp, &[entry_point.as_str()])
-            .map_err(|e| PolicyError::LoadPolicyFailed(e.into()))?;
-        programs.insert(missing_rule.to_string(), CachedProgram::Program(program));
+    // Tests can pause concurrent misses after both have taken their snapshots,
+    // making the merge race deterministic without affecting production code.
+    #[cfg(test)]
+    if let Some(barrier) = before_compile {
+        barrier.wait().await;
     }
 
-    // Persist: insert a fresh entry into the cache
+    // Compile without holding either side of the global cache lock, so a cold
+    // policy cannot serialize unrelated cache hits or misses.
+    let compiled_programs = {
+        let mut compiled_programs = HashMap::with_capacity(missing_rules.len());
+        let mut engine = regorus::Engine::new();
+        engine.set_rego_v0(true);
+        // The compiled program does not depend on the data document: regorus lowers
+        // `data.x` accesses to `LoadData` instructions that read the VM's runtime
+        // data store (set per-evaluation via `set_data`). An empty object only
+        // satisfies `compile_with_entrypoint`'s internal `prepare_for_eval`, which
+        // requires a valid (object) data document.
+        engine
+            .add_data(regorus::Value::new_object())
+            .map_err(PolicyError::LoadPolicyFailed)?;
+        engine
+            .add_policy(policy_id.to_string(), policy.to_string())
+            .map_err(PolicyError::LoadPolicyFailed)?;
+        if let Some(wrapper) = wrapper_module {
+            engine
+                .add_policy(EXTENSIONS_WRAPPER_MODULE_ID.to_string(), wrapper.clone())
+                .map_err(PolicyError::LoadPolicyFailed)?;
+        }
+        for missing_rule in &missing_rules {
+            let entry_point = format!("data.policy.{missing_rule}");
+            let cp = match engine.compile_with_entrypoint(&Rc::from(entry_point.clone())) {
+                Ok(cp) => cp,
+                Err(e) if e.to_string().contains("not a valid rule path") => {
+                    debug!("Policy `{policy_id}` does not check {missing_rule}");
+                    compiled_programs.insert(missing_rule.to_string(), CachedProgram::Undefined);
+                    continue;
+                }
+                Err(e) => return Err(PolicyError::LoadPolicyFailed(e)),
+            };
+            let program = Compiler::compile_from_policy(&cp, &[entry_point.as_str()])
+                .map_err(|e| PolicyError::LoadPolicyFailed(e.into()))?;
+            compiled_programs.insert(missing_rule.to_string(), CachedProgram::Program(program));
+        }
+        compiled_programs
+    };
+
+    // Preserve the snapshot used by this evaluation, then merge programs a
+    // concurrent same-hash request inserted while compilation was in flight.
+    let mut programs = (*cached_programs).clone();
+    let mut cache = program_cache.write().await;
+    if let Some(current) = cache.get(policy_id).filter(|c| c.hash == policy_hash) {
+        programs.extend(
+            current
+                .rules
+                .iter()
+                .map(|(rule, program)| (rule.clone(), program.clone())),
+        );
+    }
+    programs.extend(compiled_programs);
+
     let programs = Arc::new(programs);
     cache.insert(
         policy_id.to_string(),
@@ -2052,11 +2082,11 @@ allow := true
         );
     }
 
-    // Regression test: two concurrent appraisals of the same policy requesting
-    // disjoint rule sets. The write lock re-checks for a concurrent insert before committing, so both
-    // appraisals return their own rules and the cache holds the union.
+    // Regression test: force two spawned tasks to take the same empty cache
+    // snapshot before either compiles disjoint rules. Both results must remain
+    // usable and the short write-lock merge must persist the union.
     #[cfg(feature = "regorus-regovm")]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn resolve_programs_concurrent_disjoint_rules_keep_both() {
         let policy = r#"package policy
 import rego.v1
@@ -2070,22 +2100,53 @@ file_system := 35
             h.update(policy);
             hex::encode(h.finalize())
         };
-        let cache = fresh_program_cache();
-        let rules_a: Vec<String> = ["executables", "hardware"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let rules_b: Vec<String> = ["configuration", "file_system"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let wrapper: Option<String> = None;
-        let (a, b) = tokio::join!(
-            resolve_programs(&cache, "p", &hash, policy, &rules_a, &wrapper),
-            resolve_programs(&cache, "p", &hash, policy, &rules_b, &wrapper),
-        );
-        let a = a.unwrap();
-        let b = b.unwrap();
+        let cache = Arc::new(fresh_program_cache());
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+
+        let cache_a = Arc::clone(&cache);
+        let barrier_a = Arc::clone(&barrier);
+        let hash_a = hash.clone();
+        let task_a = tokio::spawn(async move {
+            let rules = vec!["executables".to_string(), "hardware".to_string()];
+            let wrapper = None;
+            resolve_programs_inner(
+                cache_a.as_ref(),
+                "p",
+                &hash_a,
+                policy,
+                &rules,
+                &wrapper,
+                Some(barrier_a.as_ref()),
+            )
+            .await
+        });
+
+        let cache_b = Arc::clone(&cache);
+        let barrier_b = Arc::clone(&barrier);
+        let hash_b = hash.clone();
+        let task_b = tokio::spawn(async move {
+            let rules = vec!["configuration".to_string(), "file_system".to_string()];
+            let wrapper = None;
+            resolve_programs_inner(
+                cache_b.as_ref(),
+                "p",
+                &hash_b,
+                policy,
+                &rules,
+                &wrapper,
+                Some(barrier_b.as_ref()),
+            )
+            .await
+        });
+
+        let (a, b) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            (
+                task_a.await.unwrap().unwrap(),
+                task_b.await.unwrap().unwrap(),
+            )
+        })
+        .await
+        .expect("concurrent cache fills should not block each other");
         assert!(a.contains_key("executables") && a.contains_key("hardware"));
         assert!(b.contains_key("configuration") && b.contains_key("file_system"));
         let cached = cache.read().await.get("p").cloned().unwrap();
