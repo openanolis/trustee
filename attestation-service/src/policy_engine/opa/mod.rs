@@ -1658,8 +1658,8 @@ allow if {
     // the old interpreter (`eval_rule` + catch `not a valid rule path`) and the
     // current `evaluate_with_regovm` preserve this; any optimization of
     // `evaluate_with_regovm` (hoist, program cache, etc.) MUST preserve it too.
-    // See the `eval_bench` module for why multi-entry compile was rejected: it
-    // would turn this skip into a whole-compile failure.
+    // Multi-entry compile was rejected because it would turn this skip into a
+    // whole-compile failure.
     #[cfg(all(feature = "regorus-regovm", feature = "policy-rvps"))]
     #[tokio::test]
     async fn evaluate_skips_rules_not_defined_in_policy() {

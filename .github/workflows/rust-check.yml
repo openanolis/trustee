@@ -172,7 +172,7 @@ jobs:
           sudo -E PATH="$PATH" -s cargo test -p attestation-service -p verifier
           sudo -E PATH="$PATH" -s cargo test -p attestation-service --lib --no-default-features
           sudo -E PATH="$PATH" -s cargo test -p attestation-service --lib --no-default-features --features policy-artifact-server
-          # RegoVM backend: runs the suspendable host-await path and eval_bench.
+          # RegoVM backend: runs the suspendable host-await path.
           sudo -E PATH="$PATH" -s cargo test -p attestation-service --lib --no-default-features --features policy-artifact-server,policy-rvps,regorus-regovm
 
       - name: Run pure-Rust TDX verifier tests
