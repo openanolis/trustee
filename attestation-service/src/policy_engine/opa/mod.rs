@@ -722,9 +722,19 @@ async fn evaluate_with_interpreter(
     data: String,
     extension_functions: HashMap<String, ExtensionFunction>,
 ) -> Result<EvaluationResult, PolicyError> {
-    // Captured on the async thread, then moved onto a blocking-pool thread so
-    // the extensions' `block_on` never runs inside a runtime context guard.
-    let runtime_handle = tokio::runtime::Handle::current();
+    // No async extensions: the sync regorus path needs no tokio runtime, so run
+    // evaluate_sync inline regardless of whether a runtime is available.
+    if extension_functions.is_empty() {
+        return evaluate_sync(policy, input, policy_id, evaluation_rules, data, None);
+    }
+    // Has async extensions: their `block_on` needs a tokio runtime. Require one
+    // explicitly rather than panicking in `Handle::current()`.
+    let runtime_handle = tokio::runtime::Handle::try_current().map_err(|_| {
+        PolicyError::EvalPolicyFailed(anyhow!(
+            "policy evaluation with async extension functions requires a tokio runtime, \
+             but none is running on the current thread"
+        ))
+    })?;
     tokio::task::spawn_blocking(move || {
         evaluate_sync(
             policy,
@@ -732,8 +742,7 @@ async fn evaluate_with_interpreter(
             policy_id,
             evaluation_rules,
             data,
-            extension_functions,
-            runtime_handle,
+            Some((extension_functions, runtime_handle)),
         )
     })
     .await
@@ -749,8 +758,10 @@ fn evaluate_sync(
     policy_id: String,
     evaluation_rules: Vec<String>,
     data: String,
-    extension_functions: HashMap<String, ExtensionFunction>,
-    runtime_handle: tokio::runtime::Handle,
+    extensions: Option<(
+        HashMap<String, ExtensionFunction>,
+        tokio::runtime::Handle,
+    )>,
 ) -> Result<EvaluationResult, PolicyError> {
     let policy_hash = {
         let mut hasher = sha2::Sha384::new();
@@ -775,14 +786,16 @@ fn evaluate_sync(
         .set_input_json(&input)
         .map_err(PolicyError::SetInputDataFailed)?;
 
-    for (name, function) in &extension_functions {
-        engine
-            .add_extension(
-                name.clone(),
-                1,
-                async_to_sync_extension(function.clone(), runtime_handle.clone()),
-            )
-            .map_err(PolicyError::EvalPolicyFailed)?;
+    if let Some((extension_functions, runtime_handle)) = &extensions {
+        for (name, function) in extension_functions {
+            engine
+                .add_extension(
+                    name.clone(),
+                    1,
+                    async_to_sync_extension(function.clone(), runtime_handle.clone()),
+                )
+                .map_err(PolicyError::EvalPolicyFailed)?;
+        }
     }
 
     let mut rules_result = std::collections::HashMap::new();
@@ -1779,6 +1792,121 @@ allow := false
         assert_eq!(
             r2.rules_result.get("allow"),
             Some(&serde_json::json!(false))
+        );
+    }
+
+    // The interpreter path must not require a tokio runtime. With no async
+    // extensions evaluate_sync runs inline (no runtime needed); with extensions
+    // it uses Handle::try_current() and spawn_blocking when a runtime is
+    // available, or returns an explicit error otherwise. The tests below pin
+    // each case through common_evaluate, in the feature config that exposes it.
+
+    /// A tokio runtime is running -> evaluation succeeds (spawn_blocking when
+    /// extensions are registered, inline sync otherwise).
+    #[cfg(not(feature = "regorus-regovm"))]
+    #[tokio::test]
+    async fn interpreter_eval_runs_under_tokio_runtime() {
+        use crate::rvps::test_resolver;
+        #[cfg(feature = "policy-artifact-server")]
+        use crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS;
+
+        let policy = r#"package policy
+import rego.v1
+allow := true
+"#;
+        let rvps = test_resolver(HashMap::new());
+        #[cfg(feature = "policy-artifact-server")]
+        let artifact_client = Arc::new(
+            artifact_resolve_sdk::Client::new(DEFAULT_ARTIFACT_SERVER_ADDRESS).unwrap(),
+        );
+        let result = common_evaluate(
+            policy.to_string(),
+            "{}".to_string(),
+            "p".to_string(),
+            vec!["allow".to_string()],
+            rvps,
+            #[cfg(feature = "policy-artifact-server")]
+            artifact_client,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            result.rules_result.get("allow"),
+            Some(&serde_json::json!(true))
+        );
+    }
+
+    /// Branch 2: no tokio runtime, no async extensions -> inline sync eval,
+    /// usable from a non-tokio executor. Only compiled when neither
+    /// `policy-rvps` nor `policy-artifact-server` registers an extension.
+    #[cfg(not(any(
+        feature = "regorus-regovm",
+        feature = "policy-rvps",
+        feature = "policy-artifact-server"
+    )))]
+    #[test]
+    fn interpreter_eval_runs_without_runtime_when_no_extensions() {
+        use crate::rvps::test_resolver;
+
+        let policy = r#"package policy
+import rego.v1
+allow := true
+"#;
+        let rvps = test_resolver(HashMap::new());
+        // No tokio runtime on this thread and no extensions -> the
+        // no-extension branch runs evaluate_sync inline (no Handle::current).
+        let result = futures::executor::block_on(common_evaluate(
+            policy.to_string(),
+            "{}".to_string(),
+            "p".to_string(),
+            vec!["allow".to_string()],
+            rvps,
+            None,
+        ))
+        .unwrap();
+        assert_eq!(
+            result.rules_result.get("allow"),
+            Some(&serde_json::json!(true))
+        );
+    }
+
+    /// No tokio runtime but an async extension is registered: the extension's
+    /// `block_on` needs a runtime, return an explicit error instead of
+    /// panicking.
+    #[cfg(all(
+        not(feature = "regorus-regovm"),
+        any(feature = "policy-rvps", feature = "policy-artifact-server")
+    ))]
+    #[test]
+    fn interpreter_eval_errors_without_runtime_when_extensions_registered() {
+        use crate::rvps::test_resolver;
+        #[cfg(feature = "policy-artifact-server")]
+        use crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS;
+
+        let policy = r#"package policy
+import rego.v1
+allow := true
+"#;
+        let rvps = test_resolver(HashMap::new());
+        #[cfg(feature = "policy-artifact-server")]
+        let artifact_client = Arc::new(
+            artifact_resolve_sdk::Client::new(DEFAULT_ARTIFACT_SERVER_ADDRESS).unwrap(),
+        );
+        let err = futures::executor::block_on(common_evaluate(
+            policy.to_string(),
+            "{}".to_string(),
+            "p".to_string(),
+            vec!["allow".to_string()],
+            rvps,
+            #[cfg(feature = "policy-artifact-server")]
+            artifact_client,
+            None,
+        ))
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("requires a tokio runtime"),
+            "expected a tokio-runtime-required error, got: {err}"
         );
     }
 }
