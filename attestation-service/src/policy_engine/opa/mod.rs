@@ -20,12 +20,11 @@
 //!   `block_on`s the closure's future on a `tokio::task::spawn_blocking` thread,
 //!   so the `block_on` never nests the tokio runtime. Needs a multi-threaded
 //!   runtime; unavailable on single-threaded wasm32 (its own `compile_error!`).
-//! - `regorus-regovm`, the (still unstable) Regorus VM path: host functions are
+//! - `regorus-regovm` (opt-in), the Regorus VM path: host functions are
 //!   driven through the suspendable `__builtin_host_await` loop
 //!   (`ExecutionMode::Suspendable`), which needs no tokio runtime and works on
-//!   wasm32. Forwards regorus's `rvm` feature (the interpreter build compiles no
-//!   `regorus::rvm` code). When enabled it takes precedence over the interpreter,
-//!   so `--all-features` selects the VM path.
+//!   wasm32. Forwards regorus's `rvm` feature (the interpreter build compiles
+//!   no `regorus::rvm` code).
 //!
 //! Both backends share the *same* async public type ([`ExtensionFunction`]), so a downstream crate
 //! supplies one `Vec<(String, ExtensionFunction)>` regardless of the selected backend, and dotted
@@ -78,7 +77,7 @@ use super::{EvaluationResult, PolicyError};
 // either, so downstream code is unaffected by the choice.
 // The interpreter backend relies on a multi-threaded tokio runtime
 // (`Handle::current` + `spawn_blocking` + `block_on`) and cannot run on the
-// single-threaded wasm32 target; there `regorus-regovm` must be used instead.
+// single-threaded wasm32 target, where `regorus-regovm` is required.
 #[cfg(all(
     not(feature = "regorus-regovm"),
     target_arch = "wasm32",
@@ -290,7 +289,7 @@ enum CachedProgram {
 /// (matching regorus's `not a valid rule path` -> skip behaviour while
 /// still occupying a cache slot). Rules never requested are simply absent.
 #[cfg(feature = "regorus-regovm")]
-type RulePrograms = HashMap<String, CachedProgram>;
+type RulePrograms = Arc<HashMap<String, CachedProgram>>;
 
 /// One policy's cached compilation: the content hash it was compiled against
 /// (a validation checksum, if the policy source changed, this entry is stale)
@@ -626,36 +625,22 @@ async fn evaluate_with_regovm(
 /// Resolve the per-rule RVM programs needed for an evaluation, populating the
 /// cross-evaluation cache.
 ///
-/// The cache is keyed by `policy_id`. A lookup is a hit when this policy was
-/// compiled before AND its stored content hash matches the current source, a
-/// hit reuses the previously compiled per-rule programs and skips `Engine`
-/// construction, policy parsing and compilation entirely, so only the per-rule
-/// VM runs.
+/// The cache is keyed by `policy_id` with the content hash as a validation
+/// checksum. A hit (matching hash) reuses the cached programs and skips Engine
+/// construction, parsing and compilation. The fast path holds a read lock and,
+/// when all requested rules are already cached, returns an `Arc` clone of the
+/// rules map (a single atomic increment, no per-rule cloning).
 ///
-/// Two kinds of miss:
-/// - full miss: no entry (first appraisal) or a changed source whose hash no
-///   longer matches; start from an empty rule map.
-/// - partial miss: a hit, but this request asks for a rule the cached entry
-///   did not compile (a previous request used a different rule set). The cached
-///   map is reused and only the missing rules are compiled and merged in,
-///   otherwise a rule absent from the *first* request would be wrongly skipped
-///   as "not defined" on every later request.
+/// On a miss (no entry, stale hash, or a rule not yet compiled) the slow path
+/// takes a write lock, re-checks whether all requested rules are now cached
+/// (another request may have filled them while this one waited), and if not,
+/// compiles the still-missing rules under the lock and persists the full map.
+/// Compile and persist are atomic, so concurrent compiles for the same policy
+/// cannot drop each other's rules.
 ///
-/// In both miss cases the `Engine` is built once for the whole evaluation
-/// (hoisted out of the per-rule compile loop) and only the missing rules are
-/// compiled. Keying by id (not by hash) bounds the cache to one entry per
-/// policy and makes a changed source overwrite the stale slot in place, so old
-/// versions never accumulate, important for the fs-backed `OPA`, which reads
-/// the policy file fresh on every `evaluate` and would otherwise leak a cache
-/// entry per content version when the file is overwritten on disk.
-///
-/// Rules the policy does not define are cached as [`CachedProgram::Undefined`]:
-/// regorus reports them as `not a valid rule path`, which the policy engine
-/// treats as "skip this rule". Caching the `Undefined` outcome (rather than
-/// leaving the slot empty) means a later request for that rule hits the cache
-/// and skips Engine construction, policy parsing and the failing compile, so a
-/// partial policy that is missing a rule still warms the cache fully after one
-/// evaluation.
+/// Rules the policy does not define are cached as [`CachedProgram::Undefined`]
+/// so the cache warms fully: a later request for an undefined rule hits the
+/// cache and skips the Engine rebuild and failing compile.
 #[cfg(feature = "regorus-regovm")]
 async fn resolve_programs(
     program_cache: &ProgramCache,
@@ -665,77 +650,110 @@ async fn resolve_programs(
     evaluation_rules: &[String],
     wrapper_module: &Option<String>,
 ) -> Result<RulePrograms, PolicyError> {
-    // Start from the cached entry for this policy when its hash matches;
-    // otherwise an empty map (full miss: first appraisal or a changed source).
-    let mut programs: RulePrograms = {
-        let cached = program_cache.read().await.get(policy_id).cloned();
-        match cached {
-            Some(c) if c.hash == policy_hash => c.rules,
-            _ => HashMap::new(),
-        }
-    };
-
-    // Rules requested but not yet compiled (full miss, or a later request for
-    // rules the cached entry didn't include). Compile only these, then merge
-    // into the map and persist so the next appraisal finds them warm.
-    let missing: Vec<String> = evaluation_rules
-        .iter()
-        .filter(|rule| !programs.contains_key(*rule))
-        .cloned()
-        .collect();
-    if !missing.is_empty() {
-        let mut engine = regorus::Engine::new();
-        engine.set_rego_v0(true);
-        // The compiled program does not depend on the data document: regorus
-        // lowers `data.x` accesses to `LoadData` instructions that read the
-        // VM's runtime data store (set per-evaluation via `set_data`), so no
-        // data value is baked into the bytecode. An empty object only
-        // satisfies `compile_with_entrypoint`'s internal `prepare_for_eval`,
-        // which requires a valid (object) data document.
-        engine
-            .add_data(regorus::Value::new_object())
-            .map_err(PolicyError::LoadPolicyFailed)?;
-        engine
-            .add_policy(policy_id.to_string(), policy.to_string())
-            .map_err(PolicyError::LoadPolicyFailed)?;
-        if let Some(wrapper) = wrapper_module {
-            engine
-                .add_policy(EXTENSIONS_WRAPPER_MODULE_ID.to_string(), wrapper.clone())
-                .map_err(PolicyError::LoadPolicyFailed)?;
-        }
-        for rule in &missing {
-            // regorus rejects a bare rule name with "not a valid rule path";
-            // use the full data.policy path. See [`common_evaluate`].
-            let entry_point = format!("data.policy.{rule}");
-            let cp = match engine.compile_with_entrypoint(&Rc::from(entry_point.clone())) {
-                Ok(cp) => cp,
-                Err(e) if e.to_string().contains("not a valid rule path") => {
-                    // The policy does not define this rule. Record it as
-                    // `Undefined` so the cache warms: a later request for the
-                    // same rule hits the cache (the slot exists) and skips
-                    // Engine construction, policy parsing and the failing
-                    // compile entirely. Without this the slot stays empty,
-                    // every evaluate rebuilds the Engine for a rule that can
-                    // never compile, and the cache never warms.
-                    debug!("Policy `{policy_id}` does not check {rule}");
-                    programs.insert(rule.clone(), CachedProgram::Undefined);
-                    continue;
+    fn policy_with_all_the_rules(
+        program_cache_ref: &HashMap<String, CachedPolicy>,
+        policy_id: &str,
+        policy_hash: &str,
+        evaluation_rules: &[String],
+    ) -> Option<RulePrograms> {
+        match program_cache_ref.get(policy_id) {
+            Some(c) => {
+                // If the hash matches and every requested rule is cached,
+                // return an Arc clone of the whole rules map (one atomic
+                // increment, zero allocations).
+                if c.hash == policy_hash
+                    && evaluation_rules
+                        .iter()
+                        .all(|rule| c.rules.contains_key(rule))
+                {
+                    Some(Arc::clone(&c.rules))
+                } else {
+                    None
                 }
-                Err(e) => return Err(PolicyError::LoadPolicyFailed(e)),
-            };
-            let program = Compiler::compile_from_policy(&cp, &[entry_point.as_str()])
-                .map_err(|e| PolicyError::LoadPolicyFailed(e.into()))?;
-            programs.insert(rule.clone(), CachedProgram::Program(program));
+            }
+            _ => None,
         }
-        // Persist the merged map (hash unchanged on a partial miss).
-        program_cache.write().await.insert(
-            policy_id.to_string(),
-            CachedPolicy {
-                hash: policy_hash.to_string(),
-                rules: programs.clone(),
-            },
-        );
     }
+
+    // Fast path (read lock): if all requested rules are already cached with a
+    // matching hash, return an Arc clone of the rules map (one atomic bump,
+    // zero allocations).
+    let programs: Option<RulePrograms> = {
+        let cache = program_cache.read().await;
+        policy_with_all_the_rules(&cache, policy_id, policy_hash, evaluation_rules)
+    };
+    if let Some(programs) = programs {
+        return Ok(programs);
+    }
+
+    // Slow path (write lock) with a double check. Another request may have
+    // filled the cache while this one waited, so re-check whether all requested
+    // rules are now cached.
+    let mut cache = program_cache.write().await;
+    if let Some(programs) =
+        policy_with_all_the_rules(&cache, policy_id, policy_hash, evaluation_rules)
+    {
+        return Ok(programs);
+    }
+
+    // Not all requested rules are cached. Compile the missing ones under the
+    // write lock.
+
+    // Start from the cached rules if the hash matches (partial hit), or an
+    // empty map (full miss).
+    let mut programs = match cache.get(policy_id) {
+        Some(c) if c.hash == policy_hash => (*c.rules).clone(),
+        _ => HashMap::new(),
+    };
+    let missing_rules: Vec<&str> = evaluation_rules
+        .iter()
+        .map(|rule| rule.as_str())
+        .filter(|rule| !programs.contains_key(*rule))
+        .collect();
+
+    let mut engine = regorus::Engine::new();
+    engine.set_rego_v0(true);
+    // The compiled program does not depend on the data document: regorus lowers
+    // `data.x` accesses to `LoadData` instructions that read the VM's runtime
+    // data store (set per-evaluation via `set_data`). An empty object only
+    // satisfies `compile_with_entrypoint`'s internal `prepare_for_eval`, which
+    // requires a valid (object) data document.
+    engine
+        .add_data(regorus::Value::new_object())
+        .map_err(PolicyError::LoadPolicyFailed)?;
+    engine
+        .add_policy(policy_id.to_string(), policy.to_string())
+        .map_err(PolicyError::LoadPolicyFailed)?;
+    if let Some(wrapper) = wrapper_module {
+        engine
+            .add_policy(EXTENSIONS_WRAPPER_MODULE_ID.to_string(), wrapper.clone())
+            .map_err(PolicyError::LoadPolicyFailed)?;
+    }
+    for missing_rule in &missing_rules {
+        let entry_point = format!("data.policy.{missing_rule}");
+        let cp = match engine.compile_with_entrypoint(&Rc::from(entry_point.clone())) {
+            Ok(cp) => cp,
+            Err(e) if e.to_string().contains("not a valid rule path") => {
+                debug!("Policy `{policy_id}` does not check {missing_rule}");
+                programs.insert(missing_rule.to_string(), CachedProgram::Undefined);
+                continue;
+            }
+            Err(e) => return Err(PolicyError::LoadPolicyFailed(e)),
+        };
+        let program = Compiler::compile_from_policy(&cp, &[entry_point.as_str()])
+            .map_err(|e| PolicyError::LoadPolicyFailed(e.into()))?;
+        programs.insert(missing_rule.to_string(), CachedProgram::Program(program));
+    }
+
+    // Persist: insert a fresh entry into the cache
+    let programs = Arc::new(programs);
+    cache.insert(
+        policy_id.to_string(),
+        CachedPolicy {
+            hash: policy_hash.to_string(),
+            rules: programs.clone(),
+        },
+    );
 
     Ok(programs)
 }
@@ -785,10 +803,7 @@ fn evaluate_sync(
     policy_id: String,
     evaluation_rules: Vec<String>,
     data: String,
-    extensions: Option<(
-        HashMap<String, ExtensionFunction>,
-        tokio::runtime::Handle,
-    )>,
+    extensions: Option<(HashMap<String, ExtensionFunction>, tokio::runtime::Handle)>,
 ) -> Result<EvaluationResult, PolicyError> {
     let policy_hash = {
         let mut hasher = sha2::Sha384::new();
@@ -1854,7 +1869,6 @@ default allow := true
         }
     }
 
-
     // dispatch through. Pin the cache contract at this layer (not only at
     // `evaluate_with_regovm`): the per-rule program cache is keyed by
     // `policy_id`, so appraising the same id with *different* source must
@@ -1936,9 +1950,9 @@ allow := false
     #[cfg(not(feature = "regorus-regovm"))]
     #[tokio::test]
     async fn interpreter_eval_runs_under_tokio_runtime() {
-        use crate::rvps::test_resolver;
         #[cfg(feature = "policy-artifact-server")]
         use crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS;
+        use crate::rvps::test_resolver;
 
         let policy = r#"package policy
 import rego.v1
@@ -1946,9 +1960,8 @@ allow := true
 "#;
         let rvps = test_resolver(HashMap::new());
         #[cfg(feature = "policy-artifact-server")]
-        let artifact_client = Arc::new(
-            artifact_resolve_sdk::Client::new(DEFAULT_ARTIFACT_SERVER_ADDRESS).unwrap(),
-        );
+        let artifact_client =
+            Arc::new(artifact_resolve_sdk::Client::new(DEFAULT_ARTIFACT_SERVER_ADDRESS).unwrap());
         let result = common_evaluate(
             policy.to_string(),
             "{}".to_string(),
@@ -2010,9 +2023,9 @@ allow := true
     ))]
     #[test]
     fn interpreter_eval_errors_without_runtime_when_extensions_registered() {
-        use crate::rvps::test_resolver;
         #[cfg(feature = "policy-artifact-server")]
         use crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS;
+        use crate::rvps::test_resolver;
 
         let policy = r#"package policy
 import rego.v1
@@ -2020,9 +2033,8 @@ allow := true
 "#;
         let rvps = test_resolver(HashMap::new());
         #[cfg(feature = "policy-artifact-server")]
-        let artifact_client = Arc::new(
-            artifact_resolve_sdk::Client::new(DEFAULT_ARTIFACT_SERVER_ADDRESS).unwrap(),
-        );
+        let artifact_client =
+            Arc::new(artifact_resolve_sdk::Client::new(DEFAULT_ARTIFACT_SERVER_ADDRESS).unwrap());
         let err = futures::executor::block_on(common_evaluate(
             policy.to_string(),
             "{}".to_string(),
@@ -2038,5 +2050,48 @@ allow := true
             err.to_string().contains("requires a tokio runtime"),
             "expected a tokio-runtime-required error, got: {err}"
         );
+    }
+
+    // Regression test: two concurrent appraisals of the same policy requesting
+    // disjoint rule sets. The write lock re-checks for a concurrent insert before committing, so both
+    // appraisals return their own rules and the cache holds the union.
+    #[cfg(feature = "regorus-regovm")]
+    #[tokio::test]
+    async fn resolve_programs_concurrent_disjoint_rules_keep_both() {
+        let policy = r#"package policy
+import rego.v1
+executables := 33
+hardware := 97
+configuration := 36
+file_system := 35
+"#;
+        let hash = {
+            let mut h = sha2::Sha384::new();
+            h.update(policy);
+            hex::encode(h.finalize())
+        };
+        let cache = fresh_program_cache();
+        let rules_a: Vec<String> = ["executables", "hardware"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let rules_b: Vec<String> = ["configuration", "file_system"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let wrapper: Option<String> = None;
+        let (a, b) = tokio::join!(
+            resolve_programs(&cache, "p", &hash, policy, &rules_a, &wrapper),
+            resolve_programs(&cache, "p", &hash, policy, &rules_b, &wrapper),
+        );
+        let a = a.unwrap();
+        let b = b.unwrap();
+        assert!(a.contains_key("executables") && a.contains_key("hardware"));
+        assert!(b.contains_key("configuration") && b.contains_key("file_system"));
+        let cached = cache.read().await.get("p").cloned().unwrap();
+        assert_eq!(cached.hash, hash);
+        for rule in ["executables", "hardware", "configuration", "file_system"] {
+            assert!(cached.rules.contains_key(rule), "cache missing {rule}");
+        }
     }
 }
