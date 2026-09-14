@@ -4,7 +4,7 @@
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.9.0
+Version:        1.10.0
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -152,6 +152,16 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Mon Sep 14 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.10.0-1
+- AS policy: add an opt-in RegoVM backend with async host functions and
+  concurrency-safe compiled-program caching
+- AS policy: support AS-level artifact-server queries and validate extension
+  names before interpolating Rego source
+- AS token: accept signer key files containing additional PEM sections
+- Verifier/TDX: update dcap-qvl to handle reserved quote attribute bits
+- Build: raise the Rust baseline to 1.88, update Regorus to 0.11, and refresh
+  the RVDS container base image
+
 * Thu Aug 20 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.9.0-1
 - KBS/Gateway: complete EncryptedDb compatibility and resource key lifecycle APIs
 - Verifier/TDX: add age-based collateral cache health and improve PCCS resilience
