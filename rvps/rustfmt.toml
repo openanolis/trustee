@@ -1,0 +1,9 @@
+# Exclude prost-generated sources from formatting: each prost-build regen would
+# re-diverge from rustfmt's style, producing noisy diffs. rustfmt's `ignore` is an
+# unstable option — it takes effect under the nightly rustfmt used in CI
+# (see .github/workflows/rust-check.yml) and is a no-op (with a warning) on stable.
+# Add new @generated paths here as they appear.
+unstable_features = true
+ignore = [
+    "src/rvps_api/reference.rs",
+]
