@@ -529,6 +529,22 @@ fn dsse_payload_statement(value: &Value) -> Result<Option<String>> {
     Ok(Some(statement))
 }
 
+/// DSSE Pre-Auth Encoding (PAE): `DSSEv1 <len payloadType> payloadType <len payload> payload`.
+/// Needed to verify a Rekor v2 `hashedrekord` entry, which records `sha256(PAE)`
+/// rather than `sha256(payload)`.
+pub(crate) fn dsse_pae(payload_type: &[u8], payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(payload_type.len() + payload.len() + 32);
+    out.extend_from_slice(b"DSSEv1 ");
+    out.extend_from_slice(payload_type.len().to_string().as_bytes());
+    out.push(b' ');
+    out.extend_from_slice(payload_type);
+    out.push(b' ');
+    out.extend_from_slice(payload.len().to_string().as_bytes());
+    out.push(b' ');
+    out.extend_from_slice(payload);
+    out
+}
+
 fn verify_rekor_v2_consistency(value: &Value) -> Result<()> {
     let dsse = value
         .get("dsseEnvelope")
@@ -551,7 +567,7 @@ fn verify_rekor_v2_consistency(value: &Value) -> Result<()> {
     let payload_bytes = base64::engine::general_purpose::STANDARD
         .decode(payload_b64)
         .context("decode dsseEnvelope.payload for Rekor v2 verification")?;
-    let payload_sha256 = sha2::Sha256::digest(payload_bytes);
+    let payload_sha256 = sha2::Sha256::digest(&payload_bytes);
     let payload_sha256_b64 = base64::engine::general_purpose::STANDARD.encode(payload_sha256);
 
     let canonicalized_body_b64 = tlog_entry
@@ -570,20 +586,48 @@ fn verify_rekor_v2_consistency(value: &Value) -> Result<()> {
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if kind != "dsse" {
-        bail!("Rekor v2 canonicalizedBody kind `{kind}` is not dsse");
-    }
-
-    let rekor_payload_digest = canonicalized_json
-        .pointer("/spec/dsseV002/data/digest")
-        .or_else(|| canonicalized_json.pointer("/spec/dsseV002/payloadHash/digest"))
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Rekor v2 canonicalizedBody missing dsse payload digest"))?;
-
-    if rekor_payload_digest != payload_sha256_b64 {
-        bail!(
-            "Rekor v2 digest mismatch: rekor=`{rekor_payload_digest}`, payload_sha256_b64=`{payload_sha256_b64}`"
-        );
+    match kind.as_str() {
+        // Legacy DSSE v2 entry: records sha256(payload).
+        "dsse" => {
+            let rekor_payload_digest = canonicalized_json
+                .pointer("/spec/dsseV002/data/digest")
+                .or_else(|| canonicalized_json.pointer("/spec/dsseV002/payloadHash/digest"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Rekor v2 dsse body missing payload digest"))?;
+            if rekor_payload_digest != payload_sha256_b64 {
+                bail!(
+                    "Rekor v2 dsse digest mismatch: rekor=`{rekor_payload_digest}`, payload_sha256_b64=`{payload_sha256_b64}`"
+                );
+            }
+        }
+        // hashedrekord v2 entry (log2025-1 now only accepts this for new entries):
+        // records sha256(DSSE PAE), not sha256(payload). Reconstruct the PAE from
+        // the dsseEnvelope's payloadType + payload and compare.
+        "hashedrekord" => {
+            let rekor_digest = canonicalized_json
+                .pointer("/spec/hashedRekordV002/data/digest")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Rekor v2 hashedrekord body missing data.digest"))?;
+            let payload_type = dsse
+                .get("payloadType")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "dsseEnvelope.payloadType missing for hashedrekord verification"
+                    )
+                })?;
+            let pae = dsse_pae(payload_type.as_bytes(), &payload_bytes);
+            let pae_sha256_b64 =
+                base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(&pae));
+            if rekor_digest != pae_sha256_b64 {
+                bail!(
+                    "Rekor v2 hashedrekord digest mismatch: rekor=`{rekor_digest}`, pae_sha256_b64=`{pae_sha256_b64}`"
+                );
+            }
+        }
+        other => {
+            bail!("Rekor v2 canonicalizedBody kind `{other}` is neither dsse nor hashedrekord");
+        }
     }
 
     Ok(())
@@ -633,6 +677,67 @@ mod tests {
         let docs = parse_slsa_documents_from_material(dsse.as_bytes()).unwrap();
         assert_eq!(docs.len(), 1);
         assert!(docs[0].contains("predicateType"));
+    }
+
+    // log2025-1 now only accepts hashedrekord for new entries; the entry records
+    // sha256(DSSE PAE), so verify_rekor_v2_consistency must reconstruct the PAE
+    // from the dsseEnvelope's payloadType + payload and compare.
+    #[test]
+    fn verify_rekor_v2_consistency_accepts_hashedrekord() {
+        let payload = br#"{"_type":"x"}"#;
+        let payload_type = "application/vnd.trustee.rv.release+json";
+        let payload_b64 = base64::engine::general_purpose::STANDARD.encode(payload);
+        let pae = dsse_pae(payload_type.as_bytes(), payload);
+        let pae_sha256_b64 =
+            base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(&pae));
+        let canonicalized_body = base64::engine::general_purpose::STANDARD.encode(
+            serde_json::json!({
+                "kind": "hashedrekord",
+                "apiVersion": "0.0.2",
+                "spec": { "hashedRekordV002": { "data": { "algorithm": "SHA2_256", "digest": pae_sha256_b64 } } }
+            })
+            .to_string()
+            .as_bytes(),
+        );
+        let value = serde_json::json!({
+            "dsseEnvelope": { "payload": payload_b64, "payloadType": payload_type, "signatures": [{"sig":"x"}] },
+            "rekorEntryV2": { "canonicalizedBody": canonicalized_body }
+        });
+        assert!(verify_rekor_v2_consistency(&value).is_ok());
+    }
+
+    #[test]
+    fn verify_rekor_v2_consistency_rejects_hashedrekord_mismatch() {
+        let payload = br#"{"_type":"x"}"#;
+        let payload_type = "application/vnd.trustee.rv.release+json";
+        let payload_b64 = base64::engine::general_purpose::STANDARD.encode(payload);
+        let canonicalized_body = base64::engine::general_purpose::STANDARD.encode(
+            serde_json::json!({
+                "kind": "hashedrekord",
+                "spec": { "hashedRekordV002": { "data": { "algorithm": "SHA2_256", "digest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" } } }
+            })
+            .to_string()
+            .as_bytes(),
+        );
+        let value = serde_json::json!({
+            "dsseEnvelope": { "payload": payload_b64, "payloadType": payload_type, "signatures": [{"sig":"x"}] },
+            "rekorEntryV2": { "canonicalizedBody": canonicalized_body }
+        });
+        assert!(verify_rekor_v2_consistency(&value).is_err());
+    }
+
+    // Real bundle produced by rv-release-tool against log2025-1 (a genuine
+    // hashedrekord/0.0.2 transparency-log entry). The entry's
+    // hashedRekordV002.data.digest must equal sha256(DSSE PAE) reconstructed
+    // from the bundle's dsseEnvelope.
+    #[test]
+    fn verify_rekor_v2_consistency_accepts_real_hashedrekord_bundle() {
+        let raw = include_str!("../tests/fixtures/rekor_v2_hashedrekord_bundle.json");
+        let value: Value = serde_json::from_str(raw).expect("parse real fixture");
+        assert!(
+            verify_rekor_v2_consistency(&value).is_ok(),
+            "real hashedrekord bundle from log2025-1 must verify"
+        );
     }
 
     fn in_memory_rvps() -> Rvps {
