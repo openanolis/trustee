@@ -210,7 +210,7 @@ upload_rekor_v2() {
   local request_file="$5"
 
   local payload_type="application/vnd.trustee.as.signer-binding+json"
-  local pae_file sig_file pub_der_file payload_b64 sig_b64 pub_der_b64
+  local pae_file sig_file pub_der_file sig_b64 pub_der_b64
   pae_file="$(mktemp)"
   sig_file="$(mktemp)"
   pub_der_file="$(mktemp)"
@@ -219,29 +219,29 @@ upload_rekor_v2() {
   openssl dgst -sha256 -sign "$key_path" -out "$sig_file" "$pae_file"
   openssl pkey -in "$key_path" -pubout -outform DER -out "$pub_der_file"
 
-  payload_b64="$(base64 -w0 "$payload_file")"
   sig_b64="$(base64 -w0 "$sig_file")"
   pub_der_b64="$(base64 -w0 "$pub_der_file")"
+  # Rekor v2 (log2025-1) rejects the deprecated dsseRequestV002; post a
+  # hashedRekordRequestV002 entry whose digest = sha256(DSSE PAE) and whose
+  # signature is the existing DSSE signature (ECDSA-SHA256 over the PAE == a
+  # signature over sha256(PAE)). No re-signing or trust-model change.
+  digest_b64="$(openssl dgst -sha256 -binary "$pae_file" | base64 -w0)"
 
   jq -n \
-    --arg payload "$payload_b64" \
-    --arg payloadType "$payload_type" \
+    --arg digest "$digest_b64" \
     --arg sig "$sig_b64" \
-    --arg keyDetails "$key_details" \
     --arg rawBytes "$pub_der_b64" \
+    --arg keyDetails "$key_details" \
     '{
-      dsseRequestV002: {
-        envelope: {
-          payload: $payload,
-          payloadType: $payloadType,
-          signatures: [{ sig: $sig, keyid: "" }]
-        },
-        verifiers: [
-          {
+      hashedRekordRequestV002: {
+        digest: $digest,
+        signature: {
+          content: $sig,
+          verifier: {
             publicKey: { rawBytes: $rawBytes },
             keyDetails: $keyDetails
           }
-        ]
+        }
       }
     }' > "$request_file"
 
@@ -368,6 +368,10 @@ upload_rekor_v2 "$KEY_PATH" "$BINDING_PATH" "$KEY_DETAILS" "$REKOR_ENTRY_PATH" "
 
 PAYLOAD_SHA256="$(sha256_file "$BINDING_PATH")"
 PAYLOAD_SIZE="$(wc -c < "$BINDING_PATH" | tr -d ' ')"
+# sha256(DSSE PAE) in base64 — the digest the hashedrekord entry records. Embedded
+# so the verifier can bind the rekor entry to this binding without reconstructing
+# the PAE bytes (the bundle carries the parsed payload, not the raw signed bytes).
+PAE_SHA256_B64="$(jq -r '.hashedRekordRequestV002.digest' "$REKOR_REQUEST_PATH")"
 GENERATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 jq -n \
@@ -379,6 +383,7 @@ jq -n \
   --argjson payload_size "$PAYLOAD_SIZE" \
   --arg rekor_url "$REKOR_URL" \
   --arg key_details "$KEY_DETAILS" \
+  --arg pae_sha256 "$PAE_SHA256_B64" \
   --slurpfile payload "$BINDING_PATH" \
   --slurpfile rekorEntryV2 "$REKOR_ENTRY_PATH" \
   '{
@@ -394,8 +399,9 @@ jq -n \
     rekor: {
       url: $rekor_url,
       api_version: "v2",
-      request_type: "dsseRequestV002",
+      request_type: "hashedRekordRequestV002",
       key_details: $key_details,
+      pae_sha256: $pae_sha256,
       rekorEntryV2: $rekorEntryV2[0]
     }
   }' > "$TRANSPARENCY_PATH"

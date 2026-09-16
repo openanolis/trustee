@@ -290,35 +290,45 @@ upload_rekor_v2() {
   local output_file="$5"
   local req_file="$6"
 
-  local payload payload_type sig pub_der_b64
-  payload=$(jq -r '.payload // empty' "$envelope")
-  payload_type=$(jq -r '.payloadType // empty' "$envelope")
-  sig=$(jq -r '.signatures[0].sig // empty' "$envelope")
-  if [[ -z "$payload" || -z "$payload_type" || -z "$sig" ]]; then
-    echo "DSSE envelope 缺少 payload/payloadType/signatures[0].sig" >&2
+  # Rekor v2 (log2025-*.rekor.sigstore.dev) permanently rejects the deprecated
+  # dsseRequestV002 entry type with "invalid type, must be hashedrekord". The
+  # official migration (rekor-tiles deprecation note) is: post a
+  # hashedRekordRequestV002 entry whose digest = sha256(DSSE PAE) and whose
+  # signature is the existing DSSE signature. ECDSA/SHA-256 signs the digest, so
+  # the DSSE signature over the PAE is a valid signature over sha256(PAE); no
+  # re-signing or trust-model change is needed.
+  local pae_file="$out_dir/release-pae.bin"
+  if [ ! -f "$pae_file" ]; then
+    echo "缺少 DSSE PAE 文件: $pae_file（应由 sign_dsse_envelope 生成）" >&2
     return 1
   fi
 
+  local sig
+  sig=$(jq -r '.signatures[0].sig // empty' "$envelope")
+  if [ -z "$sig" ]; then
+    echo "DSSE envelope 缺少 signatures[0].sig" >&2
+    return 1
+  fi
+
+  local digest_b64 pub_der_b64
+  digest_b64=$(openssl dgst -sha256 -binary "$pae_file" | base64 -w0)
   pub_der_b64=$(openssl pkey -pubin -in "$pubkey" -outform DER | base64 -w0)
+
   jq -n \
-    --arg payload "$payload" \
-    --arg payloadType "$payload_type" \
+    --arg digest "$digest_b64" \
     --arg sig "$sig" \
-    --arg keyDetails "$key_details" \
     --arg rawBytes "$pub_der_b64" \
+    --arg keyDetails "$key_details" \
     '{
-      dsseRequestV002: {
-        envelope: {
-          payload: $payload,
-          payloadType: $payloadType,
-          signatures: [{ sig: $sig, keyid: "" }]
-        },
-        verifiers: [
-          {
+      hashedRekordRequestV002: {
+        digest: $digest,
+        signature: {
+          content: $sig,
+          verifier: {
             publicKey: { rawBytes: $rawBytes },
             keyDetails: $keyDetails
           }
-        ]
+        }
       }
     }' > "$req_file"
 
@@ -329,7 +339,7 @@ upload_rekor_v2() {
     -H 'Content-Type: application/json' \
     --data-binary @"$req_file")
   if [[ "$code" -lt 200 || "$code" -ge 300 ]]; then
-    echo "上传 Rekor v2 失败，HTTP $code，响应：" >&2
+    echo "上传 Rekor v2 hashedrekord 失败，HTTP $code，响应：" >&2
     cat "$output_file" >&2 || true
     return 1
   fi
