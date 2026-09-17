@@ -163,5 +163,4 @@ jobs:
       rpm_detail_provenance: true
       upload_provenance_to_rekor: true
       release_tag_name: ${{ github.event.release.tag_name || inputs.tag_name }}
-      prerelease: false
-
+      prerelease: ${{ github.event.release.prerelease || contains(github.event.release.tag_name, '-') || contains(inputs.tag_name, '-') }}

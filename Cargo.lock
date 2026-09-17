@@ -1648,7 +1648,7 @@ dependencies = [
 [[package]]
 name = "csv-rs"
 version = "0.1.0"
-source = "git+https://github.com/openanolis/csv-rs?rev=b67a07e#b67a07e4a42030ecd1b35bb281f3e778aeefec81"
+source = "git+https://github.com/jialez0/csv-rs.git?rev=37eddbf8be5db3d42c81177367f793e1e57e7152#37eddbf8be5db3d42c81177367f793e1e57e7152"
 dependencies = [
  "bincode",
  "bitfield 0.13.2",

@@ -1,10 +1,10 @@
-%define alinux_release 1
+%define alinux_release alpha
 %global config_dir /etc/trustee
 %global debug_package %{nil}
 %global __brp_mangle_shebangs %{nil}
 
 Name:           trustee
-Version:        1.10.0
+Version:        1.10.1
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -152,6 +152,12 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Thu Sep 17 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.10.1-alpha
+- Verifier/Hygon DCU: use the hardware-validated csv-rs revision for mixed
+  PROTO/SECURE adapters and the current driver ioctl ABI
+- Build: explicitly retain the existing verifier set while enabling the Hygon
+  DCU verifier in both RESTful and gRPC attestation-service binaries
+
 * Mon Sep 14 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.10.0-1
 - AS policy: add an opt-in RegoVM backend with async host functions and
   concurrency-safe compiled-program caching
