@@ -81,22 +81,77 @@ popd
 install -d %{buildroot}/var/lib/attestation/token/ear/policies/opa
 install -m 0644 %{SOURCE5} %{buildroot}/var/lib/attestation/token/ear/policies/opa/default.rego
 
+%pre
+if [ ! -s /etc/trustee/private.key ] && [ -s /etc/trustee/public.pub ]; then
+  echo "Cannot install Trustee: private.key is missing while public.pub exists" >&2
+  exit 1
+fi
+
 %post
-systemctl daemon-reload
-openssl genpkey -algorithm ed25519 > /etc/trustee/private.key
-openssl pkey -in /etc/trustee/private.key -pubout -out /etc/trustee/public.pub
-systemctl start trustee
+private_key=/etc/trustee/private.key
+public_key=/etc/trustee/public.pub
+
+if [ -s "$private_key" ] && [ -s "$public_key" ]; then
+  : # Preserve the existing pair across upgrades.
+elif [ -s "$private_key" ]; then
+  # Recover a missing public key from the existing private key without rotating
+  # the signing identity.
+  umask 077
+  public_key_tmp=$(mktemp /etc/trustee/.public.pub.XXXXXX) || {
+    exit 1
+  }
+  if openssl pkey -in "$private_key" -pubout -out "$public_key_tmp"; then
+    chmod 0644 "$public_key_tmp"
+    chown root:root "$public_key_tmp"
+    mv -f "$public_key_tmp" "$public_key"
+  else
+    rm -f "$public_key_tmp"
+    exit 1
+  fi
+elif [ -s "$public_key" ]; then
+  echo "Cannot recover Trustee signing key: private.key is missing" >&2
+  exit 1
+else
+  # First installation: generate both files before publishing either one.
+  umask 077
+  private_key_tmp=$(mktemp /etc/trustee/.private.key.XXXXXX) || exit 1
+  public_key_tmp=$(mktemp /etc/trustee/.public.pub.XXXXXX) || {
+    rm -f "$private_key_tmp"
+    exit 1
+  }
+  if ! openssl genpkey -algorithm ed25519 -out "$private_key_tmp" ||
+     ! openssl pkey -in "$private_key_tmp" -pubout -out "$public_key_tmp"; then
+    rm -f "$private_key_tmp" "$public_key_tmp"
+    exit 1
+  fi
+  chmod 0600 "$private_key_tmp"
+  chmod 0644 "$public_key_tmp"
+  chown root:root "$private_key_tmp" "$public_key_tmp"
+  mv -f "$private_key_tmp" "$private_key"
+  mv -f "$public_key_tmp" "$public_key"
+fi
+
+chmod 0600 "$private_key"
+chmod 0644 "$public_key"
+chown root:root "$private_key" "$public_key"
+
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload
+  systemctl start trustee
+fi
 
 %post -n trustee-frontend
 systemctl enable trustee-frontend
 systemctl start trustee-frontend
 
 %preun
-if [ $1 == 0 ]; then #uninstall
-  systemctl unmask trustee kbs as as-restful rvps
-  systemctl stop trustee kbs as as-restful rvps
-  systemctl disable trustee kbs as as-restful rvps
-  rm -rf /etc/trustee/private.key /etc/trustee/public.pub
+if [ "$1" -eq 0 ]; then # uninstall
+  if [ -d /run/systemd/system ]; then
+    systemctl unmask trustee kbs as as-restful rvps
+    systemctl stop trustee kbs as as-restful rvps
+    systemctl disable trustee kbs as as-restful rvps
+  fi
+  rm -f /etc/trustee/private.key /etc/trustee/public.pub
 fi
 
 %preun -n trustee-frontend
@@ -106,7 +161,7 @@ if [ $1 == 0 ]; then #uninstall
 fi
 
 %postun
-if [ $1 == 0 ]; then #uninstall
+if [ "$1" -eq 0 ] && [ -d /run/systemd/system ]; then # uninstall
   systemctl daemon-reload
   systemctl reset-failed
 fi
@@ -130,10 +185,10 @@ fi
 %{_prefix}/bin/trustee-gateway
 %{_prefix}/bin/rvps-tool
 %exclude %{_prefix}/bin/attestation-challenge-client
-%{config_dir}/kbs-config.toml
-%{config_dir}/as-config.json
-%{config_dir}/rvps.json
-%{config_dir}/gateway.yml
+%config(noreplace) %{config_dir}/kbs-config.toml
+%config(noreplace) %{config_dir}/as-config.json
+%config(noreplace) %{config_dir}/rvps.json
+%config(noreplace) %{config_dir}/gateway.yml
 %{_prefix}/lib/systemd/system/kbs.service
 %{_prefix}/lib/systemd/system/as.service
 %{_prefix}/lib/systemd/system/as-restful.service
@@ -155,6 +210,9 @@ fi
 * Mon Sep 21 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.10.1-beta
 - Verifier/Hygon DCU: update csv-rs to Hygon's latest secure-adapter revision
   and normalize fixed-width chip IDs for local certificate lookup
+- RPM: preserve existing Trustee configuration and signing keys across upgrades,
+  safely recover a missing public key, reject an unrecoverable public-only state,
+  and support package lifecycle operations without systemd
 
 * Thu Sep 17 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.10.1-alpha
 - Verifier/Hygon DCU: use the hardware-validated csv-rs revision for mixed
