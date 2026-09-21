@@ -52,8 +52,8 @@ jobs:
           RELEASE=$(grep -m1 '^%define alinux_release' rpm/trustee.spec | awk '{print $3}')
           echo "VERSION=$VERSION"
           echo "RELEASE=$RELEASE"
-          echo "rpm_name_al8=trustee-${VERSION}-${RELEASE}.al8" >> $GITHUB_OUTPUT
-          echo "rpm_name_an23=trustee-${VERSION}-${RELEASE}.an23" >> $GITHUB_OUTPUT
+          echo "rpm_name_al8=trustee-${VERSION}-${RELEASE}.al8" >> "$GITHUB_OUTPUT"
+          echo "rpm_name_an23=trustee-${VERSION}-${RELEASE}.an23" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifacts tarball
         uses: actions/upload-artifact@v6
@@ -99,18 +99,21 @@ jobs:
 
           # Create buildspec for release
           export GITHUB_RELEASE VERSION RELEASE
+          # shellcheck disable=SC2016
           envsubst '$GITHUB_RELEASE $VERSION $RELEASE' \
-            < rpm/${{ matrix.os_flavor.name }}/trustee.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml.template \
-            > ./trustee-${VERSION}-${RELEASE}.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml
+            < "rpm/${{ matrix.os_flavor.name }}/trustee.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml.template" \
+            > "./trustee-${VERSION}-${RELEASE}.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml"
 
           # Copy buildspec for local build
           # Install yq
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-          cp ./trustee-${VERSION}-${RELEASE}.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml rpm/trustee.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml
+          cp "./trustee-${VERSION}-${RELEASE}.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml" \
+            "rpm/trustee.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml"
           # Replace URL with local path for local build
-          yq -i ".inputs.source.url = \"file://${GITHUB_WORKSPACE}/build-artifacts-v${VERSION}.tar.gz\"" rpm/trustee.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml
+          yq -i ".inputs.source.url = \"file://${GITHUB_WORKSPACE}/build-artifacts-v${VERSION}.tar.gz\"" \
+            "rpm/trustee.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml"
 
       - name: Upload build input artifact
         uses: actions/upload-artifact@v6
