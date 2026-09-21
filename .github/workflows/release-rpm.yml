@@ -21,17 +21,17 @@ jobs:
       rpm_name_an23: ${{ steps.extract-version.outputs.rpm_name_an23 }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.21'
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '18'
 
@@ -56,7 +56,7 @@ jobs:
           echo "rpm_name_an23=trustee-${VERSION}-${RELEASE}.an23" >> $GITHUB_OUTPUT
 
       - name: Upload build artifacts tarball
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: build-artifacts-tarball
           if-no-files-found: error
@@ -79,10 +79,10 @@ jobs:
             buildspec_suffix: "an23"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download build artifacts tarball
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: build-artifacts-tarball
           path: ./
@@ -113,7 +113,7 @@ jobs:
           yq -i ".inputs.source.url = \"file://${GITHUB_WORKSPACE}/build-artifacts-v${VERSION}.tar.gz\"" rpm/trustee.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml
 
       - name: Upload build input artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: build-input-${{ matrix.os_flavor.id }}
           if-no-files-found: error
@@ -127,7 +127,7 @@ jobs:
           spec_path: rpm/trustee.${{ matrix.os_flavor.buildspec_suffix }}.buildspec.yaml
 
       - name: Upload RPM packages as build output artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: build-output-${{ matrix.os_flavor.id }}
           path: |
