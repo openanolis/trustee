@@ -31,7 +31,7 @@ Trustee Gateway 包含以下主要模块：
 
 - **代理模块**：负责请求转发到后端服务
 - **处理器模块**：处理各类API请求（KBS、RVPS、审计等）
-- **持久化模块**：本地存储策略和资源数据
+- **持久化模块**：存储策略、审计和实例状态；单副本可使用 SQLite，多副本使用 MySQL
 - **中间件模块**：提供日志记录、认证等通用功能
 
 ## 配置说明
@@ -51,11 +51,27 @@ rvps:
 
 database:
   type: "sqlite"  # 数据库类型
+  require_shared: false  # 多副本部署设为 true，并使用 mysql
   path: "/app/data/trustee-gateway.db"  # 数据库文件路径
 
 logging:
   level: "debug"  # 日志级别
 ```
+
+多副本部署时使用共享 MySQL，并通过 Secret 注入 DSN：
+
+```yaml
+database:
+  type: "mysql"
+  require_shared: true
+  max_open_conns: 20
+  max_idle_conns: 5
+  conn_max_lifetime: "1h"
+```
+
+容器环境变量 `TRUSTEE_GATEWAY_DATABASE_DSN` 的优先级高于配置文件中的
+`database.dsn`。当 `require_shared` 为 `true` 时，Gateway 会拒绝 SQLite，
+避免多副本各自维护不一致的本地审计和心跳数据。
 
 ## API 端点
 
@@ -118,13 +134,15 @@ docker run -p 8081:8081 -v $(pwd)/config.yaml:/app/config.yaml trustee-gateway:l
 
 ## 数据存储
 
-Trustee Gateway 使用 SQLite 数据库存储以下信息：
+Trustee Gateway 使用数据库存储以下信息：
 
 - 证明策略
 - 资源策略
 - 审计记录
 
-数据库默认存储在 `/app/data/trustee-gateway.db`，可通过配置文件修改。
+单副本默认使用 SQLite，数据库位于 `/app/data/trustee-gateway.db`，可通过配置
+文件修改。多副本必须改用共享 MySQL，并设置 `database.require_shared: true`；
+连接 DSN 建议通过 Kubernetes Secret 注入 `TRUSTEE_GATEWAY_DATABASE_DSN`。
 
 ## 日志
 

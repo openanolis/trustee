@@ -12,7 +12,7 @@
 ## 时序
 
 1. **订阅阶段**
-   - 管理员调用 `POST /rvds/subscribe/trustee` 注册 Trustee 地址，RVDS 写入 `subscribers.json`。
+   - 管理员调用 `POST /rvds/subscribe/trustee` 注册 Trustee 地址。多副本模式逐条写入共享存储，单副本兼容模式写入 `subscribers.json`。
 2. **发布阶段**
    - CI Workflow 完成构建后，生成 `PublishEventRequest`，POST 到 `POST /rvds/rv-publish-event`。
 3. **转发阶段**
@@ -39,11 +39,10 @@
 
 - RVDS 转发失败会在响应中返回失败列表，可由 CI 重试或告警。
 - RVPS 校验失败会返回 gRPC 错误；RVDS 会记录 HTTP 非 2xx 但不会阻塞其它 Trustee。
-- 订阅持久化在 `subscribers.json`，服务重启后自动恢复，无需重新注册。
+- 共享模式下所有副本实时读取同一订阅表；兼容模式从 `subscribers.json` 恢复。首次切换到共享模式会幂等导入旧文件。
 
 ## 安全注意
 
 - 建议在生产环境对 RVDS 增加鉴权（如 Token/Header 校验）与 TLS 证书配置。
 - RVDS 对下游调用有超时保护（默认 10s），避免单节点拖垮整体发布流程。
-
 

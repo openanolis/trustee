@@ -91,12 +91,17 @@ rvps:
   grpc_addr: "rvps:50003"  # RVPS gRPC 服务地址，用于直接 gRPC 通信
 
 database:
-  type: "sqlite"                         # 数据库类型，目前支持 sqlite
+  type: "sqlite"                         # 单副本可用 sqlite，多副本使用 mysql
+  require_shared: false                  # 多副本设为 true
   path: "/app/data/trustee-gateway.db"   # 数据库文件路径
 
 logging:
   level: "debug"  # 日志级别: debug, info, warn, error
 ```
+
+多副本场景请将 `database.type` 改为 `mysql`、`require_shared` 改为
+`true`，并通过 Secret 设置 `TRUSTEE_GATEWAY_DATABASE_DSN`。该模式不再需要
+Gateway 数据 PVC。
 
 ### 高级配置
 

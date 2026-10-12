@@ -53,6 +53,7 @@ pub fn build_ledger(cfg: &LedgerConfig, client: Client) -> Arc<dyn LedgerAdapter
                 Arc::new(NoopLedger)
             }
         },
-        "none" | _ => Arc::new(NoopLedger),
+        "none" => Arc::new(NoopLedger),
+        _ => Arc::new(NoopLedger),
     }
 }
