@@ -24,6 +24,41 @@ pub struct OPAShared {
 }
 
 impl OPAShared {
+    /// Initialize shared policy storage from a mounted policy file when one is
+    /// present. The database write remains create-if-absent, so a ConfigMap or
+    /// migrated file can seed the first replica without overwriting a policy
+    /// that is already authoritative in shared storage.
+    #[cfg(feature = "fs")]
+    pub async fn new_with_policy_file(
+        storage: Storage,
+        policy_dir: &std::path::Path,
+        default_policy: &str,
+        default_policy_id: &str,
+        artifact_server_address: &str,
+    ) -> Result<Self, PolicyError> {
+        let policy_path = policy_dir.join("opa").join(default_policy_id);
+        let initial_policy = match tokio::fs::read_to_string(&policy_path).await {
+            Ok(policy) => {
+                log::info!(
+                    "Seeding shared AS policy from {} when the namespace is empty",
+                    policy_path.display()
+                );
+                policy
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                default_policy.to_string()
+            }
+            Err(error) => return Err(PolicyError::ReadPolicyFileFailed(error)),
+        };
+        Self::new(
+            storage,
+            &initial_policy,
+            default_policy_id,
+            artifact_server_address,
+        )
+        .await
+    }
+
     pub async fn new(
         storage: Storage,
         default_policy: &str,
@@ -249,6 +284,32 @@ mod tests {
             .await
             .unwrap();
         assert!(second.list_policies().await.unwrap().contains_key("策略一"));
+    }
+
+    #[cfg(feature = "fs")]
+    #[tokio::test]
+    async fn mounted_default_policy_seeds_an_empty_shared_namespace() {
+        let storage: Storage = Arc::new(MemoryStorage::default());
+        let policy_root = tempfile::tempdir().unwrap();
+        let policy_dir = policy_root.path().join("opa");
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        let mounted_policy = "package policy\ndefault allow = false";
+        std::fs::write(policy_dir.join("default.rego"), mounted_policy).unwrap();
+
+        let engine = OPAShared::new_with_policy_file(
+            storage,
+            policy_root.path(),
+            DEFAULT_POLICY,
+            "default.rego",
+            DEFAULT_ARTIFACT_SERVER_ADDRESS,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            engine.get_policy("default".into()).await.unwrap(),
+            URL_SAFE_NO_PAD.encode(mounted_policy)
+        );
     }
 
     #[cfg(feature = "shared-storage-mysql")]
