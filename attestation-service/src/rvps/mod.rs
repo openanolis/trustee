@@ -149,11 +149,17 @@ impl Default for RvpsConfig {
     }
 }
 
-pub async fn initialize_rvps_client(config: &RvpsConfig) -> Result<Arc<dyn RvpsApi>> {
+pub async fn initialize_rvps_client(
+    config: &RvpsConfig,
+    storage_provider: Option<Arc<dyn key_value_storage::StorageProvider>>,
+) -> Result<Arc<dyn RvpsApi>> {
     match config {
         RvpsConfig::BuiltIn(config) => {
             info!("launch a built-in RVPS.");
-            Ok(Arc::new(builtin::BuiltinRvps::new(config.clone())?) as Arc<dyn RvpsApi>)
+            Ok(Arc::new(
+                builtin::BuiltinRvps::new_with_storage_provider(config.clone(), storage_provider)
+                    .await?,
+            ) as Arc<dyn RvpsApi>)
         }
         #[cfg(feature = "rvps-grpc")]
         RvpsConfig::GrpcRemote(config) => {

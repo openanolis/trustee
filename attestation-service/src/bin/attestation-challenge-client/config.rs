@@ -19,6 +19,7 @@ pub fn resolve_work_dir() -> PathBuf {
 
 pub fn build_default_config(work_dir: &Path) -> Result<Config> {
     let rvps_config = RvpsConfig::BuiltIn(RvpsCrateConfig {
+        storage_backend: None,
         storage: ReferenceValueStorageConfig::LocalJson(local_json::Config {
             file_path: work_dir
                 .join("reference_values.json")

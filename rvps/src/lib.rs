@@ -21,6 +21,7 @@ pub mod storage;
 pub use config::Config;
 pub use reference_value::{ReferenceValue, TrustedDigest};
 pub use storage::ReferenceValueStorage;
+use storage::{ConditionalDeleteResult, ConditionalSetResult};
 
 use extractors::Extractors;
 use pre_processor::{PreProcessor, PreProcessorAPI};
@@ -28,11 +29,15 @@ use pre_processor::{PreProcessor, PreProcessorAPI};
 use anyhow::{bail, Context, Result};
 use base64::Engine;
 use chrono::{Months, Timelike, Utc};
+use key_value_storage::{KvStorageProvider, StorageProvider};
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Digest;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use provenance_source::{OciProvenanceFetcher, ProvenanceFetcher, ProvenanceSource};
 use rv_list::{
@@ -69,6 +74,14 @@ pub struct Rvps {
     pre_processor: PreProcessor,
     extractors: Extractors,
     storage: Box<dyn ReferenceValueStorage + Send + Sync>,
+}
+
+const MAX_STORAGE_UPDATE_RETRIES: usize = 16;
+
+#[derive(Clone, Copy)]
+enum ReferenceWriteMode {
+    Merge,
+    Replace,
 }
 
 fn merge_reference_values(old: ReferenceValue, new: ReferenceValue) -> ReferenceValue {
@@ -136,10 +149,72 @@ impl Rvps {
         })
     }
 
+    /// Instantiate RVPS with an externally managed storage provider. Legacy
+    /// storage variants retain their existing behavior, while `SharedStore`
+    /// resolves the `reference_value` namespace from the provider.
+    pub async fn new_with_storage_provider(
+        config: Config,
+        storage_provider: Option<Arc<dyn StorageProvider>>,
+    ) -> Result<Self> {
+        let pre_processor = PreProcessor::default();
+        let extractors = Extractors::default();
+        let storage_provider = storage_provider.or_else(|| {
+            config
+                .storage_backend
+                .clone()
+                .map(KvStorageProvider::new)
+                .map(|provider| provider as Arc<dyn StorageProvider>)
+        });
+        let storage = config
+            .storage
+            .to_storage_with_provider(storage_provider)
+            .await?;
+
+        Ok(Rvps {
+            pre_processor,
+            extractors,
+            storage,
+        })
+    }
+
     /// Add Ware to the Core's Pre-Processor
     pub fn with_ware(&mut self, _ware: &str) -> &Self {
         // TODO: no wares implemented now.
         self
+    }
+
+    async fn store_reference_value(
+        &self,
+        name: &str,
+        incoming: &ReferenceValue,
+        mode: ReferenceWriteMode,
+    ) -> Result<bool> {
+        for _ in 0..MAX_STORAGE_UPDATE_RETRIES {
+            let current = self.storage.get_versioned(name).await?;
+            let expected_revision = current.as_ref().and_then(|value| value.revision);
+            let candidate = match current.as_ref() {
+                Some(current) if reference_payload_eq(&current.value, incoming) => {
+                    return Ok(false)
+                }
+                Some(current) => match mode {
+                    ReferenceWriteMode::Merge => {
+                        merge_reference_values(current.value.clone(), incoming.clone())
+                    }
+                    ReferenceWriteMode::Replace => incoming.clone(),
+                },
+                None => incoming.clone(),
+            };
+
+            match self
+                .storage
+                .set_if_unchanged(name.to_string(), candidate, expected_revision)
+                .await?
+            {
+                ConditionalSetResult::Stored(_) => return Ok(true),
+                ConditionalSetResult::Conflict => continue,
+            }
+        }
+        bail!("reference value `{name}` changed too frequently; retry the request")
     }
 
     pub async fn verify_and_extract(&mut self, message: &str) -> Result<()> {
@@ -159,22 +234,13 @@ impl Rvps {
         let rv = self.extractors.process(message)?;
         for v in rv.iter() {
             let name = v.name().to_string();
-            if let Some(old) = self.storage.get(&name).await? {
-                // If the policy-facing payload is identical, skip and do not replace.
-                if reference_payload_eq(&old, v) {
-                    info!("Reference value of {name} unchanged (same hashes); skip update.");
-                    continue;
-                }
-
-                let merged = merge_reference_values(old.clone(), v.clone());
-                let _ = self.storage.set(name, merged).await?;
-                info!(
-                    "Reference value of {} is extended (hash list merged) instead of replaced.",
-                    old.name()
-                );
+            if self
+                .store_reference_value(&name, v, ReferenceWriteMode::Merge)
+                .await?
+            {
+                info!("Reference value of {name} was added or extended atomically.");
             } else {
-                let _ = self.storage.set(name, v.clone()).await?;
-                info!("Reference value of {} is added.", v.name());
+                info!("Reference value of {name} unchanged; skip update.");
             }
         }
 
@@ -288,26 +354,14 @@ impl Rvps {
                 );
             }
 
-            if let Some(old) = self.storage.get(&name).await? {
-                if hash_set(&old) == hash_set(&rv) {
-                    info!("Reference value of {name} unchanged; skip update.");
-                    continue;
-                }
-
-                match operation {
-                    ReferenceValueOperation::Add => {
-                        let merged = merge_reference_values(old.clone(), rv.clone());
-                        let _ = self.storage.set(name.clone(), merged).await?;
-                        info!("Reference value of {name} extended (add).");
-                    }
-                    ReferenceValueOperation::Refresh => {
-                        let _ = self.storage.set(name.clone(), rv.clone()).await?;
-                        info!("Reference value of {name} refreshed.");
-                    }
-                }
+            let mode = match operation {
+                ReferenceValueOperation::Add => ReferenceWriteMode::Merge,
+                ReferenceValueOperation::Refresh => ReferenceWriteMode::Replace,
+            };
+            if self.store_reference_value(&name, &rv, mode).await? {
+                info!("Reference value of {name} was updated atomically.");
             } else {
-                let _ = self.storage.set(name.clone(), rv.clone()).await?;
-                info!("Reference value of {name} is added.");
+                info!("Reference value of {name} unchanged; skip update.");
             }
         }
 
@@ -370,19 +424,25 @@ impl Rvps {
     }
 
     pub async fn delete_reference_value(&mut self, name: &str) -> Result<bool> {
-        match self.storage.delete(name).await? {
-            Some(deleted_rv) => {
-                info!(
-                    "Reference value {} deleted successfully.",
-                    deleted_rv.name()
-                );
-                Ok(true)
-            }
-            None => {
+        for _ in 0..MAX_STORAGE_UPDATE_RETRIES {
+            let Some(current) = self.storage.get_versioned(name).await? else {
                 warn!("Reference value {name} not found for deletion.");
-                Ok(false)
+                return Ok(false);
+            };
+            match self
+                .storage
+                .delete_if_unchanged(name, current.revision)
+                .await?
+            {
+                ConditionalDeleteResult::Deleted(_) => {
+                    info!("Reference value {name} deleted successfully.");
+                    return Ok(true);
+                }
+                ConditionalDeleteResult::NotFound => return Ok(false),
+                ConditionalDeleteResult::Conflict => continue,
             }
         }
+        bail!("reference value `{name}` changed too frequently; retry deletion")
     }
 }
 
@@ -657,8 +717,11 @@ mod tests {
     use super::*;
     #[cfg(feature = "fs")]
     use crate::storage::local_json;
-    use crate::storage::{in_memory, ReferenceValueStorageConfig};
+    use crate::storage::{in_memory, shared_store, ReferenceValueStorageConfig};
     use chrono::Duration;
+    use key_value_storage::KvStorageProvider;
+    #[cfg(feature = "shared-storage-mysql")]
+    use key_value_storage::{mysql::MysqlConfig, BackendConfigs, StorageType};
 
     #[test]
     fn parse_direct_statement() {
@@ -742,9 +805,108 @@ mod tests {
 
     fn in_memory_rvps() -> Rvps {
         Rvps::new(Config {
+            storage_backend: None,
             storage: ReferenceValueStorageConfig::InMemory(in_memory::Config::default()),
         })
         .unwrap()
+    }
+
+    fn shared_rvps_config(
+        storage_backend: Option<key_value_storage::StorageBackendConfig>,
+    ) -> Config {
+        Config {
+            storage_backend,
+            storage: ReferenceValueStorageConfig::SharedStore(shared_store::Config::default()),
+        }
+    }
+
+    fn digest_reference_value(name: &str, digest: String) -> ReferenceValue {
+        ReferenceValue::new()
+            .unwrap()
+            .set_name(name)
+            .set_expiration(Utc::now() + Duration::hours(1))
+            .add_hash_value("sha256".into(), digest)
+    }
+
+    async fn assert_concurrent_reference_merges(first: Arc<Rvps>, second: Arc<Rvps>, name: String) {
+        let writes = (0..16).map(|index| {
+            let rvps = if index % 2 == 0 {
+                first.clone()
+            } else {
+                second.clone()
+            };
+            let name = name.clone();
+            async move {
+                let digest = format!("digest-{index}");
+                let value = digest_reference_value(&name, digest);
+                rvps.store_reference_value(&name, &value, ReferenceWriteMode::Merge)
+                    .await
+            }
+        });
+        for result in futures::future::join_all(writes).await {
+            result.unwrap();
+        }
+
+        let stored = first.storage.get(&name).await.unwrap().unwrap();
+        let digests: HashSet<_> = stored
+            .hash_values()
+            .iter()
+            .map(|value| value.value().as_str())
+            .collect();
+        assert_eq!(digests.len(), 16);
+        for index in 0..16 {
+            assert!(digests.contains(format!("digest-{index}").as_str()));
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_storage_merges_concurrent_reference_updates() {
+        let provider = KvStorageProvider::new(Default::default());
+        let first = Arc::new(
+            Rvps::new_with_storage_provider(shared_rvps_config(None), Some(provider.clone()))
+                .await
+                .unwrap(),
+        );
+        let second = Arc::new(
+            Rvps::new_with_storage_provider(shared_rvps_config(None), Some(provider))
+                .await
+                .unwrap(),
+        );
+
+        assert_concurrent_reference_merges(first, second, "memory-concurrent".into()).await;
+    }
+
+    #[cfg(feature = "shared-storage-mysql")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn shared_storage_mysql_merges_concurrent_reference_updates() {
+        let Ok(url) = std::env::var("MYSQL_TEST_URL") else {
+            return;
+        };
+        let storage_backend = key_value_storage::StorageBackendConfig {
+            storage_type: StorageType::Mysql,
+            require_shared: true,
+            backends: BackendConfigs {
+                mysql: Some(MysqlConfig {
+                    url,
+                    url_env: None,
+                    ..Default::default()
+                }),
+            },
+        };
+        let config = shared_rvps_config(Some(storage_backend));
+        // Let each instance build its own provider and connection pool to model
+        // two independent replicas sharing only the database.
+        let first = Arc::new(
+            Rvps::new_with_storage_provider(config.clone(), None)
+                .await
+                .unwrap(),
+        );
+        let second = Arc::new(Rvps::new_with_storage_provider(config, None).await.unwrap());
+        let name = format!("mysql-concurrent-{}", Utc::now().timestamp_micros());
+
+        assert_concurrent_reference_merges(first.clone(), second, name.clone()).await;
+        assert!(first.storage.delete(&name).await.unwrap().is_some());
     }
 
     #[tokio::test]
@@ -820,6 +982,7 @@ mod tests {
         std::fs::write(&bundle_path, format!(r#"{{"releasePayload":{manifest}}}"#)).unwrap();
 
         let mut rvps = Rvps::new(Config {
+            storage_backend: None,
             storage: ReferenceValueStorageConfig::LocalJson(local_json::Config {
                 file_path: storage_path.to_string_lossy().to_string(),
             }),

@@ -7,6 +7,7 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
 use crate::{Config, Rvps};
+use key_value_storage::{KvStorageProvider, StorageProvider};
 
 use crate::rvps_api::reference::reference_value_provider_service_server::{
     ReferenceValueProviderService, ReferenceValueProviderServiceServer,
@@ -133,7 +134,12 @@ impl ReferenceValueProviderService for RvpsServer {
 }
 
 pub async fn start(socket: SocketAddr, config: Config) -> Result<()> {
-    let service = Rvps::new(config)?;
+    let storage_provider = config
+        .storage_backend
+        .clone()
+        .map(KvStorageProvider::new)
+        .map(|provider| provider as Arc<dyn StorageProvider>);
+    let service = Rvps::new_with_storage_provider(config, storage_provider).await?;
     let inner = Arc::new(RwLock::new(service));
     let rvps_server = RvpsServer::new(inner.clone());
 

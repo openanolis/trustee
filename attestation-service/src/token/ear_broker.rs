@@ -184,6 +184,32 @@ impl EarAttestationTokenBroker {
         })
     }
 
+    #[cfg(feature = "fs")]
+    pub async fn from_config_with_policy_storage(
+        config: Configuration,
+        artifact_server_address: &str,
+        policy_storage: key_value_storage::Storage,
+    ) -> Result<Self> {
+        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(
+            crate::policy_engine::opa::OPAShared::new(
+                policy_storage,
+                DEFAULT_POLICY,
+                DEFAULT_POLICY_ID,
+                artifact_server_address,
+            )
+            .await?,
+        );
+        let signer: Arc<dyn SignKeyProvider<SecretKey>> = match config.signer {
+            Some(sc) => Arc::new(super::signer::FsSigner::<SecretKey>::from_config(sc)?),
+            None => Arc::new(super::signer::EphemeralSigner::<SecretKey>::new()),
+        };
+        Ok(Self {
+            settings: config.settings,
+            signer,
+            policy_engine,
+        })
+    }
+
     pub fn from_components(
         settings: TokenBrokerSettings,
         signer: Arc<dyn SignKeyProvider<SecretKey>>,
@@ -469,7 +495,6 @@ fn generate_ec_keys() -> Result<(SecretKey, Vec<u8>, Vec<u8>)> {
 ///
 /// 3) Convert the claims from serde_json Values to RawValues from the
 ///    EAR crate.
-///
 pub fn transform_claims(
     mut input_claims: Value,
     init_data_claims: Value,

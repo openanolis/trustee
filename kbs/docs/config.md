@@ -19,9 +19,10 @@ configuration file.
 ### Shared Storage Configuration
 
 The optional top-level `storage_backend` configures one namespaced storage
-provider for KBS resource policies, RCAR sessions, and resource plugins that
-select `SharedStore`. Omitting this section preserves the legacy behavior:
-policies remain file-backed and sessions remain in process memory.
+provider for KBS resource policies, RCAR sessions, resource plugins that
+select `SharedStore`, built-in AS policies, and built-in RVPS reference values.
+Omitting this section preserves the legacy behavior: policies remain
+file-backed and sessions remain in process memory.
 
 | Property | Type | Description | Default |
 |----------|------|-------------|---------|
@@ -59,6 +60,12 @@ managed encryption and key rotation are required; it is also suitable for
 multiple replicas when configured with MySQL. `LocalFs` and
 `EncryptedLocalFs` should not be used as writable authoritative storage by
 multiple replicas.
+
+When `require_shared = true` and KBS uses the built-in AS, configure both the
+AS token `signer.key_path` and `challenge_key_path`. Mount the same pre-created
+keys read-only in every replica using a Kubernetes Secret, CSI secret-store
+driver, or KMS-backed volume. Startup fails rather than generating per-replica
+keys.
 
 ### HTTP Server Configuration
 
@@ -183,9 +190,12 @@ If `type` is set to `BuiltIn`, the following extra properties can be set
 
 | Property       | Type                    | Description                                                           | Required | Default  |
 |----------------|-------------------------|-----------------------------------------------------------------------|----------|----------|
-| `storage`   | ReferenceValueStorageConfig | Configuration of the storage for reference values (`LocalFs`, `LocalJson`, or `InMemory`) | No       | `LocalFs`|
+| `storage`   | ReferenceValueStorageConfig | Configuration of the storage for reference values (`SharedStore`, `LocalFs`, `LocalJson`, or `InMemory`) | No       | `LocalFs`|
 
-A `ReferenceValueStorageConfig` can be of type `LocalFs`, `LocalJson`, or `InMemory`
+A `ReferenceValueStorageConfig` can be of type `SharedStore`, `LocalFs`,
+`LocalJson`, or `InMemory`. For multi-replica KBS with a built-in AS, select
+`SharedStore`; it reuses the top-level `storage_backend` and its
+`reference_value` namespace.
 
 For `LocalFs`, the following properties can be set
 

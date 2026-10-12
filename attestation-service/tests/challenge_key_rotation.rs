@@ -29,6 +29,7 @@ fn config(work_dir: &Path, challenge_key_path: &Path) -> Config {
     Config {
         work_dir: work_dir.join("work"),
         rvps_config: RvpsConfig::BuiltIn(RvpsCrateConfig {
+            storage_backend: None,
             storage: ReferenceValueStorageConfig::InMemory(in_memory::Config::default()),
         }),
         attestation_token_broker: AttestationTokenConfig::Simple(simple::Configuration {

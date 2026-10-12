@@ -1,8 +1,10 @@
 use super::{Result, RvpsApi};
 use async_trait::async_trait;
 use core::result::Result::Ok;
+use key_value_storage::StorageProvider;
 use reference_value_provider_service::{Config, Rvps};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct BuiltinRvps {
@@ -13,6 +15,17 @@ impl BuiltinRvps {
     #[allow(clippy::result_large_err)]
     pub fn new(config: Config) -> Result<Self> {
         let rvps = Rvps::new(config)?;
+        Ok(Self {
+            rvps: RwLock::new(rvps),
+        })
+    }
+
+    #[allow(clippy::result_large_err)]
+    pub async fn new_with_storage_provider(
+        config: Config,
+        storage_provider: Option<Arc<dyn StorageProvider>>,
+    ) -> Result<Self> {
+        let rvps = Rvps::new_with_storage_provider(config, storage_provider).await?;
         Ok(Self {
             rvps: RwLock::new(rvps),
         })

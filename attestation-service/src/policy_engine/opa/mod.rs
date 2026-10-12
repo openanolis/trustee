@@ -92,10 +92,12 @@ compile_error!("the default interpreter backend is unavailable on wasm32; enable
 #[cfg(feature = "fs")]
 mod fs;
 mod in_memory;
+mod shared;
 
 #[cfg(feature = "fs")]
 pub use fs::OPA;
 pub use in_memory::OPAInMemory;
+pub use shared::{OPAShared, AS_POLICY_NAMESPACE};
 
 #[cfg(all(
     feature = "policy-rvps",

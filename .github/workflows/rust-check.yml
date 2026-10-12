@@ -110,6 +110,8 @@ jobs:
       run: |
         cargo test -p key-value-storage
         cargo test -p kbs shared_storage_mysql
+        cargo test -p attestation-service shared_storage_mysql
+        cargo test -p reference-value-provider-service shared_storage_mysql
 
   as-check:
     if: |

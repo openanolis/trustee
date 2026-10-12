@@ -12,6 +12,12 @@ default = [
     "fs",
     "policy-rvps",
     "policy-artifact-server",
+    "shared-storage-mysql",
+]
+
+shared-storage-mysql = [
+    "key-value-storage/mysql",
+    "reference-value-provider-service/shared-storage-mysql",
 ]
 
 # Opt-in Regorus VM policy backend (suspendable host-await, works on wasm32);
@@ -118,6 +124,7 @@ env_logger = { workspace = true, optional = true }
 futures = "0.3.17"
 hex.workspace = true
 jsonwebtoken.workspace = true
+key-value-storage = { path = "../deps/key-value-storage", default-features = false }
 kbs-types.workspace = true
 lazy_static = "1.4.0"
 log.workspace = true
