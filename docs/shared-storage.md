@@ -19,6 +19,13 @@ Signing keys and TLS credentials are not database state. Mount the same
 pre-created signing keys read-only into every AS replica through a Kubernetes
 Secret, CSI secret-store driver or KMS-backed volume.
 
+Regenerable caches and per-request temporary files remain pod-local and may be
+discarded when a replica is replaced. Optional CA plugins also keep private key
+material outside MySQL: mount one pre-created CA identity from a Secret into
+every replica. For the Nebula CA plugin, keep its `work_dir` writable and
+ephemeral for issued-credential temporary files, but mount the shared
+`ca/ca.key` and `ca/ca.crt` files read-only below that directory.
+
 ## Helm configuration
 
 Create the database and signing Secrets before installing the chart. Keep the
@@ -149,6 +156,11 @@ Inject its DSN with `TRUSTEE_GATEWAY_DATABASE_DSN`.
 AS additionally requires `storage_backend` with MySQL, an explicitly
 configured token `signer.key_path`, and a pre-created `challenge_key_path`.
 All replicas must read the same two keys.
+
+If optional KBS CA plugins are enabled, do not let each replica generate its
+own CA. TPM PCA is wired to a shared Secret by the chart. For Nebula CA, mount
+the same pre-created `ca.key` and `ca.crt` into `${work_dir}/ca/` on every
+replica while leaving the parent `work_dir` as writable ephemeral space.
 
 ## Migration and rollback
 
