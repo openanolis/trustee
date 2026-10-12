@@ -24,6 +24,10 @@ pub use provider::{KvStorageProvider, StorageProvider};
 
 pub type Storage = Arc<dyn KeyValueStorage>;
 
+/// Maximum key length. Together with the 191-byte ASCII namespace this keeps
+/// the MySQL primary key below the 767-byte limit of older InnoDB deployments.
+pub const MAX_KEY_LENGTH: usize = 512;
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct StorageCapabilities {
     /// State can be observed by other Trustee processes.
@@ -152,7 +156,7 @@ pub(crate) fn validate_namespace(namespace: &str) -> Result<()> {
 
 pub(crate) fn validate_key(key: &str) -> Result<()> {
     let valid = !key.is_empty()
-        && key.len() <= 1024
+        && key.len() <= MAX_KEY_LENGTH
         && key
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':'));
@@ -181,5 +185,7 @@ mod tests {
         assert!(validate_namespace("../escape").is_err());
         assert!(validate_key("default/key/tag").is_ok());
         assert!(validate_key("bad key").is_err());
+        assert!(validate_key(&"a".repeat(MAX_KEY_LENGTH)).is_ok());
+        assert!(validate_key(&"a".repeat(MAX_KEY_LENGTH + 1)).is_err());
     }
 }
