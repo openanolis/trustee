@@ -9,6 +9,20 @@ metadata:
     {{- include "coco-kbs.labels" . | nindent 4 }}
 data:
   "kbs-config.toml": |
+    {{- if .Values.sharedStorage.enabled }}
+    session_storage_type = "mysql"
+
+    [storage_backend]
+    storage_type = "mysql"
+    require_shared = true
+
+    [storage_backend.backends.mysql]
+    url_env = "TRUSTEE_STORAGE_MYSQL_URL"
+    max_connections = {{ .Values.sharedStorage.maxConnections }}
+    min_connections = {{ .Values.sharedStorage.minConnections }}
+    acquire_timeout_seconds = {{ .Values.sharedStorage.acquireTimeoutSeconds }}
+
+    {{- end }}
     [http_server]
     sockets = ["0.0.0.0:{{ .Values.kbs.service.port }}"]
     insecure_http = true
@@ -27,6 +41,8 @@ data:
     cert_pem = {{ .Values.kbs.aliyunKms.certPem | quote}}
     endpoint = {{ .Values.kbs.aliyunKms.endpoint | quote }}
     insecure_skip_tls_verify = {{ .Values.kbs.aliyunKms.insecureSkipTlsVerify }}
+    {{- else if .Values.sharedStorage.enabled }}
+    type = "SharedStore"
     {{- else }}
     type = "LocalFs"
     dir_path = "/opt/confidential-containers/kbs/repository"
@@ -34,7 +50,13 @@ data:
 
     [[plugins]]
     name = "tpm-pca"
+    {{- if .Values.sharedStorage.enabled }}
+    signing_key_path = "/run/secrets/trustee-tpm-pca/ca.key"
+    cert_chain_path = "/run/secrets/trustee-tpm-pca/ca.crt"
+    work_dir = "/run/secrets/trustee-tpm-pca"
+    {{- else }}
     work_dir = "/opt/confidential-containers/kbs/tpm-pca"
+    {{- end }}
     
     [attestation_token]
     insecure_key = true

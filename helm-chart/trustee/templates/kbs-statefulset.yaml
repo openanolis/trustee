@@ -1,3 +1,6 @@
+{{- if and .Values.sharedStorage.enabled .Values.kbs.resourceRepository }}
+{{- fail "kbs.resourceRepository Secret mounts are only supported by LocalFs; import resources through the KBS API before enabling sharedStorage" }}
+{{- end }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -43,6 +46,13 @@ spec:
           env:
             - name: RUST_LOG
               value: {{ .Values.log_level }}
+            {{- if .Values.sharedStorage.enabled }}
+            - name: TRUSTEE_STORAGE_MYSQL_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sharedStorage.existingSecret is required when sharedStorage.enabled=true" .Values.sharedStorage.existingSecret | quote }}
+                  key: {{ .Values.sharedStorage.mysqlUrlKey | quote }}
+            {{- end }}
             {{- if .Values.kbs.aliyunKms.enabled }}
             {{- if .Values.kbs.aliyunKms.regionId }}
             - name: ALIYUN_KMS_REGION_ID
@@ -89,12 +99,20 @@ spec:
               mountPath: /etc/kbs
             - name: user-keys
               mountPath: /opt/confidential-containers/kbs/user-keys
+            {{- if .Values.sharedStorage.enabled }}
+            - name: tpm-pca-keys
+              mountPath: /run/secrets/trustee-tpm-pca
+              readOnly: true
+            {{- end }}
+            {{- if not .Values.sharedStorage.enabled }}
             - name: data
               mountPath: /opt/confidential-containers/kbs/repository
             {{- range .Values.kbs.resourceRepository }}
             - name: "{{ .repoName }}-{{ .type }}"
               mountPath: "/opt/confidential-containers/kbs/repository/{{ .repoName }}/{{ .type }}"
             {{- end }}
+            {{- end }}
+        {{- if not .Values.sharedStorage.enabled }}
         - name: kbs-secret-watcher
           securityContext:
             {{- toYaml .Values.kbs.securityContext | nindent 12 }}
@@ -112,6 +130,7 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /opt/confidential-containers/kbs/repository
+        {{- end }}
       initContainers:
         - name: init
           securityContext:
@@ -141,15 +160,26 @@ spec:
           secret:
             optional: true
             secretName: {{ .Values.kbs.userKeysSecretName }}
-  {{- if .Values.kbs.storage.enabled }}
-  {{- else }}
+        {{- if .Values.sharedStorage.enabled }}
+        - name: tpm-pca-keys
+          secret:
+            secretName: {{ required "kbs.tpmPca.existingSecret is required when sharedStorage.enabled=true" .Values.kbs.tpmPca.existingSecret | quote }}
+            items:
+              - key: {{ .Values.kbs.tpmPca.signingKeyKey | quote }}
+                path: ca.key
+              - key: {{ .Values.kbs.tpmPca.certificateKey | quote }}
+                path: ca.crt
+        {{- end }}
+  {{- if and (not .Values.sharedStorage.enabled) (not .Values.kbs.storage.enabled) }}
         - name: data
           emptyDir: {}
   {{- end }}
+        {{- if not .Values.sharedStorage.enabled }}
         {{- range .Values.kbs.resourceRepository }}
         - name: "{{ .repoName }}-{{ .type }}"
           secret:
             secretName: {{ .secretName }}
+        {{- end }}
         {{- end }}
       {{- with .Values.kbs.nodeSelector }}
       nodeSelector:
@@ -164,7 +194,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 
-{{- if .Values.kbs.storage.enabled }}
+{{- if and (not .Values.sharedStorage.enabled) .Values.kbs.storage.enabled }}
   volumeClaimTemplates:
   - metadata:
       name: data

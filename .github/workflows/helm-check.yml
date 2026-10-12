@@ -1,0 +1,76 @@
+name: Helm Check
+
+on:
+  pull_request:
+    paths:
+      - "helm-chart/trustee/**"
+      - ".github/workflows/helm-check.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "helm-chart/trustee/**"
+      - ".github/workflows/helm-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  helm-check:
+    name: Helm Check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.18.6
+
+      - name: Lint chart
+        run: helm lint helm-chart/trustee
+
+      - name: Render legacy defaults
+        run: helm template trustee helm-chart/trustee > /dev/null
+
+      - name: Render multi-replica shared storage
+        shell: bash
+        run: |
+          set -euo pipefail
+          rendered="${RUNNER_TEMP}/trustee-shared.yaml"
+          helm template trustee helm-chart/trustee \
+            --set sharedStorage.enabled=true \
+            --set sharedStorage.existingSecret=trustee-storage \
+            --set sharedStorage.asKeysExistingSecret=trustee-as-keys \
+            --set kbs.tpmPca.existingSecret=trustee-tpm-pca \
+            --set kbs.replicaCount=3 \
+            --set as.replicaCount=3 \
+            --set asrestful.replicaCount=3 \
+            --set rvps.replicaCount=3 \
+            --set gateway.replicaCount=3 > "${rendered}"
+
+          grep -q 'TRUSTEE_STORAGE_MYSQL_URL' "${rendered}"
+          grep -q 'TRUSTEE_GATEWAY_DATABASE_DSN' "${rendered}"
+          grep -q 'type = "SharedStore"' "${rendered}"
+          grep -q '"type": "SharedStore"' "${rendered}"
+          grep -q '/run/secrets/trustee/token-signer-key.pem' "${rendered}"
+
+          if grep -q 'volumeClaimTemplates:' "${rendered}"; then
+            echo "shared storage render must not contain writable PVC templates" >&2
+            exit 1
+          fi
+          if grep -q 'kbs-secret-watcher' "${rendered}"; then
+            echo "LocalFs secret watcher must not run in shared storage mode" >&2
+            exit 1
+          fi
+
+      - name: Require Secret references in shared mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          if helm template trustee helm-chart/trustee \
+            --set sharedStorage.enabled=true > /dev/null 2>&1; then
+            echo "shared storage rendered without required Secret references" >&2
+            exit 1
+          fi
