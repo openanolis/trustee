@@ -231,6 +231,7 @@ mod tests {
         token::{simple, AttestationTokenConfig, COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION},
     };
 
+    #[cfg(any(feature = "coco-as-builtin", feature = "coco-as-builtin-no-verifier"))]
     use reference_value_provider_service::storage::{local_fs, ReferenceValueStorageConfig};
 
     use rstest::rstest;
@@ -573,19 +574,24 @@ mod tests {
                 RepositoryConfig::SharedStore
             )]
         );
-        let crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(as_config) =
-            config.attestation_service.attestation_service
-        else {
-            panic!("expected built-in attestation service");
-        };
-        let attestation_service::rvps::RvpsConfig::BuiltIn(rvps_config) = as_config.rvps_config
-        else {
-            panic!("expected built-in RVPS");
-        };
-        assert!(matches!(
-            rvps_config.storage,
-            reference_value_provider_service::storage::ReferenceValueStorageConfig::SharedStore(_)
-        ));
+        #[cfg(any(feature = "coco-as-builtin", feature = "coco-as-builtin-no-verifier"))]
+        {
+            let crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(as_config) =
+                config.attestation_service.attestation_service
+            else {
+                panic!("expected built-in attestation service");
+            };
+            let attestation_service::rvps::RvpsConfig::BuiltIn(rvps_config) = as_config.rvps_config
+            else {
+                panic!("expected built-in RVPS");
+            };
+            assert!(matches!(
+                rvps_config.storage,
+                reference_value_provider_service::storage::ReferenceValueStorageConfig::SharedStore(
+                    _
+                )
+            ));
+        }
     }
 
     #[test]
