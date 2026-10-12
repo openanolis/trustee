@@ -3877,6 +3877,7 @@ dependencies = [
  "serde_json",
  "serde_qs",
  "serial_test 3.5.0",
+ "sha2",
  "sqlx",
  "strum 0.25.0",
  "tempfile",
