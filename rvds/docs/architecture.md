@@ -12,7 +12,7 @@
 ## 逻辑组件
 
 - **HTTP API（Actix-web）**：暴露 `/rvds/*` 接口，负责参数校验与响应封装。
-- **订阅注册表（Subscriber Registry）**：用 `HashSet` 存储已注册的 Trustee 基址，持久化于 `data/rvds/subscribers.json`。
+- **订阅注册表（Subscriber Registry）**：单副本兼容模式使用 `subscribers.json`；多副本模式在统一 KV 的 `rvds_subscriber` 命名空间逐条存储，避免整文件覆盖。
 - **事件转发器（Forwarder）**：接收发布事件后，构造 RVPS 期望的 `message` 包裹并并发调用各 Trustee 的 `/api/rvps/register`。
 - **账本记录器（Ledger Recorder）**：对 `PublishEventRequest` 做规范化哈希，写入外部不可篡改账本（默认 noop，可配置 HTTP / 以太坊网关），返回记录凭据，并将审计凭据随 payload 一并下发。
 - **配置与启动器（Config / Bootstrap）**：从环境变量加载监听地址、数据目录、下游调用超时等参数。
@@ -65,7 +65,7 @@
 ## 扩展点
 
 - **提取器类型**：`type` 字段可扩展为其它 provenance 解析器，与 RVPS extractor 对应。
-- **存储后端**：当前使用文件持久化，未来可替换为数据库或 KV。
+- **存储后端**：支持兼容文件模式，以及带幂等首次写语义的共享 MySQL/KV 模式；各副本转发前从共享注册表读取最新订阅。
 - **鉴权**：目前接口开放，可按需在 Actix middleware 中增加鉴权/限流。
 - **重试策略**：当前单次调用 + 超时，可按需增加重试与死信队列。
 
@@ -74,6 +74,9 @@
 - 环境变量
   - `RVDS_LISTEN_ADDR`：HTTP 监听地址，默认 `0.0.0.0:8090`
   - `RVDS_DATA_DIR`：订阅持久化目录，默认 `data/rvds`
+  - `RVDS_STORAGE_TYPE`：`memory` 或 `mysql`；未设置时使用兼容文件模式
+  - `RVDS_REQUIRE_SHARED`：多副本模式设为 `true`
+  - `TRUSTEE_STORAGE_MYSQL_URL`：共享 MySQL URL，由 Secret 注入
   - `RVDS_FORWARD_TIMEOUT_SECS`：下游请求超时，默认 `10`
 - 日志：使用 `env_logger`，可通过 `RUST_LOG` 配置。
 
@@ -82,5 +85,4 @@
 - URL 规范化：去除尾部斜杠，避免重复注册。
 - 并发隔离：下游调用使用超时保护，单目标失败不会阻塞整体流程。
 - 持久化恢复：服务重启后自动读取 `subscribers.json` 恢复订阅。
-
 

@@ -20,7 +20,7 @@ async fn subscribe_trustee(
     payload: web::Json<SubscribeRequest>,
 ) -> Result<HttpResponse, ApiError> {
     let added = state.add_trustees(&payload).await?;
-    info!("Registered trustees: {:?}", added);
+    info!("Registered trustees: {added:?}");
     Ok(HttpResponse::Ok().json(SubscribeResponse { registered: added }))
 }
 

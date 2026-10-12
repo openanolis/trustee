@@ -5,8 +5,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::future::join_all;
+use key_value_storage::{
+    KvStorageProvider, PutCondition, PutOptions, PutOutcome, Storage, StorageProvider,
+};
 use log::{debug, info, warn};
 use reqwest::Client;
+use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 use url::Url;
 
@@ -19,23 +23,128 @@ use crate::models::{
 
 #[derive(Clone)]
 pub struct AppState {
-    subscribers: std::sync::Arc<RwLock<HashSet<String>>>,
-    storage_path: PathBuf,
+    subscribers: SubscriberRegistry,
     http_client: Client,
     request_timeout: Duration,
     ledger: std::sync::Arc<dyn LedgerAdapter>,
+}
+
+const SUBSCRIBER_NAMESPACE: &str = "rvds_subscriber";
+
+#[derive(Clone)]
+enum SubscriberRegistry {
+    File {
+        entries: std::sync::Arc<RwLock<HashSet<String>>>,
+        path: PathBuf,
+    },
+    Shared(Storage),
+}
+
+impl SubscriberRegistry {
+    fn key(url: &str) -> String {
+        format!("{:x}", Sha256::digest(url.as_bytes()))
+    }
+
+    async fn add(&self, urls: &[String]) -> Result<Vec<String>> {
+        match self {
+            Self::File { entries, path } => {
+                let mut guard = entries.write().await;
+                let mut newly_added = Vec::new();
+                for url in urls {
+                    if guard.insert(url.clone()) {
+                        newly_added.push(url.clone());
+                    }
+                }
+                Self::persist_file(path, &guard)?;
+                Ok(newly_added)
+            }
+            Self::Shared(storage) => {
+                let mut newly_added = Vec::new();
+                for url in urls {
+                    let outcome = storage
+                        .put(
+                            &Self::key(url),
+                            url.as_bytes(),
+                            PutOptions {
+                                condition: PutCondition::IfAbsent,
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                        .context("store RVDS subscriber")?;
+                    if matches!(outcome, PutOutcome::Created { .. }) {
+                        newly_added.push(url.clone());
+                    }
+                }
+                Ok(newly_added)
+            }
+        }
+    }
+
+    async fn list(&self) -> Result<Vec<String>> {
+        match self {
+            Self::File { entries, .. } => Ok(entries.read().await.iter().cloned().collect()),
+            Self::Shared(storage) => {
+                let mut subscribers = Vec::new();
+                for key in storage.list().await.context("list RVDS subscribers")? {
+                    if let Some(entry) = storage.get(&key).await.context("read RVDS subscriber")? {
+                        subscribers.push(
+                            String::from_utf8(entry.value)
+                                .context("stored RVDS subscriber is not UTF-8")?,
+                        );
+                    }
+                }
+                Ok(subscribers)
+            }
+        }
+    }
+
+    fn persist_file(path: &Path, data: &HashSet<String>) -> Result<()> {
+        let serialized = serde_json::to_string_pretty(data).context("serialize subscribers")?;
+        fs::write(path, serialized).context("write subscribers registry")
+    }
+
+    fn load_file(path: &Path) -> Result<HashSet<String>> {
+        if !path.exists() {
+            return Ok(HashSet::new());
+        }
+        let raw = fs::read_to_string(path).context("read subscribers registry")?;
+        serde_json::from_str(&raw).context("parse subscribers registry")
+    }
 }
 
 impl AppState {
     /// Build initial state and reload persisted subscriber registry.
     pub async fn initialize(cfg: &AppConfig) -> Result<Self> {
         let storage_path = cfg.data_dir.join("subscribers.json");
-        // Ensure data directory exists before writing registry file.
-        if let Some(parent) = storage_path.parent() {
-            fs::create_dir_all(parent).context("create data directory")?;
-        }
-
-        let subscribers = Self::load_registry(&storage_path)?;
+        let subscribers = if let Some(storage_config) = cfg.storage_backend.clone() {
+            let provider = KvStorageProvider::new(storage_config);
+            let storage = provider
+                .get_or_register(SUBSCRIBER_NAMESPACE)
+                .await
+                .context("initialize shared RVDS subscriber storage")?;
+            let registry = SubscriberRegistry::Shared(storage);
+            let legacy = SubscriberRegistry::load_file(&storage_path)?;
+            if !legacy.is_empty() {
+                let values: Vec<_> = legacy.into_iter().collect();
+                let imported = registry.add(&values).await?;
+                info!(
+                    "Imported {} legacy RVDS subscribers into shared storage",
+                    imported.len()
+                );
+            }
+            registry
+        } else {
+            if let Some(parent) = storage_path.parent() {
+                fs::create_dir_all(parent).context("create data directory")?;
+            }
+            SubscriberRegistry::File {
+                entries: std::sync::Arc::new(RwLock::new(SubscriberRegistry::load_file(
+                    &storage_path,
+                )?)),
+                path: storage_path,
+            }
+        };
         let http_client = Client::builder()
             .timeout(cfg.request_timeout)
             .build()
@@ -43,8 +152,7 @@ impl AppState {
         let ledger = build_ledger(&cfg.ledger, http_client.clone());
 
         Ok(Self {
-            subscribers: std::sync::Arc::new(RwLock::new(subscribers)),
-            storage_path,
+            subscribers,
             http_client,
             request_timeout: cfg.request_timeout,
             ledger,
@@ -66,18 +174,10 @@ impl AppState {
             normalized.push(url.to_string());
         }
 
-        let mut guard = self.subscribers.write().await;
-        let mut newly_added = Vec::new();
-        for url in normalized {
-            if guard.insert(url.clone()) {
-                newly_added.push(url);
-            }
-        }
-
-        self.persist_registry(&guard)
-            .map_err(|e| ApiError::Storage(e.to_string()))?;
-
-        Ok(newly_added)
+        self.subscribers
+            .add(&normalized)
+            .await
+            .map_err(|e| ApiError::Storage(e.to_string()))
     }
 
     /// Forward publish events to every registered trustee.
@@ -103,10 +203,11 @@ impl AppState {
             message: envelope_str,
         };
 
-        let subscribers = {
-            let guard = self.subscribers.read().await;
-            guard.iter().cloned().collect::<Vec<_>>()
-        };
+        let subscribers = self
+            .subscribers
+            .list()
+            .await
+            .map_err(|e| ApiError::Storage(e.to_string()))?;
 
         if subscribers.is_empty() {
             warn!("No trustee subscribers registered; skipping forward.");
@@ -143,24 +244,6 @@ impl AppState {
         Ok((results, ledger_receipt))
     }
 
-    /// Persist subscriber registry to disk.
-    fn persist_registry(&self, data: &HashSet<String>) -> Result<()> {
-        let serialized = serde_json::to_string_pretty(data).context("serialize subscribers")?;
-        fs::write(&self.storage_path, serialized).context("write subscribers registry")
-    }
-
-    /// Load registry from disk if the file exists.
-    fn load_registry(path: &Path) -> Result<HashSet<String>> {
-        if !path.exists() {
-            return Ok(HashSet::new());
-        }
-
-        let raw = fs::read_to_string(path).context("read subscribers registry")?;
-        let parsed: HashSet<String> =
-            serde_json::from_str(&raw).context("parse subscribers registry")?;
-        Ok(parsed)
-    }
-
     async fn send_to_trustee(&self, target: String, req: RvpsRegisterRequest) -> ForwardResult {
         let endpoint = format!("{}/api/rvps/register", target.trim_end_matches('/'));
         info!("Forwarding release event to {endpoint}");
@@ -177,7 +260,7 @@ impl AppState {
             Err(_) => ForwardResult {
                 target,
                 delivered: false,
-                error: Some(format!("timeout after {:?}", timeout)),
+                error: Some(format!("timeout after {timeout:?}")),
             },
             Ok(Err(err)) => ForwardResult {
                 target,
@@ -204,5 +287,72 @@ impl AppState {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use key_value_storage::{
+        memory::MemoryStorage,
+        mysql::{MysqlConfig, MysqlStorage},
+        DeleteOptions,
+    };
+    use serial_test::serial;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn shared_registry_is_visible_across_instances() {
+        let storage: Storage = Arc::new(MemoryStorage::default());
+        let first = SubscriberRegistry::Shared(storage.clone());
+        let second = SubscriberRegistry::Shared(storage);
+        let subscriber = "https://trustee.example/".to_string();
+
+        let added = first.add(std::slice::from_ref(&subscriber)).await.unwrap();
+        assert_eq!(added.as_slice(), std::slice::from_ref(&subscriber));
+        assert!(first
+            .add(std::slice::from_ref(&subscriber))
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(second.list().await.unwrap(), [subscriber]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn shared_storage_mysql_registry_visibility() {
+        let Ok(url) = std::env::var("MYSQL_TEST_URL") else {
+            return;
+        };
+        let config = MysqlConfig {
+            url,
+            url_env: None,
+            ..Default::default()
+        };
+        let first_storage: Storage = Arc::new(
+            MysqlStorage::connect(config.clone(), SUBSCRIBER_NAMESPACE)
+                .await
+                .unwrap(),
+        );
+        for key in first_storage.list().await.unwrap() {
+            first_storage
+                .delete(&key, DeleteOptions::default())
+                .await
+                .unwrap();
+        }
+        let second_storage: Storage = Arc::new(
+            MysqlStorage::connect(config, SUBSCRIBER_NAMESPACE)
+                .await
+                .unwrap(),
+        );
+        let first = SubscriberRegistry::Shared(first_storage);
+        let second = SubscriberRegistry::Shared(second_storage);
+        let subscriber = "https://trustee.example/".to_string();
+
+        let added = first.add(std::slice::from_ref(&subscriber)).await.unwrap();
+        assert_eq!(added.as_slice(), std::slice::from_ref(&subscriber));
+        assert_eq!(second.list().await.unwrap(), [subscriber]);
     }
 }
