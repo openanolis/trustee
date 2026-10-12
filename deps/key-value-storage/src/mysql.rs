@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS trustee_kv_entries (
     INDEX trustee_kv_expiry (expires_at)
 ) ENGINE=InnoDB
 "#;
+const MAX_TRANSACTION_RETRIES: usize = 8;
 
 #[derive(Clone, Derivative, Deserialize, PartialEq)]
 #[derivative(Debug)]
@@ -127,20 +128,13 @@ impl MysqlStorage {
             .transpose()
             .map_err(Into::into)
     }
-}
 
-#[async_trait]
-impl KeyValueStorage for MysqlStorage {
-    fn capabilities(&self) -> StorageCapabilities {
-        StorageCapabilities {
-            shared: true,
-            compare_and_swap: true,
-            ttl: true,
-        }
-    }
-
-    async fn put(&self, key: &str, value: &[u8], options: PutOptions) -> Result<PutOutcome> {
-        validate_key(key)?;
+    async fn put_transaction(
+        &self,
+        key: &str,
+        value: &[u8],
+        options: PutOptions,
+    ) -> Result<PutOutcome> {
         let ttl_micros = Self::ttl_micros(options.ttl)?;
         let mut transaction = self.pool.begin().await?;
         self.delete_expired_key(&mut transaction, key).await?;
@@ -225,6 +219,57 @@ impl KeyValueStorage for MysqlStorage {
         Ok(outcome)
     }
 
+    async fn delete_transaction(&self, key: &str, options: DeleteOptions) -> Result<DeleteOutcome> {
+        let mut transaction = self.pool.begin().await?;
+        self.delete_expired_key(&mut transaction, key).await?;
+        let current = self.current_revision(&mut transaction, key).await?;
+        let Some(current_revision) = current else {
+            transaction.commit().await?;
+            return Ok(DeleteOutcome::NotFound);
+        };
+        if options
+            .expected_revision
+            .is_some_and(|expected| expected != current_revision)
+        {
+            transaction.commit().await?;
+            return Ok(DeleteOutcome::Conflict { current_revision });
+        }
+        sqlx::query("DELETE FROM trustee_kv_entries WHERE namespace = ? AND entry_key = ?")
+            .bind(&self.namespace)
+            .bind(key.as_bytes())
+            .execute(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
+        Ok(DeleteOutcome::Deleted)
+    }
+}
+
+#[async_trait]
+impl KeyValueStorage for MysqlStorage {
+    fn capabilities(&self) -> StorageCapabilities {
+        StorageCapabilities {
+            shared: true,
+            compare_and_swap: true,
+            ttl: true,
+        }
+    }
+
+    async fn put(&self, key: &str, value: &[u8], options: PutOptions) -> Result<PutOutcome> {
+        validate_key(key)?;
+        for attempt in 0..MAX_TRANSACTION_RETRIES {
+            match self.put_transaction(key, value, options).await {
+                Err(error)
+                    if error.is_retryable_mysql_transaction()
+                        && attempt + 1 < MAX_TRANSACTION_RETRIES =>
+                {
+                    tokio::task::yield_now().await;
+                }
+                result => return result,
+            }
+        }
+        unreachable!("bounded transaction retry loop always returns")
+    }
+
     async fn get(&self, key: &str) -> Result<Option<StoredValue>> {
         validate_key(key)?;
         let row = sqlx::query(
@@ -266,27 +311,18 @@ impl KeyValueStorage for MysqlStorage {
 
     async fn delete(&self, key: &str, options: DeleteOptions) -> Result<DeleteOutcome> {
         validate_key(key)?;
-        let mut transaction = self.pool.begin().await?;
-        self.delete_expired_key(&mut transaction, key).await?;
-        let current = self.current_revision(&mut transaction, key).await?;
-        let Some(current_revision) = current else {
-            transaction.commit().await?;
-            return Ok(DeleteOutcome::NotFound);
-        };
-        if options
-            .expected_revision
-            .is_some_and(|expected| expected != current_revision)
-        {
-            transaction.commit().await?;
-            return Ok(DeleteOutcome::Conflict { current_revision });
+        for attempt in 0..MAX_TRANSACTION_RETRIES {
+            match self.delete_transaction(key, options).await {
+                Err(error)
+                    if error.is_retryable_mysql_transaction()
+                        && attempt + 1 < MAX_TRANSACTION_RETRIES =>
+                {
+                    tokio::task::yield_now().await;
+                }
+                result => return result,
+            }
         }
-        sqlx::query("DELETE FROM trustee_kv_entries WHERE namespace = ? AND entry_key = ?")
-            .bind(&self.namespace)
-            .bind(key.as_bytes())
-            .execute(&mut *transaction)
-            .await?;
-        transaction.commit().await?;
-        Ok(DeleteOutcome::Deleted)
+        unreachable!("bounded transaction retry loop always returns")
     }
 
     async fn purge_expired(&self) -> Result<u64> {
@@ -408,6 +444,48 @@ mod tests {
         }
         assert_eq!(updated, 1);
         assert_eq!(storage.get("session").await.unwrap().unwrap().revision, 2);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn concurrent_first_writes_retry_mysql_deadlocks() {
+        let Some(first) = storage("kv_mysql_first_write_test").await.map(Arc::new) else {
+            return;
+        };
+        for key in first.list().await.unwrap() {
+            first.delete(&key, DeleteOptions::default()).await.unwrap();
+        }
+        let second = Arc::new(storage("kv_mysql_first_write_test").await.unwrap());
+
+        let mut tasks = Vec::new();
+        for candidate in 0..16_u8 {
+            let storage = if candidate % 2 == 0 {
+                first.clone()
+            } else {
+                second.clone()
+            };
+            tasks.push(tokio::spawn(async move {
+                storage
+                    .put(
+                        "new-session",
+                        &[candidate],
+                        PutOptions {
+                            condition: PutCondition::IfAbsent,
+                            ttl: None,
+                        },
+                    )
+                    .await
+                    .unwrap()
+            }));
+        }
+
+        let mut created = 0;
+        for task in tasks {
+            if matches!(task.await.unwrap(), PutOutcome::Created { revision: 1 }) {
+                created += 1;
+            }
+        }
+        assert_eq!(created, 1);
     }
 
     #[test]
