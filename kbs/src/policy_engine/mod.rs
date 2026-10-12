@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
+use key_value_storage::Storage;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -61,9 +62,11 @@ pub(crate) struct PolicyEngine(pub Arc<Mutex<dyn PolicyEngineInterface>>);
 
 impl PolicyEngine {
     /// Create and initialize PolicyEngine
-    pub async fn new(config: &PolicyEngineConfig) -> Result<Self> {
-        let policy_engine: Arc<Mutex<dyn PolicyEngineInterface>> =
-            Arc::new(Mutex::new(opa::Opa::new(config.policy_path.clone())?));
+    pub async fn new(config: &PolicyEngineConfig, storage: Option<Storage>) -> Result<Self> {
+        let policy_engine: Arc<Mutex<dyn PolicyEngineInterface>> = match storage {
+            Some(storage) => Arc::new(Mutex::new(opa::OpaShared::new(storage).await?)),
+            None => Arc::new(Mutex::new(opa::Opa::new(config.policy_path.clone())?)),
+        };
         Ok(Self(policy_engine))
     }
 
