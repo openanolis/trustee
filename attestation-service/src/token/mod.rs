@@ -114,6 +114,7 @@ impl Default for AttestationTokenConfig {
 }
 
 impl AttestationTokenConfig {
+    #[cfg(feature = "fs")]
     pub(crate) fn has_configured_signer(&self) -> bool {
         match self {
             AttestationTokenConfig::Simple(config) => config.signer.is_some(),
