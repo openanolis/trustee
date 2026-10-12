@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Error, Result};
+use key_value_storage::StorageProvider;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -176,6 +177,10 @@ impl fmt::Display for ResourceDesc {
 pub enum RepositoryConfig {
     LocalFs(local_fs::LocalFsRepoDesc),
 
+    /// Store resources as opaque values in the unified shared backend.
+    #[serde(alias = "shared_store", alias = "shared-store", alias = "kvstorage")]
+    SharedStore,
+
     #[cfg(feature = "encrypted-local-fs")]
     #[serde(alias = "encrypted_local_fs", alias = "encrypted-local-fs")]
     EncryptedLocalFs(encrypted_local_fs::EncryptedLocalFsRepoDesc),
@@ -277,6 +282,7 @@ impl RepositoryConfig {
 
         match normalized.as_str() {
             "localfs" => Ok(Self::LocalFs(local_fs::LocalFsRepoDesc::default())),
+            "sharedstore" | "kvstorage" => Ok(Self::SharedStore),
             "encryptedlocalfs" => {
                 #[cfg(feature = "encrypted-local-fs")]
                 {
@@ -333,6 +339,7 @@ impl RepositoryConfig {
                     desc.dir_path = dir_path;
                 }
             }
+            Self::SharedStore => {}
             #[cfg(feature = "encrypted-local-fs")]
             Self::EncryptedLocalFs(desc) => {
                 if let Some(dir_path) = env_string(ENV_RESOURCE_STORAGE_DIR_PATH)? {
@@ -435,13 +442,28 @@ pub struct ResourceStorage {
 }
 
 impl ResourceStorage {
-    pub async fn new(value: RepositoryConfig) -> Result<Self> {
+    pub async fn new(
+        value: RepositoryConfig,
+        storage_provider: Option<Arc<dyn StorageProvider>>,
+    ) -> Result<Self> {
         match value {
             RepositoryConfig::LocalFs(desc) => {
                 let backend = local_fs::LocalFs::new(&desc)
                     .context("Failed to initialize Resource Storage")?;
                 Ok(Self {
                     backend: Arc::new(backend),
+                })
+            }
+            RepositoryConfig::SharedStore => {
+                let provider = storage_provider.context(
+                    "SharedStore resource backend requires top-level storage_backend configuration",
+                )?;
+                let storage = provider
+                    .get_or_register(super::shared_store::RESOURCE_STORAGE_NAMESPACE)
+                    .await
+                    .context("initialize shared resource storage")?;
+                Ok(Self {
+                    backend: Arc::new(super::shared_store::SharedStore::new(storage)),
                 })
             }
             #[cfg(feature = "encrypted-local-fs")]

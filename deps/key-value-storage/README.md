@@ -11,11 +11,12 @@ their consistency requirements are not met.
 ```toml
 [storage_backend]
 storage_type = "mysql"
+require_shared = true
 
 [storage_backend.backends.mysql]
 url = "mysql://trustee@mysql.example/trustee"
 max_connections = 20
 ```
 
-The database URL is treated as secret configuration and is intentionally
-redacted from `Debug` output.
+For production, omit `url` and inject `TRUSTEE_STORAGE_MYSQL_URL` from a
+Secret. The database URL is intentionally redacted from `Debug` output.
