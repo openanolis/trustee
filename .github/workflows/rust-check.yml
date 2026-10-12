@@ -104,6 +104,11 @@ jobs:
           mysql -uroot -e "SET GLOBAL innodb_default_row_format=COMPACT"
         make check TEST_FEATURES=encrypted-db
 
+    - name: Shared Storage Test
+      env:
+        MYSQL_TEST_URL: mysql://root@127.0.0.1:3306/trustee_kbs_test
+      run: cargo test -p key-value-storage
+
   as-check:
     if: |
       github.event_name == 'pull_request' || 
