@@ -3925,6 +3925,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "key-value-storage"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "derivative",
+ "serde",
+ "serial_test 3.5.0",
+ "sqlx",
+ "thiserror 2.0.20",
+ "tokio",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "kms"
 version = "0.1.0"
 dependencies = [

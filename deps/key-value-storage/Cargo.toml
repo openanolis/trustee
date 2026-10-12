@@ -1,0 +1,25 @@
+[package]
+name = "key-value-storage"
+version.workspace = true
+authors.workspace = true
+description = "Namespaced storage abstraction for Trustee shared state"
+documentation.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["mysql"]
+mysql = ["dep:sqlx"]
+
+[dependencies]
+async-trait.workspace = true
+derivative = "2.2.0"
+serde = { workspace = true, features = ["derive"] }
+sqlx = { workspace = true, optional = true }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+
+[dev-dependencies]
+serial_test = "3.0"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+toml.workspace = true
