@@ -17,7 +17,7 @@ use crate::{
 const CREATE_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS trustee_kv_entries (
     namespace VARCHAR(191) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    entry_key VARBINARY(1024) NOT NULL,
+    entry_key VARBINARY(512) NOT NULL,
     entry_value LONGBLOB NOT NULL,
     revision BIGINT UNSIGNED NOT NULL,
     expires_at TIMESTAMP(6) NULL,
