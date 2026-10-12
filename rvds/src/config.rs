@@ -78,17 +78,6 @@ impl AppConfig {
     }
 
     fn storage_backend_from_env() -> Result<Option<StorageBackendConfig>> {
-        let Some(storage_type) = env::var("RVDS_STORAGE_TYPE")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-        else {
-            return Ok(None);
-        };
-        let storage_type = match storage_type.to_ascii_lowercase().as_str() {
-            "memory" => StorageType::Memory,
-            "mysql" => StorageType::Mysql,
-            other => return Err(anyhow!("unsupported RVDS_STORAGE_TYPE `{other}`")),
-        };
         let require_shared = match env::var("RVDS_REQUIRE_SHARED") {
             Ok(value) => value
                 .parse::<bool>()
@@ -96,7 +85,22 @@ impl AppConfig {
             Err(env::VarError::NotPresent) => false,
             Err(error) => return Err(error.into()),
         };
-
+        let Some(storage_type) = env::var("RVDS_STORAGE_TYPE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            if require_shared {
+                return Err(anyhow!(
+                    "RVDS_REQUIRE_SHARED=true requires RVDS_STORAGE_TYPE=mysql"
+                ));
+            }
+            return Ok(None);
+        };
+        let storage_type = match storage_type.to_ascii_lowercase().as_str() {
+            "memory" => StorageType::Memory,
+            "mysql" => StorageType::Mysql,
+            other => return Err(anyhow!("unsupported RVDS_STORAGE_TYPE `{other}`")),
+        };
         Ok(Some(StorageBackendConfig {
             storage_type,
             require_shared,
@@ -127,6 +131,20 @@ mod tests {
             Some("TRUSTEE_STORAGE_MYSQL_URL")
         );
         env::remove_var("RVDS_STORAGE_TYPE");
+        env::remove_var("RVDS_REQUIRE_SHARED");
+    }
+
+    #[test]
+    #[serial]
+    fn require_shared_rejects_an_implicit_file_backend() {
+        env::remove_var("RVDS_STORAGE_TYPE");
+        env::set_var("RVDS_REQUIRE_SHARED", "true");
+
+        let error = AppConfig::from_env().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("RVDS_REQUIRE_SHARED=true requires RVDS_STORAGE_TYPE=mysql"));
+
         env::remove_var("RVDS_REQUIRE_SHARED");
     }
 }
