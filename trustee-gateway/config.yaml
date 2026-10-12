@@ -33,10 +33,13 @@ rvps:
 
 database:
   type: "sqlite"
+  require_shared: false
   path: "/app/data/trustee-gateway.db"
   use_memory: true
   backup_interval: "1m"
   enable_backup_on_shutdown: true
+  # For multi-replica deployments use type: mysql, require_shared: true, and
+  # inject the DSN through TRUSTEE_GATEWAY_DATABASE_DSN.
 
 logging:
   level: "debug"
