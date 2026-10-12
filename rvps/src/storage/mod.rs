@@ -101,13 +101,13 @@ pub struct VersionedReferenceValue {
 
 #[derive(Debug)]
 pub enum ConditionalSetResult {
-    Stored(Option<ReferenceValue>),
+    Stored,
     Conflict,
 }
 
 #[derive(Debug)]
 pub enum ConditionalDeleteResult {
-    Deleted(Option<ReferenceValue>),
+    Deleted,
     NotFound,
     Conflict,
 }
@@ -142,7 +142,8 @@ pub trait ReferenceValueStorage {
         rv: ReferenceValue,
         _expected_revision: Option<u64>,
     ) -> Result<ConditionalSetResult> {
-        Ok(ConditionalSetResult::Stored(self.set(name, rv).await?))
+        self.set(name, rv).await?;
+        Ok(ConditionalSetResult::Stored)
     }
 
     async fn delete_if_unchanged(
@@ -151,7 +152,7 @@ pub trait ReferenceValueStorage {
         _expected_revision: Option<u64>,
     ) -> Result<ConditionalDeleteResult> {
         Ok(match self.delete(name).await? {
-            Some(value) => ConditionalDeleteResult::Deleted(Some(value)),
+            Some(_) => ConditionalDeleteResult::Deleted,
             None => ConditionalDeleteResult::NotFound,
         })
     }

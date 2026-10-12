@@ -210,7 +210,7 @@ impl Rvps {
                 .set_if_unchanged(name.to_string(), candidate, expected_revision)
                 .await?
             {
-                ConditionalSetResult::Stored(_) => return Ok(true),
+                ConditionalSetResult::Stored => return Ok(true),
                 ConditionalSetResult::Conflict => continue,
             }
         }
@@ -434,7 +434,7 @@ impl Rvps {
                 .delete_if_unchanged(name, current.revision)
                 .await?
             {
-                ConditionalDeleteResult::Deleted(_) => {
+                ConditionalDeleteResult::Deleted => {
                     info!("Reference value {name} deleted successfully.");
                     return Ok(true);
                 }
