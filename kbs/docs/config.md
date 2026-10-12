@@ -16,6 +16,50 @@ environment variable.
 The following sections list the KBS properties which can be set through the
 configuration file.
 
+### Shared Storage Configuration
+
+The optional top-level `storage_backend` configures one namespaced storage
+provider for KBS resource policies, RCAR sessions, and resource plugins that
+select `SharedStore`. Omitting this section preserves the legacy behavior:
+policies remain file-backed and sessions remain in process memory.
+
+| Property | Type | Description | Default |
+|----------|------|-------------|---------|
+| `storage_backend.storage_type` | String | Unified backend type: `memory` or `mysql`. | `memory` |
+| `storage_backend.require_shared` | Boolean | Fail startup unless the backend supports cross-replica sharing, atomic compare-and-swap, and TTL. Enable this for multi-replica deployments. | `false` |
+| `session_storage_type` | String | Optional RCAR session backend override. Defaults to `storage_backend.storage_type`. | None |
+
+MySQL settings are configured under `[storage_backend.backends.mysql]`. The
+connection URL is read from `TRUSTEE_STORAGE_MYSQL_URL` by default, so the URL
+and password can be injected from a Kubernetes Secret instead of being stored
+in the configuration file. `url_env` can select a different environment
+variable; `url` is only used when that variable is absent or empty.
+
+```toml
+session_storage_type = "mysql"
+
+[storage_backend]
+storage_type = "mysql"
+require_shared = true
+
+[storage_backend.backends.mysql]
+url_env = "TRUSTEE_STORAGE_MYSQL_URL"
+max_connections = 20
+min_connections = 2
+acquire_timeout_seconds = 10
+
+[[plugins]]
+name = "resource"
+type = "SharedStore"
+```
+
+`SharedStore` stores opaque resource values in the `repository` namespace of
+the unified backend. `EncryptedDb` remains available when database-side
+managed encryption and key rotation are required; it is also suitable for
+multiple replicas when configured with MySQL. `LocalFs` and
+`EncryptedLocalFs` should not be used as writable authoritative storage by
+multiple replicas.
+
 ### HTTP Server Configuration
 
 The following properties can be set under the `[http_server]` section.
@@ -197,6 +241,9 @@ This section is **optional**. When omitted, a default configuration is used.
 |--------------------------|---------|------------------------------------------------------------------------------------------------------------|-------------------------|------------------------------------------------|
 | `policy_path`            | String  | Path to a file containing a policy for evaluating whether the TCB status has access to specific resources. | No                      | `/opa/confidential-containers/kbs/policy.rego` |
 
+When `storage_backend` is configured, the resource policy is stored in its
+`kbs` namespace and `policy_path` is retained only for legacy configurations.
+
 ### Plugins Configuration
 
 KBS supports different kinds of plugins, and they can be enabled via add corresponding configs.
@@ -213,7 +260,7 @@ This is also called "Repository" in old versions. The properties to be configure
 
 | Property | Type   | Description                                                                   | Required | Default   |
 |----------|--------|-------------------------------------------------------------------------------|----------|-----------|
-| `type`   | String | The resource repository type. Valid values: `LocalFs`, `EncryptedLocalFs`, `EncryptedDb`, `Aliyun`, `ExternalKms` | Yes      | `LocalFs` |
+| `type`   | String | The resource repository type. Valid values: `LocalFs`, `SharedStore`, `EncryptedLocalFs`, `EncryptedDb`, `Aliyun`, `ExternalKms` | Yes      | `LocalFs` |
 
 Resource plugin configuration can also be overridden with environment
 variables. Environment variables are applied after the configuration file is
@@ -223,7 +270,7 @@ set to create one from environment variables.
 
 | Environment Variable | Description |
 |----------------------|-------------|
-| `KBS_RESOURCE_STORAGE_TYPE` | Replaces or creates the resource backend type. Supported values: `LocalFs`, `EncryptedLocalFs`, `EncryptedDb`, `Aliyun`, `ExternalKms`. |
+| `KBS_RESOURCE_STORAGE_TYPE` | Replaces or creates the resource backend type. Supported values: `LocalFs`, `SharedStore`, `EncryptedLocalFs`, `EncryptedDb`, `Aliyun`, `ExternalKms`. |
 | `KBS_RESOURCE_STORAGE_DIR_PATH` | Overrides `dir_path` for `LocalFs` and `EncryptedLocalFs`. |
 | `KBS_RESOURCE_STORAGE_PRIVATE_KEY_PATH` | Overrides `private_key_path` for `EncryptedLocalFs`. |
 | `KBS_RESOURCE_STORAGE_LIBRARY_PATH` | Overrides `library_path` for `ExternalKms`. |
@@ -274,6 +321,12 @@ export KBS_RESOURCE_STORAGE_ERROR_BUFFER_SIZE=1024
 | Property   | Type   | Description                     | Required | Default                                             |
 |------------|--------|---------------------------------|----------|-----------------------------------------------------|
 | `dir_path` | String | Path to a repository directory. | No       | `/opt/confidential-containers/kbs/repository`       |
+
+**`SharedStore` Properties**
+
+`SharedStore` has no backend-specific fields. It requires the top-level
+`storage_backend` section and stores resource values in that provider's
+`repository` namespace.
 
 **`EncryptedLocalFs` Properties**
 

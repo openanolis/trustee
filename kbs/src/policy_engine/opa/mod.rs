@@ -5,8 +5,47 @@
 use crate::policy_engine::{KbsPolicyEngineError, PolicyEngineInterface};
 use async_trait::async_trait;
 use base64::Engine;
+use key_value_storage::{PutCondition, PutOptions, Storage};
 use std::fs;
 use std::path::PathBuf;
+
+const SHARED_POLICY_KEY: &str = "resource-policy";
+
+fn validate_policy(policy_bytes: &[u8]) -> Result<(), KbsPolicyEngineError> {
+    let policy_content = String::from_utf8(policy_bytes.to_vec())
+        .map_err(|e| KbsPolicyEngineError::InvalidPolicy(e.into()))?;
+    let mut engine = regorus::Engine::new();
+    engine.set_rego_v0(true);
+    engine
+        .add_policy(String::from("default"), policy_content)
+        .map_err(KbsPolicyEngineError::InvalidPolicy)?;
+    Ok(())
+}
+
+fn evaluate_policy(
+    policy_content: String,
+    resource_path: &str,
+    input_claims: &str,
+) -> Result<bool, KbsPolicyEngineError> {
+    let mut engine = regorus::Engine::new();
+    engine.set_rego_v0(true);
+    engine
+        .add_policy(String::from("default"), policy_content)
+        .map_err(|_| KbsPolicyEngineError::PolicyLoadError)?;
+
+    let resource_path_object =
+        regorus::Value::from_json_str(&format!("{{\"resource-path\":\"{resource_path}\"}}"))
+            .map_err(|_| KbsPolicyEngineError::ResourcePathError)?;
+    engine
+        .add_data(resource_path_object)
+        .map_err(|_| KbsPolicyEngineError::DataLoadError)?;
+    engine
+        .set_input_json(input_claims)
+        .map_err(|_| KbsPolicyEngineError::InputError)?;
+    engine
+        .eval_bool_query("data.policy.allow".to_string(), false)
+        .map_err(Into::into)
+}
 
 #[derive(Debug, Clone)]
 pub struct Opa {
@@ -33,51 +72,14 @@ impl PolicyEngineInterface for Opa {
         resource_path: &str,
         input_claims: &str,
     ) -> Result<bool, KbsPolicyEngineError> {
-        let mut engine = regorus::Engine::new();
-        // regorus 0.11 defaults to rego.v1; keep accepting legacy `allow { ... }`
-        // (rego.v0) policies saved before the rego.v1 migration. `import
-        // rego.v1` policies still work under this mode.
-        engine.set_rego_v0(true);
-
-        // Add policy as data
-        engine
-            .add_policy_from_file(self.policy_path.clone())
-            .map_err(|_| KbsPolicyEngineError::PolicyLoadError)?;
-
-        // Add resource path as data
-        let resource_path_object =
-            regorus::Value::from_json_str(&format!("{{\"resource-path\":\"{resource_path}\"}}"))
-                .map_err(|_| KbsPolicyEngineError::ResourcePathError)?;
-
-        engine
-            .add_data(resource_path_object)
-            .map_err(|_| KbsPolicyEngineError::DataLoadError)?;
-
-        // Add TCB claims as input
-        engine
-            .set_input_json(input_claims)
-            .map_err(|_| KbsPolicyEngineError::InputError)?;
-
-        let res = engine.eval_bool_query("data.policy.allow".to_string(), false)?;
-        Ok(res)
+        let policy_content = tokio::fs::read_to_string(&self.policy_path).await?;
+        evaluate_policy(policy_content, resource_path, input_claims)
     }
 
     async fn set_policy(&mut self, policy: &str) -> Result<(), KbsPolicyEngineError> {
         let policy_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(policy)?;
 
-        // Check if the policy is valid
-        {
-            let policy_content = String::from_utf8(policy_bytes.clone())
-                .map_err(|e| KbsPolicyEngineError::InvalidPolicy(e.into()))?;
-            let mut engine = regorus::Engine::new();
-            // regorus 0.11 defaults to rego.v1; keep accepting legacy
-            // `allow { ... }` (rego.v0) policies that were saved before the
-            // rego.v1 migration. `import rego.v1` policies still work.
-            engine.set_rego_v0(true);
-            engine
-                .add_policy(String::from("default"), policy_content)
-                .map_err(KbsPolicyEngineError::InvalidPolicy)?;
-        }
+        validate_policy(&policy_bytes)?;
 
         tokio::fs::write(&self.policy_path, policy_bytes).await?;
 
@@ -91,31 +93,106 @@ impl PolicyEngineInterface for Opa {
     }
 }
 
+/// Resource policy backed by the unified store. Every evaluation reads the
+/// authoritative value, so a policy written through any replica is visible to
+/// the others without a restart or cache invalidation protocol.
+pub struct OpaShared {
+    storage: Storage,
+}
+
+impl OpaShared {
+    pub async fn new(storage: Storage) -> Result<Self, KbsPolicyEngineError> {
+        let default_policy = std::include_bytes!("default_policy.rego");
+        storage
+            .put(
+                SHARED_POLICY_KEY,
+                default_policy,
+                PutOptions {
+                    condition: PutCondition::IfAbsent,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| KbsPolicyEngineError::EvaluationError(e.into()))?;
+        Ok(Self { storage })
+    }
+
+    async fn policy_bytes(&self) -> Result<Vec<u8>, KbsPolicyEngineError> {
+        self.storage
+            .get(SHARED_POLICY_KEY)
+            .await
+            .map_err(|e| KbsPolicyEngineError::EvaluationError(e.into()))?
+            .map(|entry| entry.value)
+            .ok_or(KbsPolicyEngineError::PolicyLoadError)
+    }
+}
+
+#[async_trait]
+impl PolicyEngineInterface for OpaShared {
+    async fn evaluate(
+        &self,
+        resource_path: &str,
+        input_claims: &str,
+    ) -> Result<bool, KbsPolicyEngineError> {
+        let policy = String::from_utf8(self.policy_bytes().await?)
+            .map_err(|_| KbsPolicyEngineError::PolicyLoadError)?;
+        evaluate_policy(policy, resource_path, input_claims)
+    }
+
+    async fn set_policy(&mut self, policy: &str) -> Result<(), KbsPolicyEngineError> {
+        let policy_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(policy)?;
+        validate_policy(&policy_bytes)?;
+        self.storage
+            .put(SHARED_POLICY_KEY, &policy_bytes, PutOptions::default())
+            .await
+            .map_err(|e| KbsPolicyEngineError::EvaluationError(e.into()))?;
+        Ok(())
+    }
+
+    async fn get_policy(&self) -> Result<String, KbsPolicyEngineError> {
+        Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(self.policy_bytes().await?))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use key_value_storage::memory::MemoryStorage;
+    use key_value_storage::mysql::{MysqlConfig, MysqlStorage};
     use rstest::rstest;
     use serde_json::json;
     use tempfile::{NamedTempFile, TempDir};
 
     fn compare_errors(a: KbsPolicyEngineError, b: KbsPolicyEngineError) -> bool {
-        match (a, b) {
+        matches!(
+            (a, b),
             (
-                KbsPolicyEngineError::EvaluationError(_a),
-                KbsPolicyEngineError::EvaluationError(_b),
-            ) => true,
-            (KbsPolicyEngineError::DataLoadError, KbsPolicyEngineError::DataLoadError) => true,
-            (KbsPolicyEngineError::ResourcePathError, KbsPolicyEngineError::ResourcePathError) => {
-                true
-            }
-            (KbsPolicyEngineError::IOError(_a), KbsPolicyEngineError::IOError(_b)) => true,
-            (KbsPolicyEngineError::DecodeError(_a), KbsPolicyEngineError::DecodeError(_b)) => true,
-            (KbsPolicyEngineError::InputError, KbsPolicyEngineError::InputError) => true,
-            (KbsPolicyEngineError::PolicyLoadError, KbsPolicyEngineError::PolicyLoadError) => true,
-            _ => false,
-        }
+                KbsPolicyEngineError::EvaluationError(_),
+                KbsPolicyEngineError::EvaluationError(_)
+            ) | (
+                KbsPolicyEngineError::DataLoadError,
+                KbsPolicyEngineError::DataLoadError
+            ) | (
+                KbsPolicyEngineError::ResourcePathError,
+                KbsPolicyEngineError::ResourcePathError
+            ) | (
+                KbsPolicyEngineError::IOError(_),
+                KbsPolicyEngineError::IOError(_)
+            ) | (
+                KbsPolicyEngineError::DecodeError(_),
+                KbsPolicyEngineError::DecodeError(_)
+            ) | (
+                KbsPolicyEngineError::InputError,
+                KbsPolicyEngineError::InputError
+            ) | (
+                KbsPolicyEngineError::PolicyLoadError,
+                KbsPolicyEngineError::PolicyLoadError
+            )
+        )
     }
 
     fn dummy_input(product_id: &str, svn: u64, executables: u8, hardware: u8) -> String {
@@ -178,6 +255,51 @@ mod tests {
             res.err().unwrap(),
             KbsPolicyEngineError::InvalidPolicy(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn shared_policy_is_visible_and_not_clobbered_by_another_instance() {
+        let storage: Storage = Arc::new(MemoryStorage::default());
+        let mut first = OpaShared::new(storage.clone()).await.unwrap();
+        let policy = std::fs::read("test/data/policy_1.rego").unwrap();
+        let encoded = URL_SAFE_NO_PAD.encode(&policy);
+        first.set_policy(&encoded).await.unwrap();
+
+        let second = OpaShared::new(storage).await.unwrap();
+        assert_eq!(second.get_policy().await.unwrap(), encoded);
+        assert!(second
+            .evaluate("my_repo/Alice/key", &dummy_input("Alice", 1, 2, 3))
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn shared_storage_mysql_policy_visibility() {
+        let Ok(url) = std::env::var("MYSQL_TEST_URL") else {
+            return;
+        };
+        let config = MysqlConfig {
+            url,
+            url_env: None,
+            ..Default::default()
+        };
+        let first: Storage = Arc::new(
+            MysqlStorage::connect(config.clone(), "kbs_policy_adapter_test")
+                .await
+                .unwrap(),
+        );
+        let second: Storage = Arc::new(
+            MysqlStorage::connect(config, "kbs_policy_adapter_test")
+                .await
+                .unwrap(),
+        );
+        let mut first = OpaShared::new(first).await.unwrap();
+        let second = OpaShared::new(second).await.unwrap();
+        let policy = std::fs::read("test/data/policy_1.rego").unwrap();
+        let encoded = URL_SAFE_NO_PAD.encode(policy);
+        first.set_policy(&encoded).await.unwrap();
+        assert_eq!(second.get_policy().await.unwrap(), encoded);
     }
 
     #[rstest]

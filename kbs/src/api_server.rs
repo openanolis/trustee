@@ -11,8 +11,10 @@ use actix_web::{
 };
 use actix_web_httpauth::headers::authorization::{Authorization, Bearer};
 use anyhow::{anyhow, Context};
+use key_value_storage::{memory::MemoryStorage, KvStorageProvider, Storage, StorageProvider};
 use log::info;
 use serde::Deserialize;
+use std::sync::Arc;
 
 use crate::{
     admin::Admin, config::KbsConfig, jwe::jwe, plugins::PluginManager, policy_engine::PolicyEngine,
@@ -80,16 +82,52 @@ impl ApiServer {
     }
 
     pub async fn new(config: KbsConfig) -> Result<Self> {
-        let plugin_manager = PluginManager::new(config.plugins.clone())
+        let (storage_provider, policy_storage, session_storage): (
+            Option<Arc<dyn StorageProvider>>,
+            Option<Storage>,
+            Storage,
+        ) = if let Some(storage_config) = config.storage_backend.clone() {
+            let session_storage_type = config
+                .session_storage_type
+                .unwrap_or(storage_config.storage_type);
+            let provider = KvStorageProvider::new(storage_config);
+            let policy_storage = provider
+                .get_or_register("kbs")
+                .await
+                .map_err(|e| Error::PluginManagerInitialization { source: e.into() })?;
+            let session_storage = provider
+                .get_or_register_with_type("kbs_protocol_session", session_storage_type)
+                .await
+                .map_err(|e| Error::PluginManagerInitialization { source: e.into() })?;
+            let provider: Arc<dyn StorageProvider> = provider;
+            (Some(provider), Some(policy_storage), session_storage)
+        } else {
+            if config.session_storage_type.is_some() {
+                return Err(Error::PluginManagerInitialization {
+                    source: anyhow!(
+                        "session_storage_type requires a storage_backend configuration"
+                    ),
+                });
+            }
+            (None, None, Arc::new(MemoryStorage::default()))
+        };
+
+        let plugin_manager = PluginManager::new(config.plugins.clone(), storage_provider)
             .await
             .map_err(|e| Error::PluginManagerInitialization { source: e })?;
         let token_verifier = TokenVerifier::from_config(config.attestation_token.clone()).await?;
-        let policy_engine = PolicyEngine::new(&config.policy_engine).await?;
+        let policy_engine = PolicyEngine::new(&config.policy_engine, policy_storage).await?;
         let admin_auth = Admin::try_from(config.admin.clone())?;
 
         #[cfg(feature = "as")]
-        let attestation_service =
-            crate::attestation::AttestationService::new(config.attestation_service.clone()).await?;
+        let attestation_service = crate::attestation::AttestationService::new(
+            config.attestation_service.clone(),
+            session_storage,
+        )
+        .await?;
+
+        #[cfg(not(feature = "as"))]
+        let _ = session_storage;
 
         Ok(Self {
             config,

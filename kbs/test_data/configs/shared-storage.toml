@@ -1,0 +1,43 @@
+session_storage_type = "mysql"
+
+[storage_backend]
+storage_type = "mysql"
+require_shared = true
+
+[storage_backend.backends.mysql]
+url_env = "TRUSTEE_STORAGE_MYSQL_URL"
+max_connections = 20
+min_connections = 2
+acquire_timeout_seconds = 10
+
+[http_server]
+insecure_http = true
+
+[attestation_token]
+insecure_key = false
+
+[attestation_service]
+type = "coco_as_builtin"
+work_dir = "/opt/confidential-containers/attestation-service"
+timeout = 5
+
+[attestation_service.attestation_token_broker]
+type = "Simple"
+duration_min = 5
+policy_dir = "/opt/confidential-containers/attestation-service/simple-policies"
+
+[attestation_service.rvps_config]
+type = "BuiltIn"
+
+[attestation_service.rvps_config.storage]
+type = "LocalFs"
+
+[policy_engine]
+policy_path = "/opa/confidential-containers/kbs/policy.rego"
+
+[admin]
+insecure_api = true
+
+[[plugins]]
+name = "resource"
+type = "SharedStore"

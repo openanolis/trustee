@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use crate::{Result, Storage, StorageBackendConfig, StorageType};
+use crate::{Result, Storage, StorageBackendConfig, StorageError, StorageType};
 
 #[async_trait]
 pub trait StorageProvider: Send + Sync {
@@ -36,6 +36,28 @@ impl KvStorageProvider {
     pub fn config(&self) -> &StorageBackendConfig {
         &self.config
     }
+
+    fn validate_required_capabilities(&self, storage: &Storage) -> Result<()> {
+        if !self.config.require_shared {
+            return Ok(());
+        }
+
+        let capabilities = storage.capabilities();
+        if !capabilities.shared {
+            return Err(StorageError::UnsupportedCapability {
+                capability: "shared storage",
+            });
+        }
+        if !capabilities.compare_and_swap {
+            return Err(StorageError::UnsupportedCapability {
+                capability: "compare-and-swap",
+            });
+        }
+        if !capabilities.ttl {
+            return Err(StorageError::UnsupportedCapability { capability: "TTL" });
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -56,6 +78,7 @@ impl StorageProvider for KvStorageProvider {
         }
 
         let storage = self.config.backends.create(storage_type, namespace).await?;
+        self.validate_required_capabilities(&storage)?;
         let mut instances = self.instances.write().await;
         Ok(instances.entry(cache_key).or_insert(storage).clone())
     }
@@ -104,5 +127,23 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn require_shared_rejects_memory() {
+        let provider = KvStorageProvider::new(StorageBackendConfig {
+            require_shared: true,
+            ..Default::default()
+        });
+        let error = match provider.get_or_register("policy").await {
+            Err(error) => error,
+            Ok(_) => panic!("memory storage must be rejected when shared storage is required"),
+        };
+        assert!(matches!(
+            error,
+            StorageError::UnsupportedCapability {
+                capability: "shared storage"
+            }
+        ));
     }
 }

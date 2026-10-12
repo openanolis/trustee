@@ -27,12 +27,16 @@ CREATE TABLE IF NOT EXISTS trustee_kv_entries (
 "#;
 const MAX_TRANSACTION_RETRIES: usize = 8;
 
+pub const DEFAULT_MYSQL_URL_ENV: &str = "TRUSTEE_STORAGE_MYSQL_URL";
+
 #[derive(Clone, Derivative, Deserialize, PartialEq)]
 #[derivative(Debug)]
 #[serde(default)]
 pub struct MysqlConfig {
     #[derivative(Debug = "ignore")]
     pub url: String,
+    /// Environment variable that overrides `url`, suitable for a Secret.
+    pub url_env: Option<String>,
     pub max_connections: u32,
     pub min_connections: u32,
     pub acquire_timeout_seconds: u64,
@@ -42,6 +46,7 @@ impl Default for MysqlConfig {
     fn default() -> Self {
         Self {
             url: String::new(),
+            url_env: Some(DEFAULT_MYSQL_URL_ENV.into()),
             max_connections: 10,
             min_connections: 0,
             acquire_timeout_seconds: 10,
@@ -57,11 +62,7 @@ pub struct MysqlStorage {
 impl MysqlStorage {
     pub async fn connect(config: MysqlConfig, namespace: &str) -> Result<Self> {
         validate_namespace(namespace)?;
-        if config.url.trim().is_empty() {
-            return Err(StorageError::InvalidConfiguration {
-                message: "MySQL URL must not be empty".into(),
-            });
-        }
+        let url = config.database_url()?;
         if config.max_connections == 0 || config.min_connections > config.max_connections {
             return Err(StorageError::InvalidConfiguration {
                 message: "invalid MySQL connection pool limits".into(),
@@ -72,7 +73,7 @@ impl MysqlStorage {
             .max_connections(config.max_connections)
             .min_connections(config.min_connections)
             .acquire_timeout(Duration::from_secs(config.acquire_timeout_seconds))
-            .connect(&config.url)
+            .connect(&url)
             .await
             .map_err(|error| StorageError::Backend {
                 message: format!("connect to MySQL: {error}"),
@@ -241,6 +242,26 @@ impl MysqlStorage {
             .await?;
         transaction.commit().await?;
         Ok(DeleteOutcome::Deleted)
+    }
+}
+
+impl MysqlConfig {
+    fn database_url(&self) -> Result<String> {
+        let url = self
+            .url_env
+            .as_deref()
+            .and_then(|name| std::env::var(name).ok())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| self.url.clone());
+        if url.trim().is_empty() {
+            return Err(StorageError::InvalidConfiguration {
+                message: format!(
+                    "MySQL URL must be set in backends.mysql.url or {}",
+                    self.url_env.as_deref().unwrap_or(DEFAULT_MYSQL_URL_ENV)
+                ),
+            });
+        }
+        Ok(url)
     }
 }
 
@@ -497,5 +518,22 @@ mod tests {
         let debug = format!("{config:?}");
         assert!(!debug.contains("password"));
         assert!(!debug.contains("example.invalid"));
+    }
+
+    #[test]
+    #[serial]
+    fn configured_environment_variable_overrides_inline_url() {
+        const URL_ENV: &str = "TRUSTEE_STORAGE_TEST_MYSQL_URL";
+        env::set_var(URL_ENV, "mysql://env.invalid/trustee");
+        let config = MysqlConfig {
+            url: "mysql://fallback.invalid/trustee".into(),
+            url_env: Some(URL_ENV.into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.database_url().unwrap(),
+            "mysql://env.invalid/trustee"
+        );
+        env::remove_var(URL_ENV);
     }
 }

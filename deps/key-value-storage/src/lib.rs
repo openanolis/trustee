@@ -111,6 +111,8 @@ pub struct BackendConfigs {
 #[serde(default)]
 pub struct StorageBackendConfig {
     pub storage_type: StorageType,
+    /// Reject process-local backends when components initialize HA state.
+    pub require_shared: bool,
     pub backends: BackendConfigs,
 }
 
