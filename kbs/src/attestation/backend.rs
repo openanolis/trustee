@@ -451,34 +451,21 @@ impl AttestationService {
 
         let mut updated_session = session_record.status;
         updated_session.attest(token.clone());
-        let response_session = if self
+        if !self
             .session_map
             .update(&updated_session, session_record.revision)
             .await?
         {
-            updated_session
-        } else {
-            let winner = self
-                .session_map
-                .get(session_id)
-                .await?
-                .ok_or(anyhow!("session disappeared during attestation"))?
-                .status;
-            match &winner {
-                SessionStatus::Attested { .. } => winner,
-                SessionStatus::Authed { .. } => {
-                    bail!("KBS session changed concurrently; retry attestation")
-                }
-            }
-        };
-        let SessionStatus::Attested { token, .. } = &response_session else {
+            bail!("KBS session changed concurrently; start a new authentication session")
+        }
+        let SessionStatus::Attested { token, .. } = &updated_session else {
             unreachable!("attestation transition must produce an attested session")
         };
         let body =
             serde_json::to_string(&json!({ "token": token })).context("Serialize token failed")?;
 
         Ok(HttpResponse::Ok()
-            .cookie(response_session.cookie())
+            .cookie(updated_session.cookie())
             .content_type("application/json")
             .body(body))
     }
