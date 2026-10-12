@@ -4,6 +4,7 @@ members = [
     "attestation-service",
     "rvps",
     "rvds",
+    "deps/key-value-storage",
     "deps/verifier",
     "deps/eventlog",
     "deps/kms",
