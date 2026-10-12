@@ -22,12 +22,37 @@ pub enum StorageError {
 
     #[error("storage backend operation failed: {message}")]
     Backend { message: String },
+
+    #[cfg(feature = "mysql")]
+    #[error("storage backend operation failed: {message}")]
+    Database {
+        code: Option<String>,
+        message: String,
+    },
+}
+
+#[cfg(feature = "mysql")]
+impl StorageError {
+    pub(crate) fn is_retryable_mysql_transaction(&self) -> bool {
+        matches!(
+            self,
+            Self::Database {
+                code: Some(code),
+                ..
+            } if matches!(code.as_str(), "1205" | "1213" | "40001")
+        )
+    }
 }
 
 #[cfg(feature = "mysql")]
 impl From<sqlx::Error> for StorageError {
     fn from(value: sqlx::Error) -> Self {
-        Self::Backend {
+        let code = match &value {
+            sqlx::Error::Database(error) => error.code().map(|code| code.into_owned()),
+            _ => None,
+        };
+        Self::Database {
+            code,
             message: value.to_string(),
         }
     }
