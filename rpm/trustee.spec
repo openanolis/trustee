@@ -1,4 +1,4 @@
-%define alinux_release beta
+%define alinux_release 1
 %global config_dir /etc/trustee
 %global debug_package %{nil}
 %global __brp_mangle_shebangs %{nil}
@@ -207,6 +207,15 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Mon Oct 12 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.10.1-1
+- Verifier/Hygon DCU: publish mixed-adapter attestation support using public
+  openanolis/csv-rs and normalize chip IDs for local certificate lookup
+- RPM: preserve configuration and signing keys across upgrades and support
+  package lifecycle operations without systemd
+- Rekor: migrate v2 uploads and verification from DSSE to hashedrekord
+- RVPS: reduce reference-value query log noise
+- CI: refresh Actions runtimes and fix release workflow shellcheck findings
+
 * Mon Sep 21 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.10.1-beta
 - Verifier/Hygon DCU: update csv-rs to Hygon's latest secure-adapter revision
   and normalize fixed-width chip IDs for local certificate lookup
