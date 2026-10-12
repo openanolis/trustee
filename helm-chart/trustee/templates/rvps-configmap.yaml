@@ -9,9 +9,29 @@ metadata:
     {{- include "coco-kbs.labels" . | nindent 4 }}
 data:
   rvps.json: |
+    {{- if .Values.sharedStorage.enabled }}
+    {
+        "storage_backend": {
+            "storage_type": "mysql",
+            "require_shared": true,
+            "backends": {
+                "mysql": {
+                    "url_env": "TRUSTEE_STORAGE_MYSQL_URL",
+                    "max_connections": {{ .Values.sharedStorage.maxConnections }},
+                    "min_connections": {{ .Values.sharedStorage.minConnections }},
+                    "acquire_timeout_seconds": {{ .Values.sharedStorage.acquireTimeoutSeconds }}
+                }
+            }
+        },
+        "storage": {
+            "type": "SharedStore"
+        }
+    }
+    {{- else }}
     {
         "storage": {
             "type": "LocalFs",
             "file_path": "/opt/confidential-containers/attestation-service/reference_values"
         }
     }
+    {{- end }}

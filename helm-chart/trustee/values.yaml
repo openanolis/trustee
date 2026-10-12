@@ -6,9 +6,32 @@ regionId:
 
 domainName:
 
+# Shared authoritative storage for multi-replica Trustee deployments. Use
+# component images that include shared-storage support. The referenced Secret
+# must be created outside this chart so credentials never become Helm values.
+sharedStorage:
+  enabled: false
+  existingSecret: ""
+  mysqlUrlKey: mysql-url
+  # Trustee Gateway uses the Go MySQL DSN format, which differs from the URL
+  # consumed by the Rust services.
+  gatewayDsnKey: gateway-dsn
+  maxConnections: 20
+  minConnections: 2
+  acquireTimeoutSeconds: 10
+  # AS signing material must be the same read-only Secret in every replica.
+  asKeysExistingSecret: ""
+  tokenSignerKey: token-signer-key.pem
+  challengeKey: challenge-key.pem
+
 kbs:
   replicaCount: 1
   userKeysSecretName: kbs-auth-publickey
+  tpmPca:
+    # Required in shared mode so all replicas use the same TPM CA identity.
+    existingSecret: ""
+    signingKeyKey: ca.key
+    certificateKey: ca.crt
   resourceRepository: []
 #    - repoName: default
 #      type: security-policy
@@ -60,6 +83,8 @@ kbs:
   tolerations: []
 
   storage:
+    # Used only by the legacy LocalFs resource backend. Shared storage mode
+    # does not create or mount this writable PVC.
     enabled: true
     # Size of the PVC
     size: 20Gi
@@ -291,6 +316,8 @@ gateway:
   tolerations: []
 
   storage:
+    # Used only by the legacy SQLite mode. Shared storage mode uses MySQL and
+    # does not create or mount this writable PVC.
     enabled: true
     # Size of the PVC
     size: 20Gi

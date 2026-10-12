@@ -1,5 +1,16 @@
 # Trustee Helm Chart
 
+## Multi-replica shared storage
+
+Set `sharedStorage.enabled=true` to move authoritative mutable state from
+writable pod volumes to MySQL. The chart reads Rust-service and Gateway
+database credentials from an existing Secret, mounts pre-created AS and TPM
+PCA keys read-only, and removes KBS/Gateway PVC templates and the RVPS
+`emptyDir` state volume.
+
+See [Trustee shared storage and multi-replica deployment](../docs/shared-storage.md)
+for required Secret keys, values, backend compatibility and migration steps.
+
 ## Aliyun KMS Resource Backend
 
 KBS can use Aliyun KMS generic secrets as the resource backend when the KBS image

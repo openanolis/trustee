@@ -28,11 +28,20 @@ data:
       grpc_addr: "rvps:50003"
 
     database:
+      {{- if .Values.sharedStorage.enabled }}
+      type: "mysql"
+      require_shared: true
+      max_open_conns: {{ .Values.sharedStorage.maxConnections }}
+      max_idle_conns: {{ .Values.sharedStorage.minConnections }}
+      conn_max_lifetime: "1h"
+      {{- else }}
       type: "sqlite"
+      require_shared: false
       path: "/app/data/trustee-gateway.db"
       use_memory: true
       backup_interval: "2m"
       enable_backup_on_shutdown: true
+      {{- end }}
 
     logging:
       level: "{{ .Values.log_level }}"

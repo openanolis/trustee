@@ -10,6 +10,21 @@ metadata:
 data:
   config.json: |
     {
+        {{- if .Values.sharedStorage.enabled }}
+        "storage_backend": {
+          "storage_type": "mysql",
+          "require_shared": true,
+          "backends": {
+            "mysql": {
+              "url_env": "TRUSTEE_STORAGE_MYSQL_URL",
+              "max_connections": {{ .Values.sharedStorage.maxConnections }},
+              "min_connections": {{ .Values.sharedStorage.minConnections }},
+              "acquire_timeout_seconds": {{ .Values.sharedStorage.acquireTimeoutSeconds }}
+            }
+          }
+        },
+        "challenge_key_path": "/run/secrets/trustee/challenge-key.pem",
+        {{- end }}
         "work_dir": "/opt/confidential-containers/attestation-service",
         "policy_engine": "opa",
         "rvps_config": {
@@ -24,6 +39,11 @@ data:
         "attestation_token_broker": {
             "type": "Ear",
             "duration_min": 5,
+            {{- if .Values.sharedStorage.enabled }}
+            "signer": {
+              "key_path": "/run/secrets/trustee/token-signer-key.pem"
+            },
+            {{- end }}
             "policy_dir": "/opt/confidential-containers/attestation-service/token/ear/policies"
         }
     }
