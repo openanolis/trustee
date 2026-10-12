@@ -148,8 +148,9 @@ impl SimpleAttestationTokenBroker {
         policy_storage: key_value_storage::Storage,
     ) -> Result<Self> {
         let policy_engine: Arc<dyn PolicyEngine> = Arc::new(
-            crate::policy_engine::opa::OPAShared::new(
+            crate::policy_engine::opa::OPAShared::new_with_policy_file(
                 policy_storage,
+                std::path::Path::new(&config.policy_dir),
                 DEFAULT_POLICY,
                 DEFAULT_POLICY_ID,
                 artifact_server_address,
