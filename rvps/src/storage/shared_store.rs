@@ -39,6 +39,14 @@ impl SharedStore {
         serde_json::from_slice(bytes).context("deserialize reference value")
     }
 
+    fn decode_for_name(name: &str, bytes: &[u8]) -> Result<ReferenceValue> {
+        let value = Self::decode(bytes)?;
+        if value.name() != name {
+            anyhow::bail!("stored reference value name does not match requested name")
+        }
+        Ok(value)
+    }
+
     fn key(name: &str) -> String {
         format!("{:x}", Sha256::digest(name.as_bytes()))
     }
@@ -47,6 +55,9 @@ impl SharedStore {
 #[async_trait]
 impl ReferenceValueStorage for SharedStore {
     async fn set(&self, name: String, rv: ReferenceValue) -> Result<Option<ReferenceValue>> {
+        if rv.name().as_str() != name {
+            anyhow::bail!("reference value name does not match its storage name")
+        }
         let previous = self.get(&name).await?;
         let key = Self::key(&name);
         self.storage
@@ -62,7 +73,7 @@ impl ReferenceValueStorage for SharedStore {
             .get(&key)
             .await
             .context("read reference value")?
-            .map(|entry| Self::decode(&entry.value))
+            .map(|entry| Self::decode_for_name(name, &entry.value))
             .transpose()
     }
 
@@ -75,7 +86,11 @@ impl ReferenceValueStorage for SharedStore {
                 .await
                 .context("read listed reference value")?
             {
-                values.push(Self::decode(&entry.value)?);
+                let value = Self::decode(&entry.value)?;
+                if Self::key(value.name()) != key {
+                    anyhow::bail!("stored reference value key does not match its name")
+                }
+                values.push(value);
             }
         }
         Ok(values)
@@ -99,7 +114,7 @@ impl ReferenceValueStorage for SharedStore {
             .context("read versioned reference value")?
             .map(|entry| {
                 Ok(VersionedReferenceValue {
-                    value: Self::decode(&entry.value)?,
+                    value: Self::decode_for_name(name, &entry.value)?,
                     revision: Some(entry.revision),
                 })
             })
@@ -112,6 +127,9 @@ impl ReferenceValueStorage for SharedStore {
         rv: ReferenceValue,
         expected_revision: Option<u64>,
     ) -> Result<ConditionalSetResult> {
+        if rv.name().as_str() != name {
+            anyhow::bail!("reference value name does not match its storage name")
+        }
         let condition = expected_revision
             .map(PutCondition::IfRevision)
             .unwrap_or(PutCondition::IfAbsent);
@@ -129,9 +147,7 @@ impl ReferenceValueStorage for SharedStore {
             .await
             .context("conditionally write reference value")?;
         Ok(match outcome {
-            PutOutcome::Created { .. } | PutOutcome::Updated { .. } => {
-                ConditionalSetResult::Stored
-            }
+            PutOutcome::Created { .. } | PutOutcome::Updated { .. } => ConditionalSetResult::Stored,
             PutOutcome::Conflict { .. } => ConditionalSetResult::Conflict,
         })
     }

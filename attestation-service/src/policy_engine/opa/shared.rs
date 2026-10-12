@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use key_value_storage::{DeleteOptions, DeleteOutcome, PutCondition, PutOptions, Storage};
-use sha2::{Digest, Sha384};
+use sha2::{Digest, Sha256, Sha384};
 
 use crate::{
     policy_engine::{EvaluationResult, PolicyDigest, PolicyEngine, PolicyError},
@@ -14,6 +14,7 @@ use crate::{
 };
 
 pub const AS_POLICY_NAMESPACE: &str = "attestation_service_policy";
+const POLICY_ENVELOPE_MAGIC: &[u8; 5] = b"TASP\x01";
 
 pub struct OPAShared {
     storage: Storage,
@@ -68,10 +69,11 @@ impl OPAShared {
     ) -> Result<Self, PolicyError> {
         let default_policy_id = default_policy_id.trim_end_matches(".rego");
         let default_policy_key = Self::key(default_policy_id);
+        let default_policy_value = Self::encode(default_policy_id, default_policy.as_bytes())?;
         storage
             .put(
                 &default_policy_key,
-                default_policy.as_bytes(),
+                &default_policy_value,
                 PutOptions {
                     condition: PutCondition::IfAbsent,
                     ..Default::default()
@@ -98,7 +100,17 @@ impl OPAShared {
             .get(&key)
             .await
             .map_err(|e| PolicyError::SharedStorage(e.into()))?
-            .map(|entry| entry.value)
+            .map(|entry| Self::decode(&entry.value))
+            .transpose()?
+            .map(|(stored_policy_id, policy)| {
+                if stored_policy_id != policy_id {
+                    return Err(PolicyError::SharedStorage(anyhow::anyhow!(
+                        "stored policy id does not match requested policy"
+                    )));
+                }
+                Ok(policy)
+            })
+            .transpose()?
             .ok_or_else(|| {
                 PolicyError::ReadPolicyFileFailed(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
@@ -122,14 +134,54 @@ impl OPAShared {
     }
 
     fn key(policy_id: &str) -> String {
-        URL_SAFE_NO_PAD.encode(policy_id.as_bytes())
+        format!("{:x}", Sha256::digest(policy_id.as_bytes()))
     }
 
-    fn policy_id(key: &str) -> Result<String, PolicyError> {
-        let bytes = URL_SAFE_NO_PAD
-            .decode(key)
-            .map_err(|e| PolicyError::SharedStorage(e.into()))?;
-        String::from_utf8(bytes).map_err(|e| PolicyError::SharedStorage(e.into()))
+    fn encode(policy_id: &str, policy: &[u8]) -> Result<Vec<u8>, PolicyError> {
+        let policy_id_len = u32::try_from(policy_id.len()).map_err(|_| {
+            PolicyError::SharedStorage(anyhow::anyhow!("policy id is too large to store"))
+        })?;
+        let mut value =
+            Vec::with_capacity(POLICY_ENVELOPE_MAGIC.len() + 4 + policy_id.len() + policy.len());
+        value.extend_from_slice(POLICY_ENVELOPE_MAGIC);
+        value.extend_from_slice(&policy_id_len.to_be_bytes());
+        value.extend_from_slice(policy_id.as_bytes());
+        value.extend_from_slice(policy);
+        Ok(value)
+    }
+
+    fn decode(value: &[u8]) -> Result<(String, Vec<u8>), PolicyError> {
+        let remainder = value.strip_prefix(POLICY_ENVELOPE_MAGIC).ok_or_else(|| {
+            PolicyError::SharedStorage(anyhow::anyhow!(
+                "stored policy envelope has an unsupported format"
+            ))
+        })?;
+        let length_bytes: [u8; 4] = remainder
+            .get(..4)
+            .ok_or_else(|| {
+                PolicyError::SharedStorage(anyhow::anyhow!("stored policy envelope is truncated"))
+            })?
+            .try_into()
+            .expect("slice length was checked");
+        let policy_id_len = u32::from_be_bytes(length_bytes) as usize;
+        let policy_id_end = 4_usize.checked_add(policy_id_len).ok_or_else(|| {
+            PolicyError::SharedStorage(anyhow::anyhow!("stored policy id length overflow"))
+        })?;
+        let policy_id = std::str::from_utf8(remainder.get(4..policy_id_end).ok_or_else(|| {
+            PolicyError::SharedStorage(anyhow::anyhow!("stored policy id is truncated"))
+        })?)
+        .map_err(|e| PolicyError::SharedStorage(e.into()))?
+        .to_string();
+        if !super::is_valid_policy_id(&policy_id) {
+            return Err(PolicyError::SharedStorage(anyhow::anyhow!(
+                "stored policy id is invalid"
+            )));
+        }
+        let policy = remainder
+            .get(policy_id_end..)
+            .expect("policy id end was bounded by the value length")
+            .to_vec();
+        Ok((policy_id, policy))
     }
 }
 
@@ -173,8 +225,9 @@ impl PolicyEngine for OPAShared {
         #[cfg(feature = "regorus-regovm")]
         self.program_cache.write().await.remove(&policy_id);
         let key = Self::key(&policy_id);
+        let value = Self::encode(&policy_id, &bytes)?;
         self.storage
-            .put(&key, &bytes, PutOptions::default())
+            .put(&key, &value, PutOptions::default())
             .await
             .map_err(|e| PolicyError::SharedStorage(e.into()))?;
         Ok(())
@@ -188,8 +241,20 @@ impl PolicyEngine for OPAShared {
             .await
             .map_err(|e| PolicyError::SharedStorage(e.into()))?
         {
-            let policy_id = Self::policy_id(&key)?;
-            let bytes = self.policy(&policy_id).await?;
+            let Some(entry) = self
+                .storage
+                .get(&key)
+                .await
+                .map_err(|e| PolicyError::SharedStorage(e.into()))?
+            else {
+                continue;
+            };
+            let (policy_id, bytes) = Self::decode(&entry.value)?;
+            if Self::key(&policy_id) != key {
+                return Err(PolicyError::SharedStorage(anyhow::anyhow!(
+                    "stored policy key does not match its policy id"
+                )));
+            }
             let mut hasher = Sha384::new();
             hasher.update(bytes);
             policies.insert(policy_id, URL_SAFE_NO_PAD.encode(hasher.finalize()));
@@ -284,6 +349,24 @@ mod tests {
             .await
             .unwrap();
         assert!(second.list_policies().await.unwrap().contains_key("策略一"));
+
+        let long_policy_id = "a".repeat(600);
+        first
+            .set_policy(
+                long_policy_id.clone(),
+                URL_SAFE_NO_PAD.encode("package policy\ndefault allow = true"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            second.get_policy(long_policy_id.clone()).await.unwrap(),
+            URL_SAFE_NO_PAD.encode("package policy\ndefault allow = true")
+        );
+        assert!(second
+            .list_policies()
+            .await
+            .unwrap()
+            .contains_key(&long_policy_id));
     }
 
     #[cfg(feature = "fs")]
