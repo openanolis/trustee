@@ -231,6 +231,7 @@ mod tests {
         token::{simple, AttestationTokenConfig, COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION},
     };
 
+    #[cfg(any(feature = "coco-as-builtin", feature = "coco-as-builtin-no-verifier"))]
     use reference_value_provider_service::storage::{local_fs, ReferenceValueStorageConfig};
 
     use rstest::rstest;
@@ -352,6 +353,7 @@ mod tests {
             attestation_service:
                 crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(
                     attestation_service::config::Config {
+                        storage_backend: None,
                         work_dir: "/opt/coco/attestation-service".into(),
                         rvps_config: RvpsConfig::GrpcRemote(RvpsRemoteConfig {
                             address: "http://127.0.0.1:50003".into(),
@@ -431,8 +433,10 @@ mod tests {
             attestation_service:
                 crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(
                     attestation_service::config::Config {
+                        storage_backend: None,
                         work_dir: "/opt/confidential-containers/attestation-service".into(),
                         rvps_config: RvpsConfig::BuiltIn(RvpsCrateConfig{
+                            storage_backend: None,
                             storage: ReferenceValueStorageConfig::LocalFs(local_fs::Config{
                                 file_path: "/opt/confidential-containers/attestation-service/reference_values".into(),
                             }),
@@ -506,6 +510,7 @@ mod tests {
             attestation_service:
                 crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(
                     attestation_service::config::Config {
+                        storage_backend: None,
                         work_dir: "/opt/confidential-containers/attestation-service".into(),
                         rvps_config: RvpsConfig::BuiltIn(RvpsCrateConfig::default()),
                         attestation_token_broker: AttestationTokenConfig::Simple(simple::Configuration {
@@ -569,6 +574,24 @@ mod tests {
                 RepositoryConfig::SharedStore
             )]
         );
+        #[cfg(any(feature = "coco-as-builtin", feature = "coco-as-builtin-no-verifier"))]
+        {
+            let crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(as_config) =
+                config.attestation_service.attestation_service
+            else {
+                panic!("expected built-in attestation service");
+            };
+            let attestation_service::rvps::RvpsConfig::BuiltIn(rvps_config) = as_config.rvps_config
+            else {
+                panic!("expected built-in RVPS");
+            };
+            assert!(matches!(
+                rvps_config.storage,
+                reference_value_provider_service::storage::ReferenceValueStorageConfig::SharedStore(
+                    _
+                )
+            ));
+        }
     }
 
     #[test]

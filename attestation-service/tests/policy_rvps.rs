@@ -63,12 +63,14 @@ impl Drop for RvpsServerGuard {
 
 fn in_memory_rvps_config() -> RvpsCrateConfig {
     RvpsCrateConfig {
+        storage_backend: None,
         storage: ReferenceValueStorageConfig::InMemory(in_memory::Config::default()),
     }
 }
 
 fn as_config(work_dir: &Path, rvps_config: RvpsConfig) -> Config {
     Config {
+        storage_backend: None,
         work_dir: work_dir.join("work"),
         rvps_config,
         attestation_token_broker: AttestationTokenConfig::Simple(simple::Configuration {

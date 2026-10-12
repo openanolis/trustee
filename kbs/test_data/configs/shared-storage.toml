@@ -20,17 +20,21 @@ insecure_key = false
 type = "coco_as_builtin"
 work_dir = "/opt/confidential-containers/attestation-service"
 timeout = 5
+challenge_key_path = "/run/secrets/trustee/challenge-key.pem"
 
 [attestation_service.attestation_token_broker]
 type = "Simple"
 duration_min = 5
 policy_dir = "/opt/confidential-containers/attestation-service/simple-policies"
 
+[attestation_service.attestation_token_broker.signer]
+key_path = "/run/secrets/trustee/token-signer-key.pem"
+
 [attestation_service.rvps_config]
 type = "BuiltIn"
 
 [attestation_service.rvps_config.storage]
-type = "LocalFs"
+type = "SharedStore"
 
 [policy_engine]
 policy_path = "/opa/confidential-containers/kbs/policy.rego"

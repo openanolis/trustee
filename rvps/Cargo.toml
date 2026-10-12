@@ -11,6 +11,7 @@ rust-version.workspace = true
 # that way. The `bin` feature adds everything the `rvps` / `rvps-tool` binaries
 # need: the gRPC server/client, generated protos and CLI/config/logging.
 default = ["bin"]
+shared-storage-mysql = ["key-value-storage/mysql"]
 bin = [
     "dep:clap",
     "dep:config",
@@ -20,6 +21,7 @@ bin = [
     "dep:tonic",
     "fs",
     "tokio/full",
+    "shared-storage-mysql",
 ]
 
 # Filesystem-backed storage (LocalFs / LocalJson) and `file://` provenance
@@ -58,6 +60,7 @@ env_logger = { workspace = true, optional = true }
 git2 = { version = "0.15.0", optional = true }
 hex = { version = "0.4", optional = true }
 log.workspace = true
+key-value-storage = { path = "../deps/key-value-storage", default-features = false }
 path-clean = { version = "1.0.1", optional = true }
 prost = { workspace = true, optional = true }
 reqwest = { workspace = true, features = ["blocking"]}
@@ -82,6 +85,7 @@ tonic-build.workspace = true
 
 [dev-dependencies]
 assert-json-diff.workspace = true
+futures = "0.3.17"
 rstest.workspace = true
 serial_test.workspace = true
 tokio = { workspace = true, features = ["full"] }

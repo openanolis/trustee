@@ -9,6 +9,7 @@ use attestation_service::{
     VerificationRequest,
 };
 use kbs_types::{Challenge, Tee};
+use key_value_storage::StorageProvider;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
@@ -143,8 +144,13 @@ impl Attest for BuiltInCoCoAs {
 }
 
 impl BuiltInCoCoAs {
-    pub async fn new(config: AsConfig) -> Result<Self> {
-        let inner = RwLock::new(AttestationService::new(config).await?);
+    pub async fn new(
+        config: AsConfig,
+        storage_provider: Option<std::sync::Arc<dyn StorageProvider>>,
+    ) -> Result<Self> {
+        let inner = RwLock::new(
+            AttestationService::new_with_storage_provider(config, storage_provider).await?,
+        );
         Ok(Self { inner })
     }
 }
