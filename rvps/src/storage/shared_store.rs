@@ -130,7 +130,7 @@ impl ReferenceValueStorage for SharedStore {
             .context("conditionally write reference value")?;
         Ok(match outcome {
             PutOutcome::Created { .. } | PutOutcome::Updated { .. } => {
-                ConditionalSetResult::Stored(None)
+                ConditionalSetResult::Stored
             }
             PutOutcome::Conflict { .. } => ConditionalSetResult::Conflict,
         })
@@ -148,7 +148,7 @@ impl ReferenceValueStorage for SharedStore {
             .await
             .context("conditionally delete reference value")?;
         Ok(match outcome {
-            DeleteOutcome::Deleted => ConditionalDeleteResult::Deleted(None),
+            DeleteOutcome::Deleted => ConditionalDeleteResult::Deleted,
             DeleteOutcome::NotFound => ConditionalDeleteResult::NotFound,
             DeleteOutcome::Conflict { .. } => ConditionalDeleteResult::Conflict,
         })
