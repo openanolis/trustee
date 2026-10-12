@@ -126,14 +126,28 @@ podman run -d -p 50003:50003 --net host rvps
 RVPS can be launched with a specified configuration file by `-c` flag. A configuration file looks like
 ```json
 {
+    "storage_backend": {
+        "storage_type": "mysql",
+        "require_shared": true,
+        "backends": {
+            "mysql": {
+                "url_env": "TRUSTEE_STORAGE_MYSQL_URL",
+                "max_connections": 20
+            }
+        }
+    },
     "storage": {
-        "type": "LocalFs",
-        "file_path": "/opt/confidential-containers/attestation-service/reference_values"
+        "type": "SharedStore"
     }
 }
 ```
-- `storage.type`: backend storage type to store reference values. Currently `InMemory`, `LocalFs`, and `LocalJson` are supported.
+- `storage_backend`: optional provider configuration. `mysql` is the shared HA backend; set `require_shared` to reject accidental process-local storage. The MySQL URL is read from `TRUSTEE_STORAGE_MYSQL_URL` by default.
+- `storage.type`: backend storage type to store reference values. `SharedStore`, `InMemory`, `LocalFs`, and `LocalJson` are supported. `SharedStore` uses the provider's `reference_value` namespace and atomically merges concurrent updates.
 - `storage.*`: Each different type of storage has its own associated configuration parameters. This is also a JSON map object. `InMemory` takes no extra parameters.
+
+For a single process, omit `storage_backend` and keep one of the legacy
+storage variants. `SharedStore` requires `storage_backend`. WASM builds do not
+enable the MySQL feature and retain the in-memory path.
 
 ## Integrate RVPS into the Attestation Service
 

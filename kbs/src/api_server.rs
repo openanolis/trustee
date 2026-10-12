@@ -112,7 +112,7 @@ impl ApiServer {
             (None, None, Arc::new(MemoryStorage::default()))
         };
 
-        let plugin_manager = PluginManager::new(config.plugins.clone(), storage_provider)
+        let plugin_manager = PluginManager::new(config.plugins.clone(), storage_provider.clone())
             .await
             .map_err(|e| Error::PluginManagerInitialization { source: e })?;
         let token_verifier = TokenVerifier::from_config(config.attestation_token.clone()).await?;
@@ -120,9 +120,24 @@ impl ApiServer {
         let admin_auth = Admin::try_from(config.admin.clone())?;
 
         #[cfg(feature = "as")]
+        let mut attestation_config = config.attestation_service.clone();
+        #[cfg(feature = "as")]
+        match &mut attestation_config.attestation_service {
+            #[cfg(any(feature = "coco-as-builtin", feature = "coco-as-builtin-no-verifier"))]
+            crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(as_config) => {
+                if as_config.storage_backend.is_none() {
+                    as_config.storage_backend = config.storage_backend.clone();
+                }
+            }
+            #[cfg(feature = "coco-as-grpc")]
+            crate::attestation::config::AttestationServiceConfig::CoCoASGrpc(_) => {}
+        }
+
+        #[cfg(feature = "as")]
         let attestation_service = crate::attestation::AttestationService::new(
-            config.attestation_service.clone(),
+            attestation_config,
             session_storage,
+            storage_provider,
         )
         .await?;
 

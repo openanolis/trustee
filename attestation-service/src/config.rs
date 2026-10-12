@@ -1,6 +1,7 @@
 use crate::rvps::RvpsConfig;
 use crate::token::AttestationTokenConfig;
 
+use key_value_storage::StorageBackendConfig;
 use serde::Deserialize;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,10 @@ pub const DEFAULT_ARTIFACT_SERVER_ADDRESS: &str = "https://attest-pre.aliyuncs.c
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Config {
+    /// Optional shared backend for AS policy and built-in RVPS state.
+    #[serde(default)]
+    pub storage_backend: Option<StorageBackendConfig>,
+
     /// The location for Attestation Service to store data.
     #[serde(default = "default_work_dir")]
     pub work_dir: PathBuf,
@@ -62,6 +67,7 @@ impl Default for Config {
     // Construct a default instance of `Config`
     fn default() -> Config {
         Config {
+            storage_backend: None,
             work_dir: default_work_dir(),
             rvps_config: RvpsConfig::default(),
             artifact_server_address: default_artifact_server_address(),
@@ -110,8 +116,10 @@ mod tests {
 
     #[rstest]
     #[case("./tests/configs/example1.json", Config {
+        storage_backend: None,
         work_dir: PathBuf::from("/var/lib/attestation-service/"),
         rvps_config: RvpsConfig::BuiltIn(RvpsCrateConfig {
+            storage_backend: None,
             storage: ReferenceValueStorageConfig::LocalFs(local_fs::Config::default()),
         }),
         attestation_token_broker: AttestationTokenConfig::Simple(simple::Configuration {
@@ -126,8 +134,10 @@ mod tests {
         artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
     #[case("./tests/configs/example2.json", Config {
+        storage_backend: None,
         work_dir: PathBuf::from("/var/lib/attestation-service/"),
         rvps_config: RvpsConfig::BuiltIn(RvpsCrateConfig {
+            storage_backend: None,
             storage: ReferenceValueStorageConfig::LocalFs(local_fs::Config::default()),
         }),
         attestation_token_broker: AttestationTokenConfig::Simple(simple::Configuration {
@@ -146,8 +156,10 @@ mod tests {
         artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
     #[case("./tests/configs/example3.json", Config {
+        storage_backend: None,
         work_dir: PathBuf::from("/var/lib/attestation-service/"),
         rvps_config: RvpsConfig::BuiltIn(RvpsCrateConfig {
+            storage_backend: None,
             storage: ReferenceValueStorageConfig::LocalFs(local_fs::Config::default()),
         }),
         attestation_token_broker: AttestationTokenConfig::Ear(ear_broker::Configuration {
@@ -165,8 +177,10 @@ mod tests {
         artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
     #[case("./tests/configs/example4.json", Config {
+        storage_backend: None,
         work_dir: PathBuf::from("/var/lib/attestation-service/"),
         rvps_config: RvpsConfig::BuiltIn(RvpsCrateConfig {
+            storage_backend: None,
             storage: ReferenceValueStorageConfig::LocalFs(local_fs::Config::default()),
         }),
         attestation_token_broker: AttestationTokenConfig::Ear(ear_broker::Configuration {
@@ -188,8 +202,10 @@ mod tests {
         artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
     #[case("./tests/configs/example5.json", Config {
+        storage_backend: None,
         work_dir: PathBuf::from("/var/lib/attestation-service/"),
         rvps_config: RvpsConfig::BuiltIn(RvpsCrateConfig {
+            storage_backend: None,
             storage: ReferenceValueStorageConfig::LocalFs(local_fs::Config::default()),
         }),
         attestation_token_broker: AttestationTokenConfig::OIDC(oidc::Configuration {

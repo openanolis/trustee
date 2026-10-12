@@ -114,6 +114,14 @@ impl Default for AttestationTokenConfig {
 }
 
 impl AttestationTokenConfig {
+    pub(crate) fn has_configured_signer(&self) -> bool {
+        match self {
+            AttestationTokenConfig::Simple(config) => config.signer.is_some(),
+            AttestationTokenConfig::Ear(config) => config.signer.is_some(),
+            AttestationTokenConfig::OIDC(config) => config.signer.is_some(),
+        }
+    }
+
     #[cfg(feature = "fs")]
     pub fn to_token_broker(
         &self,
@@ -141,6 +149,43 @@ impl AttestationTokenConfig {
                 )?)
                     as Box<dyn AttestationTokenBroker + Send + Sync>)
             }
+        }
+    }
+
+    #[cfg(feature = "fs")]
+    pub async fn to_token_broker_with_policy_storage(
+        &self,
+        artifact_server_address: &str,
+        policy_storage: Option<key_value_storage::Storage>,
+    ) -> Result<Box<dyn AttestationTokenBroker + Send + Sync>> {
+        let Some(policy_storage) = policy_storage else {
+            return self.to_token_broker(artifact_server_address);
+        };
+        match self {
+            AttestationTokenConfig::Simple(cfg) => Ok(Box::new(
+                simple::SimpleAttestationTokenBroker::from_config_with_policy_storage(
+                    cfg.clone(),
+                    artifact_server_address,
+                    policy_storage,
+                )
+                .await?,
+            )),
+            AttestationTokenConfig::Ear(cfg) => Ok(Box::new(
+                ear_broker::EarAttestationTokenBroker::from_config_with_policy_storage(
+                    cfg.clone(),
+                    artifact_server_address,
+                    policy_storage,
+                )
+                .await?,
+            )),
+            AttestationTokenConfig::OIDC(cfg) => Ok(Box::new(
+                oidc::OIDCAttestationTokenBroker::from_config_with_policy_storage(
+                    cfg.clone(),
+                    artifact_server_address,
+                    policy_storage,
+                )
+                .await?,
+            )),
         }
     }
 }

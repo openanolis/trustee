@@ -50,6 +50,8 @@ pub enum PolicyError {
     InvalidClaimValue,
     #[error("Cannot delete default policy")]
     CannotDeleteDefaultPolicy,
+    #[error("Shared policy storage failed: {0}")]
+    SharedStorage(#[source] anyhow::Error),
 
     #[cfg(feature = "policy-artifact-server")]
     #[error("Failed to create artifact server client: {0}")]

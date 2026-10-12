@@ -2,12 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
+use key_value_storage::StorageBackendConfig;
 use serde::Deserialize;
 
 use crate::storage::ReferenceValueStorageConfig;
 
 #[derive(Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Config {
+    /// Optional shared backend used by the standalone RVPS process.
+    #[serde(default)]
+    pub storage_backend: Option<StorageBackendConfig>,
+
     #[serde(default)]
     pub storage: ReferenceValueStorageConfig,
 }
