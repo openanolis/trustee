@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use derivative::Derivative;
@@ -25,7 +25,20 @@ CREATE TABLE IF NOT EXISTS trustee_kv_entries (
     INDEX trustee_kv_expiry (expires_at)
 ) ENGINE=InnoDB
 "#;
-const MAX_TRANSACTION_RETRIES: usize = 8;
+const MAX_TRANSACTION_RETRIES: usize = 16;
+
+fn transaction_retry_backoff(attempt: usize) -> Duration {
+    // Missing-row gap locks can deadlock even when writers use distinct keys.
+    // Yielding immediately lets the same contenders repeatedly collide and
+    // exhaust retries before a peer commits. Cap the delay and add inexpensive
+    // cross-process jitter; this is scheduling, not cryptographic randomness.
+    let base_ms = 1_u64 << attempt.min(6);
+    let jitter = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| u64::from(elapsed.subsec_nanos()) % (base_ms + 1))
+        .unwrap_or_default();
+    Duration::from_millis(base_ms + jitter)
+}
 
 pub const DEFAULT_MYSQL_URL_ENV: &str = "TRUSTEE_STORAGE_MYSQL_URL";
 
@@ -283,7 +296,7 @@ impl KeyValueStorage for MysqlStorage {
                     if error.is_retryable_mysql_transaction()
                         && attempt + 1 < MAX_TRANSACTION_RETRIES =>
                 {
-                    tokio::task::yield_now().await;
+                    tokio::time::sleep(transaction_retry_backoff(attempt)).await;
                 }
                 result => return result,
             }
@@ -338,7 +351,7 @@ impl KeyValueStorage for MysqlStorage {
                     if error.is_retryable_mysql_transaction()
                         && attempt + 1 < MAX_TRANSACTION_RETRIES =>
                 {
-                    tokio::task::yield_now().await;
+                    tokio::time::sleep(transaction_retry_backoff(attempt)).await;
                 }
                 result => return result,
             }
@@ -518,6 +531,58 @@ mod tests {
         let debug = format!("{config:?}");
         assert!(!debug.contains("password"));
         assert!(!debug.contains("example.invalid"));
+    }
+
+    #[test]
+    fn transaction_retry_backoff_is_bounded() {
+        for attempt in 0..32 {
+            let base = Duration::from_millis(1_u64 << attempt.min(6));
+            let delay = transaction_retry_backoff(attempt);
+            assert!(delay >= base);
+            assert!(delay <= base * 2);
+            assert!(delay <= Duration::from_millis(128));
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn concurrent_distinct_resource_upserts_preserve_every_value() {
+        let Some(first) = storage("kv_mysql_distinct_upserts").await.map(Arc::new) else {
+            return;
+        };
+        for key in first.list().await.unwrap() {
+            first.delete(&key, DeleteOptions::default()).await.unwrap();
+        }
+        let second = Arc::new(storage("kv_mysql_distinct_upserts").await.unwrap());
+        let barrier = Arc::new(tokio::sync::Barrier::new(32));
+        let mut tasks = Vec::new();
+        for candidate in 0..32_u8 {
+            let storage = if candidate % 2 == 0 {
+                first.clone()
+            } else {
+                second.clone()
+            };
+            let barrier = barrier.clone();
+            tasks.push(tokio::spawn(async move {
+                barrier.wait().await;
+                let key = format!("resource-{candidate:02}");
+                storage
+                    .put(&key, &[candidate], PutOptions::default())
+                    .await
+                    .unwrap();
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        assert_eq!(second.list().await.unwrap().len(), 32);
+        for candidate in 0..32_u8 {
+            let key = format!("resource-{candidate:02}");
+            assert_eq!(
+                second.get(&key).await.unwrap().unwrap().value,
+                vec![candidate]
+            );
+        }
     }
 
     #[test]

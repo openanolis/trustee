@@ -1,1993 +1,273 @@
-# Trustee Gateway API 文档
+# Trustee Gateway API
 
-## 目录
+本文对应当前 Gateway 路由，以及 [E2E API 清单](test/e2e/api-contract.json)。
+以下路径均相对 Gateway 地址，例如 `http://127.0.0.1:8081`；`{id}` 等是需要替换的路径参数。
+**客户端使用 `/api/...`。** Gateway 转发到 KBS 时移除 `/api`，转发到 RESTful AS 时移除 `/api/as` 或 `/api/attestation-service`。
 
-### [1. KBS API (`/api/kbs/v0`)](#kbs-api-apikbsv0)
-- [1.1 认证 (Authentication)](#11-认证-authentication)
-- [1.2 证明 (Attestation)](#12-证明-attestation)
-- [1.3 设置认证策略 (Set Attestation Policy)](#13-设置认证策略-set-attestation-policy)
-- [1.4 获取认证策略 (Get Attestation Policy)](#14-获取认证策略-get-attestation-policy)
-- [1.5 删除认证策略 (Delete Attestation Policy)](#15-删除认证策略-delete-attestation-policy)
-- [1.6 列出认证策略 (List Attestation Policies)](#16-列出认证策略-list-attestation-policies)
-- [1.7 设置资源策略 (Set Resource Policy)](#17-设置资源策略-set-resource-policy)
-- [1.8 获取资源策略 (Get Resource Policy)](#18-获取资源策略-get-resource-policy)
-- [1.9 获取资源 (Get Resource)](#19-获取资源-get-resource)
-- [1.10 设置资源 (Set Resource)](#110-设置资源-set-resource)
-- [1.11 列出资源 (List Resources)](#111-列出资源-list-resources)
-- [1.12 删除资源 (Delete Resource)](#112-删除资源-delete-resource)
-- [1.13 获取资源加密公钥 (Get Resource Public Key)](#113-获取资源加密公钥-get-resource-public-key)
-- [1.14 热加载托管密钥 (Reload Managed Keys)](#114-热加载托管密钥-reload-managed-keys)
-- [1.15 重包资源 (Rewrap Resources)](#115-重包资源-rewrap-resources)
-- [1.16 轮转托管密钥 (Rotate Managed Keys)](#116-轮转托管密钥-rotate-managed-keys)
+## 认证和状态归属
 
-### [2. AS API (`/api/attestation-service`)](#as-api-apiattestation-service)
-- [2.1 证明 (Attestation)](#21-证明-attestation-1)
-- [2.2 挑战 (Challenge)](#22-挑战-challenge)
-- [2.3 获取证书 (Get Certificate)](#23-获取证书-get-certificate)
+- KBS 管理操作使用 `Authorization: Bearer <admin-jwt>`。管理员 JWT 使用 Ed25519/EdDSA 签名，KBS 通过 `admin.auth_public_key` 校验。`admin.insecure_api=true` 仅用于隔离测试，不应在生产启用。
+- 资源读取使用 **证明结果 JWT**（同样使用 Bearer 头，但不是管理员 JWT），或 RCAR 证明完成后的 `kbs-session-id` Cookie。管理员 JWT 不能代替证明结果。
+- AS 的两组别名完全等价。当前 RESTful AS（包括策略管理）、审计、健康、AA 实例和 Credential 接口未实现 Gateway 自身的用户鉴权。必须通过部署侧的 API 访问控制、网络隔离和 TLS 保护；尤其不能将策略管理及 Credential 接口直接暴露到不可信网络。
+- 策略、参考值和资源的权威状态位于 KBS/AS/RVPS 对应存储中；Gateway **不再保存这些状态的副本**。Gateway 数据库只保存审计和 AA 心跳。
+- 多副本部署的共享状态和稳定签名身份见 [共享存储配置说明](../docs/shared-storage.md)。本文的管理请求不会绕过后端的存储能力限制。
 
-### [3. AS API (`/api/as`)](#as-api-apias)
-- [3.1 证明 (Attestation)](#31-证明-attestation-2)
-- [3.2 挑战 (Challenge)](#32-挑战-challenge-1)
-- [3.3 获取证书 (Get Certificate)](#33-获取证书-get-certificate-1)
+所有成功的管理写入通常返回 `200`、空响应体。Gateway 保留后端状态码和响应体，不把后端拒绝转换成成功。
 
-### [4. RVPS API (`/api/rvps`)](#rvps-api-apirvps)
-- [4.1 查询参考值 (Query Reference Value)](#41-查询参考值-query-reference-value)
-- [4.2 注册参考值 (Register Reference Value)](#42-注册参考值-register-reference-value)
-- [4.3 批量设置参考值 (Set Reference Value List)](#43-批量设置参考值-set-reference-value-list)
-- [4.4 删除参考值 (Delete Reference Value)](#44-删除参考值-delete-reference-value)
+## 1. KBS API
 
-### [5. 审计 API (`/api/audit`)](#审计-api-apiaudit)
-- [5.1 列出认证记录 (List Attestation Records)](#51-列出认证记录-list-attestation-records)
-- [5.2 列出资源请求记录 (List Resource Requests)](#52-列出资源请求记录-list-resource-requests)
+| 操作 | 接口 | 授权 / 请求 / 成功响应 |
+| --- | --- | --- |
+| 启动 RCAR 会话 | `POST /api/kbs/v0/auth` | 无 Bearer；JSON `version/tee/extra-params`；返回 Challenge 和 Cookie |
+| 提交证据 | `POST /api/kbs/v0/attest` | 会话 Cookie；JSON `runtime-data/tee-evidence`；返回 `{"token":"<jwt>"}` |
+| 设置证明策略 | `POST /api/kbs/v0/attestation-policy` | 管理员；JSON `policy_id/policy` |
+| 获取证明策略 | `GET /api/kbs/v0/attestation-policy/{id}` | 管理员；返回 Base64URL 编码的策略字符串 |
+| 列出证明策略 | `GET /api/kbs/v0/attestation-policies` | 管理员；返回 `{ "id": "policy-hash", ... }` |
+| 删除证明策略 | `DELETE /api/kbs/v0/attestation-policy/{id}` | 管理员；不能删除默认策略 |
+| 设置资源策略 | `POST /api/kbs/v0/resource-policy` | 管理员；JSON `{"policy":"<base64url>"}` |
+| 获取资源策略 | `GET /api/kbs/v0/resource-policy` | 管理员；返回 Base64URL 策略字符串，不是原始 Rego |
+| 读取资源 | `GET /api/kbs/v0/resource/{repository}/{type}/{tag}` | 证明 JWT 或已证明会话；通过资源策略后返回 JWE |
+| 写入 / 更新资源 | `POST /api/kbs/v0/resource/{repository}/{type}/{tag}` | 管理员；原始资源字节或加密存储 Envelope |
+| 删除资源 | `DELETE /api/kbs/v0/resource/{repository}/{type}/{tag}` | 管理员 |
+| 获取资源加密公钥 | `GET /api/kbs/v0/resource/pubkey` | 管理员；加密存储后端返回 RSA 公钥 PEM |
+| 热加载托管密钥 | `POST /api/kbs/v0/resource/reload` | 管理员；返回 `{"reloaded_keys":N}` |
+| 重包资源 | `POST /api/kbs/v0/resource/rewrap` | 管理员；返回重包报告 |
+| 轮转托管密钥 | `POST /api/kbs/v0/resource/rotate` | 管理员；返回新公钥及轮转报告 |
+| 列出资源 | `GET /api/kbs/v0/resources` | 管理员；返回资源描述数组，不是带 `data/total` 的 Gateway 分页对象 |
 
-### [6. 健康检查 API (`/api`)](#6-健康检查-api-api)
-- [6.1 基本健康检查](#61-基本健康检查)
-- [6.2 服务健康检查](#62-服务健康检查)
+### 1.1 RCAR 证明和资源获取
 
-### [7. 实例API (`/api/aa-instance`)](#7-实例api-apiaa-instance)
-- [7.1 AA实例心跳](#71-aa实例心跳)
-- [7.2 实例列表](#72-实例列表)
+`auth` 请求示例（`sample` 仅用于测试，真实部署选择实际 TEE）：
 
-### [8. Credential API (`/api/credential`)](#8-credential-api-apicredential)
-- [8.1 获取credential文件](#81-获取credential文件)
-
-### [附录](#附录)
-- [KBS认证头生成方法](#kbs认证头生成方法)
-
----
-
-### KBS API (`**/api/kbs/v0**`)
-
-这部分 API 主要用于处理与 Key Broker Service (KBS) 相关的操作。Gateway 通常作为代理将请求转发给后端 KBS 服务，但在某些情况下（如策略和资源列表、审计日志）会直接与自己的数据库交互。
-
-#### 1.1 认证 (Authentication)
-
-*   **端点:** `POST /kbs/v0/auth`
-    
-*   **说明:** 用于与后端 KBS 服务进行初始认证握手。Gateway 会将请求直接转发给配置的 KBS 服务，并将 KBS 的响应（包括状态码、头、Cookie 和响应体）直接返回给客户端。
-    
-*   **调用方法:**
-    
-
-```plaintext
-curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/auth \
-     -H 'Content-Type: application/json' \
-     -d '{
-             "version": "0.4.0",
-             "tee": "tdx",
-             "extra-params": "foo"
-         }'
+```json
+{"version":"0.4.0","tee":"sample","extra-params":""}
 ```
 
-*   **请求头:**
-    
-    *   `Content-Type: application/json`
-        
-*   **请求体 (JSON - 由 KBS 定义):**
-    
-    *   参考 KBS OpenAPI 规范中的 `Request` schema:
-        
+保存响应的 `kbs-session-id` Cookie，并将 Challenge 中的 `nonce`、客户端资源解密公钥绑定到证据中。提交的结构为：
 
 ```json
 {
-    "version": "string", // (必需) 协议版本，例如 "0.4.0"
-    "tee": "string",     // (必需) TEE 类型。已知值: "tdx", "tpm", "csv"。后端 KBS 可能接受其他值（例如用于测试的 "sample"）。
-    "extra-params": "string"   // 字符串，保留字段，用于可能的额外参数传递
+  "runtime-data": {
+    "nonce": "<challenge.nonce>",
+    "tee-pubkey": {"kty":"RSA","alg":"RSA-OAEP-256","n":"<base64url-modulus>","e":"AQAB"}
+  },
+  "tee-evidence": {
+    "primary_evidence": {},
+    "additional_evidence": ""
+  }
 }
 ```
 
-*   **响应:**
-    
-    *   成功时，响应体、状态码和头由后端 KBS 服务决定。
-        
-        *   通常 KBS 返回 `200 OK`。
-            
-        *   响应体遵循 KBS OpenAPI 中的 `Challenge` schema，包含 `nonce` (必需) 和可选的 `extra-params`。
-            
-        *   KBS 通过 `Set-Cookie` 头设置 `kbs-session-id`。
-            
-    *   失败时，可能由 KBS 或 Gateway 返回错误。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 认证流程启动成功 (由 KBS 返回)。
-        
-    *   `400 Bad Request`: 请求内容或格式不被 KBS 支持 (由 KBS 返回)。
-        
-    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法读取请求体、无法转发请求给 KBS、无法读取 KBS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
-        
-    *   _其他由 KBS 返回的状态码 (例如 5xx)_
-        
-*   **返回示例 (成功 - 由 KBS 返回):**
-    
+`primary_evidence` 必须是实际采证结果，不能直接使用空对象。主证据的 report-data 绑定包含 `nonce`、`tee-pubkey` 和 `additional-evidence` 的规范化 JSON；具体算法和长度遵循对应 TEE/verifier。`additional_evidence` 是 JSON **字符串**，无附加证据时使用空字符串。可选 `init-data` 为 `{"format":"toml","body":"<raw-TOML-text>"}`。注意 KBS 顶层字段是连字符命名，不要与 RESTful AS 的 `runtime_data` 字段混用。
 
-```json
-{
-    "nonce": "base64_encoded_nonce",
-    "extra-params": { ... }
-}
-```
-
-_响应头包含:_ `Set-Cookie: kbs-session-id=your-session-id; ...`
-
-#### 1.2 证明 (Attestation)
-
-*   **端点:** `POST /kbs/v0/attest`
-    
-*   **说明:** 用于向后端 KBS 服务提交 TEE 证据以进行验证。Gateway 会将请求转发给 KBS，并将 KBS 的响应返回给客户端。之后，Gateway 会**异步记录一条证明审计日志**到其数据库。
-    
-*   **调用方法:**
-    
+证明成功后可使用 Cookie 或返回的 JWT 读取资源：
 
 ```shell
-SESSION_ID="your-session-id" # 从 /auth 响应的 Cookie 中获取
-curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/attest \
-     -b "kbs-session-id=${SESSION_ID}" \
-     -H 'Content-Type: application/json' \
-     -d '{
-             "runtime_data": {
-                 "nonce": "base64_encoded_nonce",
-                 "tee-pubkey": {
-                     "alg": "RSA",
-                     "k-mod": "base64_modulus",
-                     "k-exp": "base64_exponent"
-                 }
-             },
-             "init_data": {
-                 "format": "toml",
-                 "body": "base64_encoded_toml"
-             },
-             "tee_evidence": {
-                 "primary_evidence": { ... },
-                 "additional_evidence": "{...}"
-             }
-         }'
+curl "$GATEWAY/api/kbs/v0/resource/myrepo/key/mytag" \
+  -H "Authorization: Bearer $ATTESTATION_JWT"
 ```
 
-*   **请求头:**
-    
-    *   `Content-Type: application/json`
-        
-    *   `Cookie: kbs-session-id=<session-id>` (必需，由 KBS 验证)
-        
-    *   `AAInstanceInfo: '{"image_id":"aliyun_3_9_x64_20G_uefi_alibase_20231219.vhd","instance_id":"i-bp13wqyr5ik6l669424n","instance_name":"test-cc","owner_account_id":"1242424451954755"}'` 
-        
-*   **请求体 (JSON - 由 KBS 定义):**
-    
-    *   参考 KBS OpenAPI 规范中的 `Attestation` schema:
-        
+返回的是使用被证明客户端公钥加密的 JWE（`protected/encrypted_key/iv/ciphertext/tag`），**不是明文**，也不是存储 Envelope。客户端必须解包 CEK 并验证 AES-GCM 标签及 protected-header AAD。当前 RSA-OAEP-256 路径使用 AES-256-GCM。
+
+证明会话重试成功后会返回原 token；这不是将新证据重新验证一次。多副本模式的会话共享依赖共享 session storage。JWT 中的 `exp` 仍然适用。
+
+### 1.2 策略操作
+
+`policy` 字段均使用 **Base64URL、不带 padding**，不要混用 `base64` 命令默认的 STANDARD 编码。
+
+```json
+{"policy_id":"my-policy","policy":"<base64url-no-padding-rego>"}
+```
+
+证明策略请求不需要旧文档中的 `type` 字段。资源策略请求只包含 `policy`，没有 `policy_id`：
+
+```json
+{"policy":"<base64url-no-padding-rego>"}
+```
+
+默认策略 ID 是 `default`。KBS 的证明策略操作实际访问其 AS 后端；Gateway 的 AS 别名操作访问所配置的 RESTful AS。要观察同一套策略，必须让两者使用同一个权威策略存储，不能仅假设其配置相同。
+
+### 1.3 资源存储、密钥维护和轮转
+
+资源名由 repository/type/tag 三段组成，支持字母、数字、下划线、连字符和符合后端规则的点号。列表响应示例：
+
+```json
+[{"repository_name":"myrepo","resource_type":"key","resource_tag":"mytag"}]
+```
+
+- `LocalFs`、`SharedStore` 通过资源 POST 保存原始字节，不支持 RSA 托管密钥维护。
+- `EncryptedLocalFs`、`EncryptedDb` 支持客户端先获取 `pubkey`，再提交 Envelope。支持的算法与后端实现一致；推荐 `RSA-OAEP-256`。
+- Envelope 的各二进制字段使用 **STANDARD Base64**；这与证明 token / JWE 的 Base64URL 不同。
 
 ```json
 {
-    "runtime_data": {     // (必需) 运行时数据，包含nonce和TEE公钥信息
-        "nonce": "string", // Base64编码的nonce
-        "tee-pubkey": {    // TEE公钥信息 (PublicKey Schema，具体字段取决于 alg)
-            "alg": "string",   // 例如 "RSA", "ECDSA"
-            "k-mod": "string", // Base64 编码的 RSA 模数 (如果 alg="RSA")
-            "k-exp": "string"  // Base64 编码的 RSA 公钥指数 (如果 alg="RSA")
-        }
+  "alg":"RSA-OAEP-256",
+  "enc_key":"<RSA-wrapped-32-byte-CEK>",
+  "iv":"<12-byte-IV>",
+  "ciphertext":"<AES-256-GCM-ciphertext>",
+  "tag":"<16-byte-GCM-tag>"
+}
+```
+
+`reload` 刷新配置来源中的密钥；`rewrap` 使用当前主密钥重包已有资源；`rotate` 生成新主密钥、重包并按后端规则退役旧密钥。只有支持托管密钥的配置才能执行一键轮转。报告字段：
+
+```json
+{
+  "public_key":"<new-PEM-public-key>",
+  "rewrapped":1,
+  "skipped":0,
+  "failed":0,
+  "retired_keys":1,
+  "purged_keys":0
+}
+```
+
+`rewrap` 报告为 `total/rewrapped/skipped/failed`。不能只检查 HTTP 200：还必须检查 `failed`，失败资源可能使旧密钥无法安全退役。
+
+`EncryptedDb(MySQL)` 在数据库中协调多副本轮转，其他副本在 key-ring bump 轮询后刷新缓存；客户端轮转后也应重新获取 `pubkey`。`EncryptedLocalFs` 仍是单副本方案，不要用共享 PVC 冒充数据库一致性。`EncryptedDb(SQLite)` 同样不是 HA 方案。
+
+## 2. AS API：两组等价别名
+
+| 操作 | `/api/attestation-service` | `/api/as` |
+| --- | --- | --- |
+| 提交证明 | `POST /api/attestation-service/attestation` | `POST /api/as/attestation` |
+| 获取挑战 | `POST /api/attestation-service/challenge` | `POST /api/as/challenge` |
+| 获取签名证书 | `GET /api/attestation-service/certificate` | `GET /api/as/certificate` |
+| 获取 JWKS | `GET /api/attestation-service/jwks` | `GET /api/as/jwks` |
+| OIDC discovery | `GET /api/attestation-service/.well-known/openid-configuration` | `GET /api/as/.well-known/openid-configuration` |
+| 设置策略 | `POST /api/attestation-service/policy` | `POST /api/as/policy` |
+| 获取策略 | `GET /api/attestation-service/policy/{id}` | `GET /api/as/policy/{id}` |
+| 列出策略 | `GET /api/attestation-service/policies` | `GET /api/as/policies` |
+| 删除策略 | `DELETE /api/attestation-service/policy/{id}` | `DELETE /api/as/policy/{id}` |
+
+### 2.1 直接证明
+
+请求格式为 `verification_requests` 数组，**不是**旧文档中顶层的 `tee/evidence/runtime_data`：
+
+```json
+{
+  "verification_requests": [{
+    "tee":"sample",
+    "evidence":"<base64url-no-padding-evidence-json>",
+    "runtime_data":{"structured":{"challenge_token":"<extra-params.jwt>"}},
+    "runtime_data_hash_algorithm":"sha384"
+  }],
+  "policy_ids":["default"]
+}
+```
+
+`evidence` 的格式由 verifier 定义；样例只是请求结构。运行时数据也支持 `{"raw":"<base64url>"}`。可选初始化数据使用 `{"init_data_digest":"<base64url>"}` 或 `{"init_data_toml":"<raw-TOML-text>"}`。当前必须显式提供 `policy_ids`。
+
+成功响应是**原始 JWT 字符串**，不是 KBS 的 `{"token":...}` 对象。签名算法和 claims 由 token broker 决定（例如 Simple 为 RS384、OIDC 为 RS256）。
+
+### 2.2 挑战、证书与 OIDC
+
+通用挑战请求是 `{}`，响应包含 `nonce` 和 `extra-params.jwt`。客户端把后者放入结构化运行时数据的 `challenge_token` 中，并将该运行时数据绑定到证据 report-data。传入 `tee` 时改为该 verifier 的补充挑战流程，响应不保证是上述 JSON；例如 `{"tee":"sample"}` 当前返回空响应体。
+
+挑战 JWT 校验签名和过期时间，不保证五分钟有效期内的一次性消费。challenge-key 通过文件/Secret 配置，每次请求重新加载；轮转后旧 key 签出的挑战失效。**资源 `rotate` 不会轮转 AS 签名密钥或 challenge-key。**
+
+- `certificate`：配置证书时返回 PEM 和 `application/x-pem-file`；未配置时返回 404。此端点实时读取证书文件。
+- `jwks`：当前只有配置显式 signer 的 OIDC broker 发布 JWKS；Simple/EAR 或未配置 signer 时返回 404，不表示服务宕机。
+- discovery：配置 OIDC broker 的 `oid_config` 时返回 `issuer/jwks_uri/id_token_signing_alg_values_supported`；否则返回 404。
+- 签发证明 token 使用的签名密钥和证书链在服务构造时加载。更新 token signer 应协调重启 AS 及验证端信任配置；不要把证书端点的热读取误认为 token 签名密钥也热轮转。
+
+### 2.3 AS 策略管理
+
+POST 的结构与 KBS 证明策略相同。GET 单策略返回 Base64URL 策略字符串，列表返回：
+
+```json
+[{"policy-id":"default","policy-hash":"<digest>"}]
+```
+
+注意 AS 列表是数组，而 KBS 的 `attestation-policies` 是 ID 到摘要的对象。Gateway `/policies` 转发到 RESTful AS 的 `/policy`，不是 `/policies`。
+
+## 3. RVPS API
+
+这组请求经 Gateway -> KBS -> AS -> RVPS 转发，全部需要 **KBS 管理员 JWT**；不是由 Gateway 直接执行参考值写入。Gateway 配置中的 RVPS gRPC 连接用于服务健康检查。
+
+| 操作 | 接口 | 请求 / 成功响应 |
+| --- | --- | --- |
+| 查询 | `GET /api/rvps/query` | 返回名称到策略可见值的 JSON 对象 |
+| 注册 | `POST /api/rvps/register` | `{"message":"<serialized-RVPS-message>"}` |
+| 批量设置 | `POST /api/rvps/set_reference_value_list` | `{"rv_list":[...]}` |
+| 删除 | `DELETE /api/rvps/delete/{name}` | 删除该参考值 |
+
+注册 message 是嵌套的 JSON **字符串**，其中 payload 使用 STANDARD Base64，例如：
+
+```json
+{"version":"0.1.0","type":"sample","payload":"<standard-base64-json-object>"}
+```
+
+sample payload 可为 `{"sample.svn":["1"],"my.config":{"enabled":true}}`。字符串数组兼容旧摘要格式，重复注册时合并摘要；任意 JSON 值作为原子策略可见值保存，重复注册时替换该值。过期参考值不应再出现在有效查询结果中。
+
+批量设置的推荐格式：
+
+```json
+{
+  "rv_list": [{
+    "id":"cvm_container_proxy",
+    "version":"artifact-version",
+    "type":"container",
+    "rv_name":"optional.custom.name",
+    "provenance_info":{
+      "type":"rv-release-manifest",
+      "rekor_url":"https://log2025-1.rekor.sigstore.dev",
+      "rekor_api_version":2
     },
-    "init_data": {        // (可选) 初始化数据
-        "format": "string", // 格式，例如 "toml"
-        "body": "string"    // Base64编码的数据体
+    "provenance_source":{
+      "protocol":"oci",
+      "uri":"oci://registry.example/trustee/provenance:v1",
+      "artifact":"bundle"
     },
-    "tee_evidence": {     // (必需) TEE证据，支持复合证据
-        "primary_evidence": {},     // 主要证据
-        "additional_evidence": "{}" // 额外证据的JSON字符串
-    }
+    "operation_type":"refresh"
+  }]
 }
 ```
 
+未指定 `rv_name` 时，新格式使用 measurement `id`；名称不能为空白。`refresh` 替换旧值，`add` 追加值。历史 `slsa-intoto-statements` 路径保留兼容，旧格式默认名称为 `measurement.$type.$artifact-id`。启用 `fs` 的受信测试环境也支持 `protocol=file` 的本地 fixture；这不是远程 OCI 拉取或 Rekor 服务可用性的验证。
 
-*   **响应:**
-    
-    *   成功时，响应体、状态码和头由后端 KBS 服务决定。
-        
-        *   通常 KBS 返回 `200 OK`。
-            
-        *   响应体遵循 KBS OpenAPI 中的 `AttestationToken` schema
-            
-    *   失败时，可能由 KBS 或 Gateway 返回错误。
-        
-    *   无论成功失败，Gateway 都会**异步记录审计日志** (`AttestationRecord`)，包含客户端 IP、会话 ID、请求体、KBS 返回的状态码、是否成功 (`仅当 KBS 返回 200 时为 true`) 以及时间戳。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 证明成功 (由 KBS 返回)。
-        
-    *   `401 Unauthorized`: Session ID 无效或过期 (由 KBS 返回)。
-        
-    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法读取请求体、无法转发请求给 KBS、无法读取 KBS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
-        
-    *   _其他由 KBS 返回的状态码 (例如 4xx 证据验证失败, 5xx)_
-        
-*   **返回示例 (成功 - 返回证明结果令牌):**
-    
+## 4. Gateway 自身 API
 
-```json
-{
-    "token": "base64_encoded_attestation_token" // 标准的JWT格式令牌，包含证明结果和表征TEE状态的声明集
-}
-```
+| 操作 | 接口 | 请求 / 响应 |
+| --- | --- | --- |
+| 证明审计 | `GET /api/audit/attestation` | 返回 `{"data":[...],"total":N}` |
+| 资源审计 | `GET /api/audit/resources` | 返回 `{"data":[...],"total":N}` |
+| 基本健康 | `GET /api/health` | `{"status":"ok"}` |
+| 服务健康 | `GET /api/services-health` | gateway/kbs/as/rvps 各自的 status/message/timestamp |
+| AA 心跳 | `POST /api/aa-instance/heartbeat` | `AAInstanceInfo` 请求头是实例信息 JSON |
+| 活跃 AA 列表 | `GET /api/aa-instance/list` | `active_aa_instances/count/timestamp` |
+| Credential 文件 | `GET /api/credential` | 配置文件的原始字节，`application/octet-stream` |
 
-#### 1.3 设置认证策略 (Set Attestation Policy)
+审计记录是异步写入，查询端应允许短暂延迟。证明审计覆盖 KBS 和两组 AS 别名，`source_service` 为 `kbs` 或 `attestation-service`；不保存原始 evidence 请求体。资源审计包含 GET、POST、DELETE。
 
-*   **端点:** `POST /kbs/v0/attestation-policy`
-    
-*   **说明:** 用于设置或更新 KBS 的认证策略。Gateway 会首先解析请求体以获取策略信息，然后将**原始请求**转发给 KBS。如果 KBS 返回成功状态码 (`200`, `201`, `204`)，Gateway 会尝试将请求体中的策略内容 (Base64 解码后) 连同策略 ID、类型和元数据**存储在 Gateway 自己的数据库中**。最终将 KBS 的响应返回给客户端。
-    
-*   **调用方法:**
-    
+共同过滤参数：`session_id/instance_id/successful/start_time/end_time/limit/offset`。时间使用 RFC3339；证明审计还支持 `source_service`，资源审计还支持 `repository/type/tag/method`。`total` 是过滤后的总数，不是当前页大小。
 
-```shell
-POLICY_CONTENT=$(base64 -w0 policy.rego) # 将策略文件内容进行 Base64 编码
-curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/attestation-policy \
-     -H 'Content-Type: application/json' \
-     -d '{
-             "type": "rego",
-             "policy_id": "my-policy-v1",
-             "policy": "'"${POLICY_CONTENT}"'"
-         }'
-```
+`AAInstanceInfo` 最小示例为 `{"instance_id":"my-instance"}`，也支持 `eas_instance_id` 兼容映射、image_id/instance_name/ip 等字段。重复心跳更新原实例，不应创建重复行。活跃窗口由 `heartbeat_timeout_minutes` 决定。
 
-*   **请求头:**
-    
-    *   `Content-Type: application/json`
-        
-    *   需要 KBS 要求的认证头（生成方法见附录）： `Authorization: Bearer <token>`
-        
-*   **请求体 (JSON):**
-    
+未配置 Credential 或文件不存在时返回 404；读取异常返回 500。服务健康接口即使某个后端异常也可能返回 HTTP 200，调用方必须逐项检查 `status`，不能只看 HTTP 状态码。
 
-```json
-{
-    "type": "string",       // (必需) 策略类型 (例如 "rego")。其有效性由 KBS 判断。
-    "policy_id": "string",  // (必需) 策略的唯一标识符。
-    "policy": "string"      // (必需) Base64 编码后的策略内容。
-}
-```
+## 5. 缓存和错误边界
 
-_Gateway 会在转发前尝试解析此结构。_
+当前 Gateway **没有独立的通用 cache list/clear API**。`resource/reload` 是托管密钥缓存刷新，不是 TDX collateral 或策略编译缓存的清空接口。
 
-*   **响应:**
-    
-    *   响应体和状态码由后端 KBS 服务决定。
-        
-    *   如果 KBS 返回 `200 OK`, `201 Created`, 或 `204 No Content`，Gateway 会**尝试将策略存入本地数据库**。解码或存储失败会被记录在 Gateway 日志中，但**不影响**返回给客户端的 KBS 响应。
-        
-*   **返回码:**
-    
-    *   `200 OK / 201 Created / 204 No Content`: 设置成功 (由 KBS 返回)。Gateway 会尝试本地存储。
-        
-    *   `400 Bad Request`:
-        
-        *   由 Gateway 返回: 请求体不是有效的 JSON 或缺少必需字段。响应体 `{"error": "Invalid attestation policy format"}`。
-            
-        *   由 KBS 返回: 请求格式错误或策略无效。
-            
-    *   `401 Unauthorized / 403 Forbidden`: 无权限 (由 KBS 返回)。
-        
-    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法读取请求体、无法转发请求给 KBS、无法读取 KBS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
-        
-    *   _其他由 KBS 返回的状态码_
-        
-*   **返回示例 (成功 - KBS 返回空内容):** _状态码: 200_
-    
+共享模式下，资源策略读取权威存储；AS 策略编译缓存按内容摘要刷新，RVPS 查询缓存的作用域是单次证明。E2E 会在不重启的情况下更新策略及参考值，再重新证明，验证不会沿用旧决策；也验证 EncryptedDb 轮转后的另一副本公钥与资源读取。
 
-![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/fba9b821-6f2b-4e55-b6bc-7efd938296b1.png)
+当前错误行为包含历史兼容边界：
 
-#### 1.4 获取认证策略 (Get Attestation Policy)
+- KBS 管理认证失败、缺少或伪造证明 JWT：401；资源策略拒绝：403。
+- KBS RCAR 无效会话、nonce 不匹配等握手失败：目前为 502，而不是统一的 400/401。
+- RESTful AS 的 JSON 格式/TEE 参数错误：400；无效或过期 challenge token：401，并提供 `application/problem+json` 的 `code/detail/retryable` 等字段。
+- 当前部分 AS 策略拒绝、KBS 存储资源不存在、不支持的托管密钥操作仍返回 500。不要将这些状态误写为已经实现的 404/403；后续错误码改造需同步更新测试和文档。
+- Gateway 访问上游失败时返回错误，不能把仅有健康 HTTP 200 当作完整服务链路成功。
 
-*   **端点:** `GET /kbs/v0/attestation-policy/{id}`
-    
-*   **说明:** 获取指定 ID 的认证策略**。**
-    
-*   **调用方法:**
-    
+## 6. E2E 覆盖与运行
 
-```shell
-curl -k http://<gateway-host>:<port>/api/kbs/v0/attestation-policy/my-policy-v1
-```
+[测试说明](test/e2e/README.md) 包含本地运行和 CI 细节。`Gateway API E2E` 工作流使用真实 Gateway/KBS/gRPC AS/RESTful AS/RVPS 进程，并测试：
 
-*   **请求头:** 无
-    
-*   **请求参数:**
-    
-    *   `id` (路径参数, string, 必需): 要获取的策略 ID。
-        
-*   **请求体:** 无
-    
-*   **响应:**
-    
-    *   成功时，返回策略信息的 base64编码。
-        
-    *   失败时，返回错误信息。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 成功找到策略。
-        
-    *   `401`: 指定 ID 的策略不存在。响应体`{"type":"https://github.com/confidential-containers/kbs/errors/AttestationError","detail":"Attestation error: Get Attestation Policy failed"}`
-        
-*   **返回示例 (成功):**
-    
+1. 45 个 API 操作、两组 AS 别名，以及成功/拒绝/不支持响应。
+2. LocalFs、EncryptedLocalFs、EncryptedDb/SQLite、SharedStore/MySQL、EncryptedDb/MySQL；后两种启动双副本。
+3. nonce/公钥绑定、独立 JWT 验签、JWE 解密、资源 CRUD、策略 CRUD、参考值注册/追加/覆盖/删除、证书/OIDC、密钥维护、心跳和审计。
+4. KBS/AS/Gateway 重启后的持久化、跨副本会话和数据可见性，以及策略/RVPS/密钥缓存刷新。
+5. 默认解释器和 `regorus-regovm` 两种策略引擎。新增路由或未维护文档/E2E 清单会被覆盖门禁发现。
 
-![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/aeb02d19-60d3-40cb-8e8d-7b4eb497ca84.png)
-
-#### 1.5 删除认证策略 (Delete Attestation Policy)
-
-*   **端点:** `DELETE /kbs/v0/attestation-policy/{id}`
-    
-*   **说明:** 删除指定ID的认证策略。Gateway会将请求转发给KBS，并将KBS的响应返回给客户端。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k -X DELETE http://<gateway-host>:<port>/api/kbs/v0/attestation-policy/my-policy-v1 \
-     -H "Authorization: Bearer <token>"
-```
-
-*   **请求头:**
-    
-    *   需要KBS要求的认证头（生成方法见附录）： `Authorization: Bearer <token>`
-        
-*   **请求参数:**
-    
-    *   `id` (路径参数, string, 必需): 要删除的策略ID。
-        
-*   **请求体:** 无
-    
-*   **响应:**
-    
-    *   成功时，通常返回空响应体和状态码204。
-        
-    *   失败时，返回错误信息。
-        
-*   **返回码:**
-    
-    *   `204 No Content`: 成功删除策略。
-        
-    *   `401 Unauthorized / 403 Forbidden`: 无权限删除该策略。
-        
-    *   `404 Not Found`: 指定ID的策略不存在。
-        
-    *   `500 Internal Server Error`: Gateway内部错误或转发请求失败。响应体通常为`{"error": "<错误信息>"}`。
-        
-*   **返回示例 (成功):**
-
-_状态码: 204 No Content_
-
-_响应体: (空)_
-
-#### 1.6 列出认证策略 (List Attestation Policies)
-
-*   **端点:** `GET /kbs/v0/attestation-policies`
-    
-*   **说明:** 列出所有存储的认证策略。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k http://<gateway-host>:<port>/api/kbs/v0/attestation-policies
-```
-
-*   **请求头:** 无
-    
-*   **请求参数:** 无
-    
-*   **请求体:** 无
-    
-*   **响应:**
-    
-    *   成功时，返回包含策略哈希列表的 JSON 数组 。
-        
-    *   失败时，返回错误信息。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 成功。
-        
-*   **返回示例 (成功):**
-    
-
-```json
-{
-    "test": "aExY1n-_lngY_s6zEVFzGWf161TdTmQFxMyu8g3gUSSRrDfvkXFM7tLUXU3BbzMk",
-    "default": "aExY1n-_lngY_s6zEVFzGWf161TdTmQFxMyu8g3gUSSRrDfvkXFM7tLUXU3BbzMk"
-}
-```
-
-![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/c798e992-f0c4-41e3-809a-292e135f8f58.png)
-
-#### 1.7 设置资源策略 (Set Resource Policy)
-
-*   **端点:** `POST /kbs/v0/resource-policy`
-    
-*   **说明:** 用于设置 KBS 的资源访问策略。Gateway 会将请求**直接转发**给配置的 KBS 服务，并将 KBS 的响应返回给客户端。
-    
-*   **调用方法:** (具体请求体格式和认证方式取决于 KBS)
-    
-
-```shell
-curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/resource-policy \
-     -H 'Content-Type: application/json' \
-     -H 'Authorization: Bearer <token>' \
-     -d '{"policy": "..."}'
-```
-
-*   **请求头:**
-    
-    *   `Content-Type`: (必需，由 KBS 定义，例如 `application/json`)
-        
-    *   需要 KBS 要求的认证头（生成方法见附录）： `Authorization: Bearer <token>`
-        
-*   **请求体:** 由后端 KBS 定义 (参考 KBS OpenAPI `ResourcePolicy` schema)。
-    
-*   **响应:** 响应体和状态码由后端 KBS 服务决定。
-    
-*   **返回码:**
-    
-    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法读取请求体、无法转发请求给 KBS、无法读取 KBS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
-        
-    *   _其他状态码完全由 KBS 决定 (例如 200, 204, 400, 401, 403, 5xx)_。
-        
-
-![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/9b5e911d-1731-417a-b539-295caec63556.png)
-
-#### 1.8 获取资源策略 (Get Resource Policy)
-
-*   **端点:** `GET /kbs/v0/resource-policy`
-    
-*   **说明:** 用于获取 KBS 的资源访问策略。Gateway 会将请求**直接转发**给配置的 KBS 服务，并将 KBS 的响应返回给客户端。
-    
-*   **调用方法:** 
-    
-
-```shell
-curl -k http://<gateway-host>:<port>/api/kbs/v0/resource-policy \
-      -H "Authorization: Bearer <token>"
-```
-
-*   **请求头:** 需要 KBS 要求的认证头（生成方法见附录）`Authorization: Bearer <token>`
-    
-*   **请求参数:** 无
-    
-*   **请求体:** 无
-    
-*   **响应:** 响应体和状态码由后端 KBS 服务决定。
-    
-*   **返回码:**
-    
-    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法读取请求体、无法转发请求给 KBS、无法读取 KBS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
-        
-    *   _其他状态码完全由 KBS 决定 (例如 200, 401, 403, 404, 5xx)_。
-        
-*   ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/3b899bc4-8f3d-470e-8029-20dfccd54ead.png)
-    
-
-#### 1.9 获取资源 (Get Resource)
-
-*   **端点:** `GET /kbs/v0/resource/{repository}/{type}/{tag}`
-    
-*   **说明:** 从 KBS 获取指定标识的资源（如密钥、配置等）。Gateway 会将请求转发给 KBS，并将 KBS 的响应返回给客户端。之后，Gateway 会**异步记录一条资源请求审计日志**到其数据库。
-    
-*   **调用方法:**
-    
-
-```shell
-SESSION_ID="your-session-id" # 如果 KBS 需要会话认证
-curl -k -b "kbs-session-id=${SESSION_ID}" \
-     -H "Authorization: Bearer <token>"
-     http://<gateway-host>:<port>/api/kbs/v0/resource/my-repo/key/latest
-```
-
-*   **请求头:**
-    
-    *   需要 `Cookie: kbs-session-id=<session-id>`或认证头： `Authorization: Bearer <token>`认证头这里的<token>是远程证明token（即调用`/kbs/v0/attest`返回体中的那个token）
-        
-    *   `AAInstanceInfo: '{"image_id":"aliyun_3_9_x64_20G_uefi_alibase_20231219.vhd","instance_id":"i-bp13wqyr5ik6l669424n","instance_name":"test-cc","owner_account_id":"1242424451954755"}'` 
-        
-*   **请求参数:**
-    
-    *   `repository` (路径参数, string, 必需): 资源所属的仓库名。
-        
-    *   `type` (路径参数, string, 必需): 资源的类型。
-        
-    *   `tag` (路径参数, string, 必需): 资源的标签或版本。
-        
-*   **请求体:** 无
-    
-*   **响应:**
-    
-    *   响应体、状态码和头由后端 KBS 服务决定。
-        
-        *   成功时 KBS 通常返回 `200 OK`，响应体为 JWE 格式 (`application/jwe`), 可使用TEE密钥解密
-            
-    *   无论成功失败，Gateway 都会**异步记录审计日志** (`ResourceRequest`)，包含客户端 IP、会话 ID、资源标识符 (repo, type, tag)、方法 ("GET")、KBS 返回的状态码、是否成功 (`仅当 KBS 返回 200 时为 true`) 以及时间戳。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 成功获取资源 (由 KBS 返回)。
-        
-    *   `401 Unauthorized`: Session ID 无效或token认证失败 (由 KBS 返回)。
-        
-    *   `403 Forbidden`: 无权限获取该资源 (由 KBS 返回)。
-        
-    *   `404 Not Found`: 资源不存在 (由 KBS 返回)。
-        
-    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法转发请求给 KBS、无法读取 KBS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
-        
-    *   _其他由 KBS 返回的状态码 (例如 5xx)_
-        
-*   **返回示例 (成功 - 由 KBS 返回 JWE):**_状态码: 200 OK响应头:_ `_Content-Type: application/jwe_`_响应体: (JWE 格式数据)_
-    
-
-#### 1.10 设置资源 (Set Resource)
-
-*   **端点:** `POST /kbs/v0/resource/{repository}/{type}/{tag}`
-    
-*   **说明:** 向 KBS 上传或更新指定标识的资源。Gateway 会将请求转发给 KBS。如果 KBS 返回成功状态码 (`200`, `201`, `204`)，Gateway 会将资源的元数据**存储在 Gateway 自己的数据库中**。之后，Gateway 会**异步记录一条资源请求审计日志**。最终将 KBS 的响应返回给客户端。
-    
-*   **调用方法:** (具体认证方式和请求体格式取决于 KBS)
-    
-
-```shell
-curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/resource/my-repo/my-type/my-tag  \
-     -H 'Content-Type: application/octet-stream' \
-     -H "Authorization: Bearer <token>" \
-     -d "12345"
-```
-
-*   **请求头:**
-    
-    *   `Content-Type`: (必需，取决于资源类型和 KBS 要求，例如 `application/octet-stream`, `application/json`, `*/*`)
-        
-    *   需要 KBS 要求的认证头（生成方法见附录）： `Authorization: Bearer <token>`
-        
-*   **请求参数:**
-    
-    *   `repository` (路径参数, string, 必需): 资源所属的仓库名。
-        
-    *   `type` (路径参数, string, 必需): 资源的类型。
-        
-    *   `tag` (路径参数, string, 必需): 资源的标签或版本。_(KBS OpenAPI V0.4.0 标记 repository 为可选，但 Gateway 路由需要它)_
-        
-*   **请求体:** 资源内容，格式由 `Content-Type` 指定，具体由 KBS 处理。
-    
-*   **响应:**
-    
-    *   响应体和状态码由后端 KBS 服务决定。
-        
-    *   如果 KBS 返回 `200 OK`, `201 Created`, 或 `204 No Content`，Gateway 会**将资源元数据存入本地数据库** (包含 repo, type, tag 和 "Set by..." metadata)。存储失败会被记录在 Gateway 日志中，但**不影响**返回给客户端的 KBS 响应。
-        
-    *   无论成功失败，Gateway 都会**异步记录审计日志** (`ResourceRequest`)，包含客户端 IP、会话 ID、资源标识符、方法 ("POST")、KBS 返回的状态码、是否成功 (`当 KBS 返回 200, 201 或 204 时为 true`) 以及时间戳。
-        
-*   **返回码:**
-    
-    *   `200 OK / 201 Created / 204 No Content`: 设置成功 (由 KBS 返回)。Gateway 会尝试本地存储并记录成功审计。
-        
-    *   `401 Unauthorized / 403 Forbidden`: 无权限 (由 KBS 返回)。Gateway 记录失败审计。
-        
-    *   `400 Bad Request`: 请求格式错误 (由 KBS 返回)。Gateway 记录失败审计。
-        
-    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法读取请求体、无法转发请求给 KBS、无法读取 KBS 响应)。响应体通常为 `{"error": "<错误信息>"}`。Gateway 记录失败审计。
-        
-    *   _其他由 KBS 返回的状态码_。Gateway 记录失败审计。
-        
-*   **返回示例 (成功 - KBS 返回空内容):**_状态码: 200_ 
-    
-*   ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/9b3e85b8-8453-4787-8099-788408fe985c.png)
-    
-
-#### 1.11 列出资源 (List Resources)
-
-*   **端点:** `GET /kbs/v0/resources`
-    
-*   **说明:**  获取**KBS 的资源列表**
-    
-*   **调用方法:**
-    
-
-```shell
-# 列出所有资源
-curl -k http://<gateway-host>:<port>/api/kbs/v0/resources
-# 按仓库过滤
-curl -k http://<gateway-host>:<port>/api/kbs/v0/resources?repository=my-repo
-# 按类型过滤
-curl -k http://<gateway-host>:<port>/api/kbs/v0/resources?type=key
-# 按仓库和类型过滤
-curl -k http://<gateway-host>:<port>/api/kbs/v0/resources?repository=my-repo&type=key
-```
-
-*   **请求头:** 无
-    
-*   **请求参数:**
-    
-    *   `repository` (查询参数, string, 可选): 按仓库名过滤。
-        
-    *   `type` (查询参数, string, 可选): 按资源类型过滤。
-        
-*   **请求体:** 无
-    
-*   **响应:**
-    
-    *   成功时，返回资源 JSON 数组 ，包含 `repository_name`, `resource_type`, `resource_tag`
-        
-    *   失败时，返回错误信息。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 成功。
-        
-    *   `500 Internal Server Error`: 响应体 `{"error": "Failed to list resources"}`
-        
-*   **返回示例 (成功):**
-    
-
-```json
-[
-    {
-        "repository_name": "123",
-        "resource_tag": "123",
-        "resource_type": "123"
-    },
-    {
-        "repository_name": "123",
-        "resource_tag": "fff",
-        "resource_type": "123"
-    }
-]
-```
-
-#### 1.12 删除资源 (Delete Resource)
-
-*   **端点:** `DELETE /kbs/v0/resource/{repository}/{type}/{tag}`
-    
-*   **说明:** 从 KBS 中删除指定标识的资源。Gateway 会将请求转发给 KBS。如果 KBS 返回成功状态码 (`200 OK`, `204 No Content`)，表示资源删除成功。Gateway 会**异步记录一条资源请求审计日志**。最终将 KBS 的响应返回给客户端。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k -X DELETE http://<gateway-host>:<port>/api/kbs/v0/resource/my-repo/my-type/my-tag  \
-     -H "Authorization: Bearer <token>"
-```
-
-*   **请求头:**
-    
-    *   需要 KBS 要求的认证头（生成方法见附录）： `Authorization: Bearer <token>`
-        
-*   **请求参数:**
-    
-    *   `repository` (路径参数, string, 必需): 资源所属的仓库名。
-        
-    *   `type` (路径参数, string, 必需): 资源的类型。
-        
-    *   `tag` (路径参数, string, 必需): 资源的标签或版本。
-        
-*   **请求体:** 无
-    
-*   **响应:**
-    
-    *   响应体和状态码由后端 KBS 服务决定。
-        
-    *   无论成功失败，Gateway 都会**异步记录审计日志** (`ResourceRequest`)，包含客户端 IP、会话 ID、资源标识符 (repo, type, tag)、方法 ("DELETE")、KBS 返回的状态码、是否成功 (当 KBS 返回 200 或 204 时为 true) 以及时间戳。
-        
-*   **返回码:**
-    
-    *   `200 OK / 204 No Content`: 删除成功 (由 KBS 返回)。Gateway 会记录成功审计。
-        
-    *   `401 Unauthorized / 403 Forbidden`: 无权限 (由 KBS 返回)。Gateway 记录失败审计。
-        
-    *   `404 Not Found`: 资源不存在 (由 KBS 返回)。Gateway 记录失败审计。
-        
-    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法转发请求给 KBS、无法读取 KBS 响应)。响应体通常为 `{"error": "<错误信息>"}`。Gateway 记录失败审计。
-        
-    *   _其他由 KBS 返回的状态码_。Gateway 记录失败审计。
-        
-*   **返回示例 (成功 - KBS 返回空内容):**_状态码: 200 OK 或 204 No Content_
-
-### ![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/7066c995-d1a1-4d28-b709-013982722a26.png)
-
-#### 1.13 获取资源加密公钥 (Get Resource Public Key)
-
-*   **端点:** `GET /api/kbs/v0/resource/pubkey`
-
-*   **说明:** 获取 `EncryptedDb` 或 `EncryptedLocalFs` 当前主密钥对应的 PEM 公钥。客户端必须先用该公钥加密资源信封，再调用设置资源 API 上传密文。Gateway 将 KBS 的状态码、响应头、Cookie 和响应体原样转发。
-
-```shell
-curl -k http://<gateway-host>:<port>/api/kbs/v0/resource/pubkey \
-     -H "Authorization: Bearer <admin-token>"
-```
-
-*   **成功响应:** `200 OK`，响应体为 `-----BEGIN PUBLIC KEY-----` 开头的 PEM 公钥。
-
-#### 1.14 热加载托管密钥 (Reload Managed Keys)
-
-*   **端点:** `POST /api/kbs/v0/resource/reload`
-
-*   **说明:** 从共享存储重新加载托管密钥，不重启 KBS。适用于离线迁移或需要立即绕过多副本轮询间隔的场景。
-
-```shell
-curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/resource/reload \
-     -H "Authorization: Bearer <admin-token>"
-```
-
-*   **成功响应:** `200 OK`，例如 `{"reloaded_keys":2}`。
-
-#### 1.15 重包资源 (Rewrap Resources)
-
-*   **端点:** `POST /api/kbs/v0/resource/rewrap`
-
-*   **说明:** 不生成新密钥，将尚未使用当前主密钥的资源重新包装到当前主密钥。该操作由 KBS 执行，Gateway 原样转发报告。
-
-```shell
-curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/resource/rewrap \
-     -H "Authorization: Bearer <admin-token>"
-```
-
-*   **成功响应:** `200 OK`，响应包含 `total`、`rewrapped`、`skipped` 和 `failed` 计数。
-
-#### 1.16 轮转托管密钥 (Rotate Managed Keys)
-
-*   **端点:** `POST /api/kbs/v0/resource/rotate`
-
-*   **说明:** 生成新的主密钥、重包已有资源、退役旧密钥，并返回新公钥及轮转报告。`EncryptedDb` 会在共享数据库中串行化多副本轮转；客户端应在成功后刷新 `pubkey`。
-
-```shell
-curl -k -X POST http://<gateway-host>:<port>/api/kbs/v0/resource/rotate \
-     -H "Authorization: Bearer <admin-token>"
-```
-
-*   **成功响应:** `200 OK`，响应包含 `public_key`、`rewrapped`、`skipped`、`failed`、`retired_keys`；`EncryptedDb` 还包含 `purged_keys`。
-
-以上四个维护接口均由 KBS 执行管理员认证。若 Gateway 无法转发请求或读取响应，则返回 `500 Internal Server Error`；其他状态码和错误体由 KBS 决定。
-
----
-
-### AS API (`**/api/attestation-service**`)
-
-这部分 API 用于处理与 Attestation Service (AS) 相关的操作。Gateway 作为代理将请求转发给后端 AS 服务，并将响应返回给客户端。证明操作会异步记录审计日志到 Gateway 数据库。
-
-#### 2.1 证明 (Attestation)
-
-*   **端点:** `POST /attestation-service/attestation`
-    
-*   **说明:** 用于向后端 AS 服务提交 TEE 证据以进行验证。Gateway 会将请求转发给 AS，并将 AS 的响应返回给客户端。之后，Gateway 会**异步记录一条证明审计日志**到其数据库。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k -X POST http://<gateway-host>:<port>/api/attestation-service/attestation \
-     -H 'Content-Type: application/json' \
-     -H 'AAInstanceInfo: {"image_id":"aliyun_3_9_x64_20G_uefi_alibase_20231219.vhd","instance_id":"i-bp13wqyr5ik6l669424n","instance_name":"test-cc","owner_account_id":"1242424451954755"}' \
-     -d '{
-             "verification_requests": [
-                 {
-                     "tee": "sample",
-                     "evidence": "base64_encoded_evidence",
-                     "runtime_data": {
-                         "structured_runtime_data": "{\"key\": \"value\"}"
-                     },
-                     "init_data": {
-                         "init_data_toml": "algorithm = \"sha384\"..."
-                     },
-                     "runtime_data_hash_algorithm": "sha384"
-                 }
-             ],
-             "policy_ids": ["default"]
-         }'
-```
-
-*   **请求头:**
-    
-    *   `Content-Type: application/json`
-        
-    *   `AAInstanceInfo: '{"image_id":"aliyun_3_9_x64_20G_uefi_alibase_20231219.vhd","instance_id":"i-bp13wqyr5ik6l669424n","instance_name":"test-cc","owner_account_id":"1242424451954755"}'` (可选，但建议提供)
-        
-*   **请求体 (JSON - 由 AS 定义):**
-    
-
-```json
-{
-    "verification_requests": [  // (必需) 验证请求数组，支持多个TEE证据
-        {
-            "tee": "string",     // TEE类型，例如 "sample", "tdx", "sgx"
-            "evidence": "string", // Base64编码的证据
-            "runtime_data": {    // (可选) 运行时数据
-                "raw_runtime_data": "string",        // 原始运行时数据(Base64)
-                "structured_runtime_data": "string"  // 结构化运行时数据(JSON字符串)
-            },
-            "init_data": {       // (可选) 初始化数据
-                "init_data_digest": "string",  // 初始化数据摘要(Base64)
-                "init_data_toml": "string"     // TOML格式的初始化数据
-            },
-            "runtime_data_hash_algorithm": "string" // 运行时数据哈希算法，例如 "sha256", "sha384", "sha512"
-        }
-    ],
-    "policy_ids": ["string"]    // (可选) 策略ID数组，如果未提供则使用"default"
-}
-```
-
-
-*   **响应:**
-    
-    *   成功时，响应体、状态码和头由后端 AS 服务决定。
-        
-        *   通常 AS 返回 `200 OK`。
-            
-        *   响应体格式由 AS 决定，可能是 JWT 格式的证明令牌或其他格式。
-            
-    *   失败时，可能由 AS 或 Gateway 返回错误。
-        
-    *   无论成功失败，Gateway 都会**异步记录审计日志** (`AttestationRecord`)，包含客户端 IP、请求的声明 (claims)、AS 返回的状态码、是否成功 (`仅当 AS 返回 200 时为 true`)、来源服务标识以及时间戳。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 证明成功 (由 AS 返回)。
-        
-    *   `400 Bad Request`: 请求格式错误 (由 AS 返回)。
-        
-    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法读取请求体、无法转发请求给 AS、无法读取 AS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
-        
-    *   _其他由 AS 返回的状态码 (例如 4xx 证据验证失败, 5xx)_
-        
-*   **返回示例 (成功 - 返回证明结果):**
-
-```json
-{
-    "token": "jwt_or_other_format_attestation_result"
-}
-```
-
-#### 2.2 挑战 (Challenge)
-
-*   **端点:** `POST /attestation-service/challenge`
-    
-*   **说明:** 用于向后端 AS 服务请求证明挑战。Gateway 会将请求**直接转发**给配置的 AS 服务，并将 AS 的响应返回给客户端。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k -X POST http://<gateway-host>:<port>/api/attestation-service/challenge \
-     -H 'Content-Type: application/json' \
-     -d '{
-             "tee": "tdx",
-             "tee_params": "..."
-         }'
-```
-
-*   **请求头:**
-    
-    *   `Content-Type: application/json`
-        
-*   **请求体 (JSON - 由 AS 定义):**
-    
-
-```json
-{
-    "tee": "string",        // (可选) TEE 类型，例如 "tdx", "sgx", "snp"；为空时走通用挑战
-    "tee_params": "string" // (可选) 额外参数，传递给特定 TEE 的挑战生成
-}
-```
-
-*   **响应:** 响应体和状态码由后端 AS 服务决定。
-    
-*   **返回码:**
-    
-    *   `200 OK`: 挑战生成成功 (由 AS 返回)。
-        
-    *   `400 Bad Request`: 请求格式错误 (由 AS 返回)。
-        
-    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法读取请求体、无法转发请求给 AS、无法读取 AS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
-        
-    *   _其他状态码完全由 AS 决定 (例如 5xx)_。
-        
-*   **返回示例 (成功):**
-
-```json
-{
-    "nonce": "base64_encoded_challenge_nonce",
-    "extra-params": {
-        "jwt": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzM4NCJ9.eyJub25jZSI6IkFiQ0QxMjM0NTYifQ.SIGNATURE"
-    }
-}
-```
-
-> 说明：AS 返回的 `extra-params.jwt` 为一个签名的 JWT，其中包含自定义 claim：`"nonce": "base64_encoded_nonce"`。该 `nonce` 为标准 Base64 编码，供后续 attestation 请求绑定使用。
-
-*   **后续用法（将 ChallengeToken 放入 Attestation 的 runtime_data 中）**
-
-    - 从本接口响应中读取 `extra-params.jwt`（ChallengeToken，JWT 字符串）。
-    - 在后续调用 `/attestation-service/attestation` 时，将该 token 放入 `runtime_data` 的结构化 JSON 中，字段名为 `challenge_token`，不再放置于请求头。
-    - AS 会验证该 token 的签名与有效期（`exp`，签发端设置为 5 分钟）。仅当 `runtime_data` 中存在 `challenge_token` 且验证失败时，AS 才会直接返回统一错误；若字段不存在或 `runtime_data` 为原始类型，则按原逻辑继续处理。AS 只做验证，不修改来访 `runtime_data` 内容。
-
-```shell
-curl -k -X POST http://<gateway-host>:<port>/api/attestation-service/attestation \
-     -H 'Content-Type: application/json' \
-     -d '{
-            "verification_requests": [
-                {
-                    "tee": "tdx",
-                    "evidence": "<base64url_evidence>",
-                    "runtime_data": {
-                        "structured": {
-                            "challenge_token": "<JWT from extra-params.jwt>",
-                            "nonce": "base64_encoded_nonce",
-                            "tee-pubkey": { "alg": "RSA", "k-mod": "...", "k-exp": "..." }
-                        }
-                    },
-                    "runtime_data_hash_algorithm": "sha384"
-                }
-            ],
-            "policy_ids": ["default"]
-        }'
-```
-
-*   **错误处理：** 当且仅当 `runtime_data.structured.challenge_token` 存在且验证失败（例如 `400 Bad Request`/`401 Unauthorized`）时，AS 返回统一错误；否则维持原有处理流程。失败原因包括但不限于：
-    - 无效的 JWT 结构或 Base64 编码错误
-    - 无法读取/解析签名密钥
-    - 签名校验失败
-    - 缺少 `nonce` claim 或 `nonce` 编码非法
-
-#### 2.3 获取证书 (Get Certificate)
-
-*   **端点:** `GET /attestation-service/certificate`
-    
-*   **说明:** 用于从后端 AS 服务获取认证证书或证书链。Gateway 会将请求**直接转发**给配置的 AS 服务，并将 AS 的响应返回给客户端。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k http://<gateway-host>:<port>/api/attestation-service/certificate
-```
-
-*   **请求头:** 无特殊要求。
-    
-*   **请求参数:** 无 (具体参数由 AS 定义)。
-    
-*   **请求体:** 无。
-    
-*   **响应:** 响应体和状态码由后端 AS 服务决定。
-    
-    *   成功时 AS 通常返回 `200 OK`，响应体可能是 PEM 格式的证书内容。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 成功获取证书 (由 AS 返回)。
-        
-    *   `404 Not Found`: 证书不存在 (由 AS 返回)。
-        
-    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法转发请求给 AS、无法读取 AS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
-        
-    *   _其他由 AS 返回的状态码 (例如 5xx)_
-        
-*   **返回示例 (成功 - 由 AS 返回证书内容):**
-
-```plaintext
------BEGIN CERTIFICATE-----
-MIIBkTCB+wIJAMlyFqk69v+9MA0GCSqGSIb3DQEBCwUAMBQxEjAQBgNVBAMMCWxv
-Y2FsaG9zdDAeFw0xNTEyMjkxNTI2NDdaFw0yNTEyMjYxNTI2NDdaMBQxEjAQBgNV
-...
------END CERTIFICATE-----
-```
-
----
-
-### AS API (`**/api/as**`)
-
-这部分 API 是 `/api/attestation-service` 的别名，功能完全相同。用于处理与 Attestation Service (AS) 相关的操作。Gateway 作为代理将请求转发给后端 AS 服务，并将响应返回给客户端。证明操作会异步记录审计日志到 Gateway 数据库。
-
-#### 3.1 证明 (Attestation)
-
-*   **端点:** `POST /as/attestation`
-    
-*   **说明:** 用于向后端 AS 服务提交 TEE 证据以进行验证。Gateway 会将请求转发给 AS，并将 AS 的响应返回给客户端。之后，Gateway 会**异步记录一条证明审计日志**到其数据库。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k -X POST http://<gateway-host>:<port>/api/as/attestation \
-     -H 'Content-Type: application/json' \
-     -H 'AAInstanceInfo: {"image_id":"aliyun_3_9_x64_20G_uefi_alibase_20231219.vhd","instance_id":"i-bp13wqyr5ik6l669424n","instance_name":"test-cc","owner_account_id":"1242424451954755"}' \
-     -d '{
-             "tee-pubkey": {
-                 "alg": "RSA",
-                 "k-mod": "base64_modulus",
-                 "k-exp": "base64_exponent"
-             },
-             "tee-evidence": { ... }
-         }'
-```
-
-*   **请求头:**
-    
-    *   `Content-Type: application/json`
-        
-    *   `AAInstanceInfo: '{"image_id":"aliyun_3_9_x64_20G_uefi_alibase_20231219.vhd","instance_id":"i-bp13wqyr5ik6l669424n","instance_name":"test-cc","owner_account_id":"1242424451954755"}'` (可选，但建议提供)
-        
-*   **请求体 (JSON - 由 AS 定义):**
-    
-
-```json
-{
-    "tee-pubkey": {       // (必需) TEE 公钥信息
-        "alg": "string",   // 例如 "RSA", "ECDSA"
-        "k-mod": "string", // Base64 编码的 RSA 模数 (如果 alg="RSA")
-        "k-exp": "string"  // Base64 编码的 RSA 公钥指数 (如果 alg="RSA")
-    },
-    "tee-evidence": {}     // (必需) TEE 生成的证据 (具体结构取决于 TEE 类型)
-}
-```
-
-*   **响应:**
-    
-    *   成功时，响应体、状态码和头由后端 AS 服务决定。
-        
-        *   通常 AS 返回 `200 OK`。
-            
-        *   响应体格式由 AS 决定，可能是 JWT 格式的证明令牌或其他格式。
-            
-    *   失败时，可能由 AS 或 Gateway 返回错误。
-        
-    *   无论成功失败，Gateway 都会**异步记录审计日志** (`AttestationRecord`)，包含客户端 IP、请求的声明 (claims)、AS 返回的状态码、是否成功 (`仅当 AS 返回 200 时为 true`)、来源服务标识以及时间戳。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 证明成功 (由 AS 返回)。
-        
-    *   `400 Bad Request`: 请求格式错误 (由 AS 返回)。
-        
-    *   `500 Internal Server Error`: Gateway 内部错误 (例如，无法读取请求体、无法转发请求给 AS、无法读取 AS 响应)。响应体通常为 `{"error": "<错误信息>"}`。
-        
-    *   _其他由 AS 返回的状态码 (例如 4xx 证据验证失败, 5xx)_
-        
-*   **返回示例 (成功 - 返回证明结果):**
-
-```json
-{
-    "token": "jwt_or_other_format_attestation_result"
-}
-```
-
-#### 3.2 挑战 (Challenge)
-
-*   **端点:** `POST /as/challenge`
-    
-*   **说明:** 用于向后端 AS 服务请求证明挑战。Gateway 会将请求**直接转发**给配置的 AS 服务，并将 AS 的响应返回给客户端。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k -X POST http://<gateway-host>:<port>/api/as/challenge \
-     -H 'Content-Type: application/json' \
-     -d '{
-             "tee": "tdx",
-             "extra-params": "..."
-         }'
-```
-
-*   **请求头:**
-    
-    *   `Content-Type: application/json`
-        
-*   **请求体 (JSON - 由 AS 定义):**
-    
-
-```json
-{
-    "tee": "string",        // (必需) TEE 类型，例如 "tdx", "tpm", "csv"
-    "extra-params": "string" // (可选) 额外参数
-}
-```
-
-*   **响应:**
-    
-    *   成功时，响应体、状态码和头由后端 AS 服务决定。
-        
-    *   失败时，可能由 AS 或 Gateway 返回错误。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 挑战生成成功 (由 AS 返回)。
-        
-    *   `400 Bad Request`: 请求格式错误 (由 AS 返回)。
-        
-    *   `500 Internal Server Error`: Gateway 内部错误。响应体通常为 `{"error": "<错误信息>"}`。
-        
-    *   _其他由 AS 返回的状态码_
-        
-*   **返回示例 (成功 - 由 AS 返回挑战):**
-
-```json
-{
-    "challenge": "base64_encoded_challenge_data"
-}
-```
-
-#### 3.3 获取证书 (Get Certificate)
-
-*   **端点:** `GET /as/certificate`
-    
-*   **说明:** 用于从后端 AS 服务获取证书。Gateway 会将请求**直接转发**给配置的 AS 服务，并将 AS 的响应返回给客户端。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k http://<gateway-host>:<port>/api/as/certificate
-```
-
-*   **请求头:** 无特殊要求。
-    
-*   **请求参数:** 无。
-    
-*   **请求体:** 无。
-    
-*   **响应:**
-    
-    *   成功时，响应体、状态码和头由后端 AS 服务决定。
-        
-        *   通常 AS 返回 `200 OK`。
-            
-        *   响应体通常是证书内容，`Content-Type` 可能是 `application/x-pem-file` 或其他格式。
-            
-    *   失败时，可能由 AS 或 Gateway 返回错误。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 获取证书成功 (由 AS 返回)。
-        
-    *   `404 Not Found`: 证书不存在 (由 AS 返回)。
-        
-    *   `500 Internal Server Error`: Gateway 内部错误。响应体通常为 `{"error": "<错误信息>"}`。
-        
-    *   _其他由 AS 返回的状态码_
-        
-*   **返回示例 (成功 - 由 AS 返回证书内容):**
-
-```plaintext
------BEGIN CERTIFICATE-----
-MIIBkTCB+wIJAMlyFqk69v+9MA0GCSqGSIb3DQEBCwUAMBQxEjAQBgNVBAMMCWxv
-Y2FsaG9zdDAeFw0xNTEyMjkxNTI2NDdaFw0yNTEyMjYxNTI2NDdaMBQxEjAQBgNV
-...
------END CERTIFICATE-----
-```
-
----
-
-### RVPS API (`**/api/rvps**`)
-
-这部分 API 用于与参考值提供服务 (Reference Value Provider Service - RVPS) 进行交互。Gateway 仅在配置了 RVPS gRPC 客户端的情况下处理这些请求，否则将返回 404。
-
-#### 4.1 查询参考值 (Query Reference Value)
-
-*   **端点:** `GET /api/rvps/query`
-    
-*   **说明:** 通过 gRPC 向后端 RVPS 服务查询参考值。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k http://<gateway-host>:<port>/api/rvps/query
-```
-
-*   **请求头:** 无特殊要求。
-    
-*   **请求参数:** 无 (HTTP 请求参数不传递给 gRPC 调用)。
-    
-*   **请求体:** 无。
-    
-*   **响应:**
-    
-    *   成功时，返回 RVPS gRPC 服务返回的**字符串**结果，`Content-Type` 设置为 `application/json`。
-        
-    *   失败时，返回错误信息。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 查询成功。响应体是来自 RVPS 的 JSON 字符串。
-        
-    *   `500 Internal Server Error`: 调用 RVPS gRPC 失败。响应体 `{"error": "<gRPC 错误信息>"}`。
-        
-    *   `404 Not Found`: 如果 Gateway 未配置 RVPS gRPC 客户端。
-        
-*   **返回示例 (成功):**_状态码: 200 OK响应头:_ `_Content-Type: application/json_`_响应体 (来自 RVPS 的原始字符串):_
-    
-
-```json
-{
-    "test-binary-100": [
-        "reference-value-3",
-        "reference-value-99"
-    ],
-    "test-binary-2": [
-        "reference-value-3",
-        "reference-va"
-    ],
-    "test-binary-1": [
-        "reference-value-1",
-        "reference-value-2"
-    ]
-}
-```
-
-![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/ad6f5cea-87c0-4e21-a85d-ab1b3314e969.png)
-
-#### 4.2 注册参考值 (Register Reference Value)
-
-*   **端点:** `POST /api/rvps/register`
-    
-*   **说明:** 通过 gRPC 向后端 RVPS 服务注册参考值。
-    
-*   **调用方法:**
-    
-
-```shell
-# 要注册的参考值信息作为 JSON 字符串嵌套在 message 字段中
-#rvps.json:
-{"message":"{\"version\":\"0.1.0\",\"type\":\"sample\",\"payload\":\"ewogICAgInRlc3QtYmluYXJ5LTEiOiBbCiAgICAgICAgInJlZmVyZW5jZS12YWx1ZS0xIiwKICAgICAgICAicmVmZXJlbmNlLXZhbHVlLTIiCiAgICBdLAogICAgInRlc3QtYmluYXJ5LTIiOiBbCiAgICAgICAgInJlZmVyZW5jZS12YWx1ZS0zIiwKICAgICAgICAicmVmZXJlbmNlLXZhbHVlLTQiCiAgICBdCn0K\"}"}
-
-curl -k -X POST http://<gateway-host>:<port>/api/rvps/register \
-     -H 'Content-Type: application/json' \
-     -d @rvps.json
-```
-
-*   **请求头:**
-    
-    *   `Content-Type: application/json`
-        
-*   **请求参数:** 无。
-    
-*   **请求体 (JSON):**
-    
-
-```json
-{
-    "message": "string" // (必需) 需要传递给 RVPS gRPC 接口的参考值信息字符串。
-}
-```
-
-请求体中message的格式当前仅支持如下一种（后续会新增多种支持的参考值格式）：
-
-```json
-cat << EOF > sample
-{
-    "test-binary-1": [
-        "reference-value-1",
-        "reference-value-2"
-    ],
-    "test-binary-2": [
-        "reference-value-3",
-        "reference-value-4"
-    ]
-}
-EOF
-
-provenance=$(cat sample | base64 --wrap=0)
-
-cat << EOF > message
-{
-    "version" : "0.1.0",
-    "type": "sample",
-    "payload": "$provenance"
-}
-EOF
-```
-
-*   **响应:**
-    
-    *   成功时，返回空响应体。
-        
-    *   失败时，返回错误信息。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 注册成功 (gRPC 调用成功)。
-        
-    *   `400 Bad Request`: 请求体无法读取或解析为包含 `message` 字段的 JSON。响应体 `{"error": "Failed to read request body"}` 或 `{"error": "Invalid request format"}`。
-        
-    *   `500 Internal Server Error`: 调用 RVPS gRPC 失败。响应体 `{"error": "<gRPC 错误信息>"}`。
-        
-    *   `404 Not Found`: 如果 Gateway 未配置 RVPS gRPC 客户端。
-        
-*   **返回示例 (成功):**_状态码: 200 OK响应体: (空)_
-    
-
-![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/22b4361d-9b13-487a-bcb7-b0acee409517.png)
-
-#### 4.3 批量设置参考值 (Set Reference Value List)
-
-*   **端点:** `POST /api/rvps/set_reference_value_list`
-    
-*   **说明:** 通过 gRPC 向后端 RVPS 服务批量设置参考值。新格式使用 `provenance_info.type = "rv-release-manifest"`，RVPS 会遍历 `rv_list` 中的每一项：
-    1. 通过 `provenance_source` 拉取 release manifest bundle/DSSE/payload 元数据（当前支持 OCI，也支持本地测试用 `file`）。
-    2. 解析 `application/vnd.trustee.rv.release+json` release manifest，并校验 bundle 内 Rekor entry 的 payload hash。
-    3. 从 `measurements[$id]` 提取制品哈希摘要值。
-    4. 确定参考值名称：若该项提供可选字段 `rv_name`，则使用该字符串（去首尾空白后非空）；否则新格式默认使用 `$id`。
-    5. 若该名称已存在且新旧参考值不同，根据 `operation_type` 进行追加或覆盖。
-    
-    历史 `slsa-intoto-statements` 路径仍保留兼容：未提供 `provenance_source` 时仍会计算 `SHA256($artifact-id || $artifact-version)` 并走 Rekor v1 索引查询。
-    
-*   **调用方法:**
-    
-```shell
-cat << EOF > rvps-set-list.json
-{
-  "rv_list": [
-    {
-      "id": "cvm_container_proxy",
-      "version": "artifact-version",
-      "type": "container",
-      "provenance_info": {
-        "type": "rv-release-manifest",
-        "rekor_url": "https://log2025-1.rekor.sigstore.dev",
-        "rekor_api_version": 2
-      },
-      "provenance_source": {
-        "protocol": "oci",
-        "uri": "oci://127.0.0.1:5000/trustee/provenance:v1",
-        "artifact": "bundle"
-      },
-      "operation_type": "refresh"
-    }
-  ]
-}
-EOF
-
-curl -k -X POST http://<gateway-host>:<port>/api/rvps/set_reference_value_list \
-     -H 'Content-Type: application/json' \
-     -d @rvps-set-list.json
-```
-
-*   **请求头:**
-    
-    *   `Content-Type: application/json`
-        
-*   **请求参数:** 无。
-    
-*   **请求体 (JSON):**
-    
-```json
-{
-  "rv_list": [
-    {
-      "id": "cvm_container_proxy",
-      "version": "artifact-version",
-      "type": "container",
-      "provenance_info": {
-        "type": "rv-release-manifest",
-        "rekor_url": "https://log2025-1.rekor.sigstore.dev",
-        "rekor_api_version": 2
-      },
-      "rv_name": "optional.custom.reference.name",
-      "provenance_source": {
-        "protocol": "oci",
-        "uri": "oci://127.0.0.1:5000/trustee/provenance:v1",
-        "artifact": "bundle"
-      },
-      "operation_type": "add"
-    }
-  ]
-}
-```
-
-*   **字段说明:**
-    
-    *   `rv_list`: 参考值列表数组。
-    *   `id`: 新格式下为 release manifest 中的 measurement 名称，例如 `cvm_uki`、`cvm_firmware`、`host_uki` 或 `cvm_container_proxy`。
-    *   `version`: 制品版本。
-    *   `type`: 制品类型；新格式下仍须填写且非空，但默认参考值名称使用 `id`。历史 SLSA 兼容路径未指定 `rv_name` 时仍使用 `measurement.$type.$artifact-id`。
-    *   `rv_name`（可选）: 显式指定写入 RVPS 的参考值名称；不得为空或仅空白。
-    *   `provenance_info.type`: 推荐 `rv-release-manifest`；历史兼容值为 `slsa-intoto-statements`。
-    *   `provenance_info.rekor_url`: Rekor 透明日志地址。
-    *   `provenance_info.rekor_api_version`: Rekor API 大版本（`1`/`2`，可选）。
-    *   `provenance_source.protocol`: release manifest bundle 获取协议，当前支持 `oci`；本地测试可用 `file`。
-    *   `provenance_source.uri`: release manifest bundle 地址，如 `oci://<registry>/<repo>:<tag>`。
-    *   `provenance_source.artifact`: 拉取对象类型，建议 `bundle`。
-    *   `operation_type`: `add` 或 `refresh`。当名称已存在且新旧参考值不同：
-        *   `add`: 将新参考值追加到该名称的参考值数组中。
-        *   `refresh`: 清空旧参考值，仅保留最新参考值。
-    
-*   **响应:**
-    
-    *   成功时，返回空响应体。
-        
-    *   失败时，返回错误信息。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 设置成功 (gRPC 调用成功)。
-        
-    *   `400 Bad Request`: 请求体无法解析或字段格式错误。
-        
-    *   `500 Internal Server Error`: 调用 RVPS gRPC 失败或 Rekor/验证流程出错。
-        
-    *   `404 Not Found`: 如果 Gateway 未配置 RVPS gRPC 客户端。
-        
-*   **返回示例 (成功):**_状态码: 200 OK响应体: (空)_
-
-#### 4.4 删除参考值 (Delete Reference Value)
-
-*   **端点:** `DELETE /api/rvps/delete/{name}`
-    
-*   **说明:** 通过 gRPC 向后端 RVPS 服务删除指定名称的参考值。
-    
-*   **调用方法:**
-    
-
-```shell
-# 删除名为 "test-binary-1" 的参考值
-curl -k -X DELETE http://<gateway-host>:<port>/api/rvps/delete/test-binary-1
-```
-
-*   **请求头:** 无特殊要求。
-    
-*   **请求参数:** 
-    *   `name` (路径参数): 要删除的参考值名称
-    
-*   **请求体:** 无。
-    
-*   **响应:**
-    
-    *   成功时，返回空响应体。
-        
-    *   失败时，返回错误信息。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 删除成功 (gRPC 调用成功)。
-        
-    *   `400 Bad Request`: 参考值名称为空。响应体 `{"error": "Reference value name is required"}`。
-        
-    *   `500 Internal Server Error`: 调用 RVPS gRPC 失败。响应体 `{"error": "<gRPC 错误信息>"}`。
-        
-    *   `404 Not Found`: 如果 Gateway 未配置 RVPS gRPC 客户端。
-        
-*   **返回示例 (成功):**_状态码: 200 OK响应体: (空)_
-
-### 审计 API (`**/api/audit**`)
-
-这部分 API 用于查询 **Gateway 数据库中**记录的审计日志。
-
-#### 5.1 列出认证记录 (List Attestation Records)
-
-*   **端点:** `GET /api/audit/attestation`
-    
-*   **说明:** 查询 `/api/kbs/v0/attest` 和 `/api/attestation-service/attestation` 端点的调用记录 (存储在 Gateway 数据库中)。
-    
-*   **调用方法:**
-    
-
-```shell
-# 查询所有记录 (默认 limit=100, offset=0)
-curl -k http://<gateway-host>:<port>/api/audit/attestation
-# 按 session_id 过滤
-curl -k http://<gateway-host>:<port>/api/audit/attestation?session_id=your-session-id
-# 按来源服务过滤
-curl -k http://<gateway-host>:<port>/api/audit/attestation?source_service=kbs
-# 按 AA 实例 ID 过滤
-curl -k http://<gateway-host>:<port>/api/audit/attestation?instance_id=i-12345
-# 查询成功的记录 (基于 KBS 返回的状态码是否为 200)
-curl -k http://<gateway-host>:<port>/api/audit/attestation?successful=true
-# 查询某个时间段的记录 (RFC3339 格式)
-curl -k http://<gateway-host>:<port>/api/audit/attestation?start_time=2024-01-01T00:00:00Z&end_time=2024-01-31T23:59:59Z
-# 分页查询 (第 2 页，每页 50 条)
-curl -k http://<gateway-host>:<port>/api/audit/attestation?limit=50&offset=50
-```
-
-*   **请求参数:**
-    
-    *   `session_id` (查询参数, string, 可选): 按 KBS 会话 ID 过滤。
-        
-    *   `source_service` (查询参数, string, 可选): 按来源服务过滤 (例如 "kbs", "attestation-service")。
-        
-    *   `instance_id` (查询参数, string, 可选): 按 AA 实例 ID 过滤。
-        
-    *   `successful` (查询参数, boolean, 可选): 按请求是否成功过滤 (`true` 或 `false`)。无效值将被忽略。
-        
-    *   `start_time` (查询参数, string, 可选): 按时间范围过滤 (开始时间，RFC3339 格式)。无效格式将被忽略。
-        
-    *   `end_time` (查询参数, string, 可选): 按时间范围过滤 (结束时间，RFC3339 格式)。无效格式将被忽略。
-        
-    *   `limit` (查询参数, integer, 可选, 默认 100): 返回记录的最大数量。无效或非正数默认为 100。
-        
-    *   `offset` (查询参数, integer, 可选, 默认 0): 返回记录的起始偏移量。无效或负数默认为 0。
-        
-*   **响应:**
-    
-    *   成功时，返回包含认证记录列表和总数的 JSON 对象，包含 `data` (记录数组) 和 `total` (满足筛选条件的总记录数，独立于本次分页返回数量)。
-    
-    *   失败时，返回错误信息。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 成功。
-        
-    *   `500 Internal Server Error`: 查询 Gateway 数据库出错。响应体 `{"error": "Failed to list attestation records"}`。
-        
-*   **返回示例 (成功):**
-    
-
-```json
-{
-    "data": [
-        {
-            "id": 1,
-            "client_ip": "192.168.1.101",
-            "session_id": "session-abc",
-            "request_body": "{\"tee-pubkey\":{...},\"tee-evidence\":{...}}",
-            "claims": "{\"customized_claims\":{\"init_data\":null,\"runtime_data\":{\"nonce\":\"DfnnB6Geop0ymdqQQg88oR+hjNKe7NzWIqzssBqdVe0=\",\"tee-pubkey\":{\"alg\":\"RSA1_5\",\"e\":\"AQAB\",\"kty\":\"RSA\",\"n\":\"uOoYePWev5VF9uUzHlkED6MB-n5bS-iCoIIoBJsfEqYt9mHda-mhN0iPK91gYcC33ilHWDaGqMveevsJ9n8-e-qgu3r4-SpMdURxsuQY8RmUjxcStFhfH56ZEaziASyVi9G94kBIpS3ApOIMf-oOdgoOft2eCYnMzuY0dplQKNGS6rB_78SD9F0gaMQ_Q0JaxlXKXK8OhiaoFOjFMlVtEnrk5FI_WsWWMOitinBT9jng-JRRqCHihicF16_iAmktPPEn3MeY6NiLDxNhoQYw-72u_nhdfMwO2KXsjUwFTF_06wTeiGfiqNcR1sRco_H8_X-iFbZS4DZxxBos5KWHuQ\"}}},\"evaluation-reports\":[{\"policy-hash\":\"f5abdc02716d85a5ab28cf43500201591bbe4e5600751039462e5ec2e0ae2698d637c1f487f58bca182244eefdf3b4b1\",\"policy-id\":\"default\"}],\"exp\":1752589512,\"iat\":1752589212,\"iss\":\"CoCo-Attestation-Service\",\"jti\":\"BDbHikXUMj\",\"nbf\":1752589212,\"tcb-status\":\"{\\\"init_data\\\":\\\"\\\",\\\"report_data\\\":\\\"zQU7fRqrb5gE+NLN0bVOWkYZGZvNzTIkStwALFtpX5wawbYY4J6CCV7PC2TvfFFn\\\",\\\"sample.svn\\\":\\\"1\\\"}\",\"tee\":\"sample\"}",
-            "status": 200,
-            "successful": true,
-            "timestamp": "2024-01-10T12:34:56Z",
-            "source_service": "kbs",
-            "instance_id": "i-12345",
-            "image_id": "img-abc",
-            "instance_name": "my-instance",
-            "owner_account_id": "123456789"
-        },
-        {
-            "id": 2,
-            "client_ip": "10.0.0.5",
-            "session_id": "session-xyz",
-            "request_body": "",
-            "claims": "{\"tee-pubkey\":{...},\"tee-evidence\":{...}}",
-            "status": 403,
-            "successful": false,
-            "timestamp": "2024-01-10T12:35:10Z",
-            "source_service": "attestation-service",
-            "instance_id": "i-67890",
-            "image_id": "img-def",
-            "instance_name": "another-instance",
-            "owner_account_id": "987654321"
-        }
-    ],
-    "total": 2
-}
-```
-
-![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/1a9e39fe-2b91-4d75-a0f2-f54d1967ea40.png)
-
-#### 5.2 列出资源请求记录 (List Resource Requests)
-
-*   **端点:** `GET /api/audit/resources`
-    
-*   **说明:** 查询 `/api/kbs/v0/resource/{repository}/{type}/{tag}` (GET 和 POST) 端点的调用记录 (存储在 Gateway 数据库中)。
-    
-*   **调用方法:**
-    
-
-```shell
-# 查询所有记录
-curl -k http://<gateway-host>:<port>/api/audit/resources
-# 按仓库和类型过滤
-curl -k http://<gateway-host>:<port>/api/audit/resources?repository=my-repo&type=key
-# 按方法过滤 (GET 请求)
-curl -k http://<gateway-host>:<port>/api/audit/resources?method=GET
-# 按 AA 实例 ID 过滤
-curl -k http://<gateway-host>:<port>/api/audit/resources?instance_id=i-12345
-# 查询失败的 POST 请求 (基于 KBS 返回的状态码)
-curl -k http://<gateway-host>:<port>/api/audit/resources?method=POST&successful=false
-# 其他参数同 /audit/attestation (session_id, tag, start_time, end_time, limit, offset)
-```
-
-*   **请求参数:**
-    
-    *   `session_id` (查询参数, string, 可选): 按 KBS 会话 ID 过滤。
-        
-    *   `repository` (查询参数, string, 可选): 按资源仓库名过滤。
-        
-    *   `type` (查询参数, string, 可选): 按资源类型过滤。
-        
-    *   `tag` (查询参数, string, 可选): 按资源标签过滤。
-        
-    *   `method` (查询参数, string, 可选): 按 HTTP 方法过滤 (e.g., "GET", "POST")。
-        
-    *   `instance_id` (查询参数, string, 可选): 按 AA 实例 ID 过滤。
-        
-    *   `successful` (查询参数, boolean, 可选): 按请求是否成功过滤 (`true` 或 `false`)。
-        
-        *   对于 GET，成功意味着 KBS 返回 200。
-            
-        *   对于 POST，成功意味着 KBS 返回 200, 201 或 204。
-            
-        *   无效值将被忽略。
-            
-    *   `start_time` (查询参数, string, 可选): 按时间范围过滤 (开始时间，RFC3339 格式)。无效格式将被忽略。
-        
-    *   `end_time` (查询参数, string, 可选): 按时间范围过滤 (结束时间，RFC3339 格式)。无效格式将被忽略。
-        
-    *   `limit` (查询参数, integer, 可选, 默认 100): 返回记录的最大数量。无效或非正数默认为 100。
-        
-    *   `offset` (查询参数, integer, 可选, 默认 0): 返回记录的起始偏移量。无效或负数默认为 0。
-        
-*   **请求体:** 无。
-    
-*   **响应:**
-    
-    *   成功时，返回包含资源请求记录列表和总数的 JSON 对象，包含 `data` (记录数组) 和 `total` (满足筛选条件的总记录数，独立于本次分页返回数量)。
-    
-    *   失败时，返回错误信息。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 成功。
-        
-    *   `500 Internal Server Error`: 查询 Gateway 数据库出错。响应体 `{"error": "Failed to list resource requests"}`。
-        
-*   **返回示例 (成功):**
-    
-
-```json
-{
-    "data": [
-        {
-            "id": 1,
-            "client_ip": "192.168.1.102",
-            "session_id": "session-def",
-            "repository": "my-repo",
-            "type": "key",
-            "tag": "latest",
-            "method": "GET",
-            "status": 200,
-            "successful": true,
-            "timestamp": "2024-01-11T09:15:00Z",
-            "instance_id": "i-abcde",
-            "image_id": "img-123",
-            "instance_name": "resource-getter",
-            "owner_account_id": "1122334455"
-        },
-        {
-            "id": 2,
-            "client_ip": "10.0.0.6",
-            "session_id": "",
-            "repository": "my-repo",
-            "type": "config",
-            "tag": "prod",
-            "method": "POST",
-            "status": 201,
-            "successful": true,
-            "timestamp": "2024-01-11T09:20:00Z",
-            "instance_id": "i-fghij",
-            "image_id": "img-456",
-            "instance_name": "resource-setter",
-            "owner_account_id": "6677889900"
-        },
-        {
-            "id": 3,
-            "client_ip": "10.0.0.7",
-            "session_id": "",
-            "repository": "my-repo",
-            "type": "data",
-            "tag": "v1",
-            "method": "GET",
-            "status": 404,
-            "successful": false,
-            "timestamp": "2024-01-11T09:25:00Z",
-            "instance_id": "i-klmno",
-            "image_id": "img-789",
-            "instance_name": "resource-failed",
-            "owner_account_id": "123123123"
-        }
-    ],
-    "total": 3
-}
-```
-
-![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/e8d72305-e3ba-423e-ae65-ead7d7c9e252.png)
-
-### 6. 健康检查 API (`**/api**`)
-
-#### 6.1 基本健康检查
-
-*   **端点:** `GET /api/health`
-    
-*   **说明:** 提供一个简单的健康检查端点，确认 Gateway 服务本身正在运行。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k http://<gateway-host>:<port>/api/health
-```
-
-*   **请求头:** 无。
-    
-*   **请求参数:** 无。
-    
-*   **请求体:** 无。
-    
-*   **响应:** 返回一个简单的 JSON 对象。
-    
-*   **返回码:**
-    
-    *   `200 OK`: 服务运行正常。
-        
-*   **返回示例 (成功):**
-    
-
-```json
-{
-    "status": "ok"
-}
-```
-
-![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/a9973c16-7a40-49d4-a011-da007cc3c555.png)
-
-#### 6.2 服务健康检查
-
-*   **端点:** `GET /api/services-health`
-    
-*   **说明:** 检查 Gateway 自身以及其依赖的后端服务 (KBS, RVPS) 的健康状况。**注意：此端点总是返回 200 OK，实际健康状态在响应体中指示。**
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k http://<gateway-host>:<port>/api/services-health
-```
-
-*   **请求头:** 无。
-    
-*   **请求参数:** 无。
-    
-*   **请求体:** 无。
-    
-*   **响应:** 返回一个包含各服务健康状态的 JSON 对象 (`HealthStatus` 结构)。
-    
-    *   `gateway`: 始终报告 `"ok"`。
-        
-    *   `kbs`: 通过向 KBS 发送一个实际的 `/auth` 请求 (`tee: "sample"`) 来检查。可能的状态: `"ok"` 或 `"error"` (附带 `message`)。
-        
-    *   `rvps`: 始终报告 `"not supported"` (当前未实现实际检查)。
-        
-*   **返回码:**
-    
-    *   `200 OK`: 总是返回此状态码，即使后端服务检查失败。
-        
-*   **返回示例** 
-    
-
-```json
-{
-    "gateway": {
-        "status": "ok",
-        "timestamp": "2024-01-12T10:30:00Z"
-    },
-    "kbs": {
-        "status": "ok",
-        "timestamp": "2024-01-12T10:30:00Z"
-    },
-    "rvps": {
-        "status": "not supported",
-        "timestamp": "2024-01-12T10:30:00Z"
-    }
-}
-```
-
-*   **返回示例 (KBS 检查失败):**
-    
-
-```plaintext
-{    "gateway": {        "status": "ok",        "timestamp": "2024-01-12T10:35:00Z"    },    "kbs": {        "status": "error",        "message": "forward kbs auth request failed", // 可能的消息: "create kbs auth request failed", "forward kbs auth request failed", "kbs auth request failed"        "timestamp": "2024-01-12T10:35:00Z"    },    "rvps": {        "status": "not supported",        "timestamp": "2024-01-12T10:35:00Z"    }}
-```
-
-![image.png](https://alidocs.oss-cn-zhangjiakou.aliyuncs.com/res/2M9qP57A13dzpO01/img/6d64d513-4484-4048-b042-59588a420f67.png)
-
-### 7. 实例API (`**/api/aa-instance**`)
-
-#### 7.1 AA实例心跳
-
-*   **端点:** `POST /api/aa-instance/heartbeat`
-    
-*   **说明:** 提供一个简单的心跳端点，确认AA实例正在运行。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -X POST http://<gateway-host>:<port>/api/aa-instance/heartbeat \
-  -H "AAInstanceInfo: {\"instance_id\":\"test-instance-153\",\"image_id\":\"test-image\",\"instance_name\":\"test-instance\",\"owner_account_id\":\"test-account\"}"
-```
-
-*   **请求头:** 
-    
-
-*   `AAInstanceInfo: '{"image_id":"aliyun_3_9_x64_20G_uefi_alibase_20231219.vhd","instance_id":"i-bp13wqyr5ik6l669424n","instance_name":"test-cc","owner_account_id":"1242424451954755"}'` 
-    
-
-*   **请求参数:** 无。
-    
-*   **请求体:** 无。
-    
-*   **响应:** 返回一个简单的 JSON 对象。
-    
-*   **返回码:**
-    
-    *   `200 OK`: 服务运行正常。
-        
-*   **返回示例 (成功):**
-    
-
-```json
-{"status":"ok","timestamp":"2025-06-10T11:58:42+08:00"}
-```
-
-#### 7.2 实例列表
-
-*   **端点:** `GET /api/aa-instance/list`
-    
-*   **说明:** 列出当前在心跳过期时间内的aa实例
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k http://<gateway-host>:<port>/api/aa-instance/list
-```
-
-*   **请求头:** 无。
-    
-*   **请求参数:** 无。
-    
-*   **请求体:** 无。
-    
-*   **响应:** 返回当前活跃AA实例列表。
-    
-*   **返回码:**
-    
-    *   `200 OK`: 服务运行正常。
-        
-*   **返回示例 (成功):**
-    
-
-```json
-{
-  "active_aa_instances": [
-    {
-      "ID": 1,
-      "CreatedAt": "2025-06-10T11:48:28.393004038+08:00",
-      "UpdatedAt": "2025-06-10T11:58:42.784923152+08:00",
-      "DeletedAt": null,
-      "instance_id": "i-bp13wqyr5ik6l669424n",
-      "image_id": "aliyun_3_9_x64_20G_uefi_alibase_20231219.vhd",
-      "instance_name": "qianyue-activatepro",
-      "owner_account_id": "1242424451954755",
-      "client_ip": "::1",
-      "last_heartbeat": "2025-06-10T11:58:42.784737526+08:00"
-    }
-  ],
-  "count": 1,
-  "timestamp": "2025-06-10T11:58:44+08:00"
-}
-```
-
-### 8. Credential API (`**/api/credential**`)
-
-#### 8.1 获取credential文件
-
-*   **端点:** `GET /api/credential`
-    
-*   **说明:** 读取配置中的 `credential.path` 指向的文件内容并返回。
-    
-*   **调用方法:**
-    
-
-```shell
-curl -k http://<gateway-host>:<port>/api/credential
-```
-
-*   **请求头:** 无。
-    
-*   **请求参数:** 无。
-    
-*   **请求体:** 无。
-    
-*   **响应:** 返回文件内容（原样输出）。
-    
-*   **返回码:**
-    
-    *   `200 OK`: 返回文件内容。
-        
-    *   `404 Not Found`: 未配置 `credential` 或已配置但文件不存在。
-        
-    *   `500 Internal Server Error`: 读取文件失败。
-        
-*   **返回示例 (成功):**
-    
-
-```plaintext
------BEGIN PUBLIC KEY-----
-...
------END PUBLIC KEY-----
-```
-
-*   **返回示例 (未配置):**
-    
-
-```json
-{"error":"Credential not configured"}
-```
-
-*   **返回示例 (文件不存在):**
-    
-
-```json
-{"error":"Credential configured but file not found"}
-```
-
-# 附录
-
-## KBS认证头生成方法
-
-当trustee的管理员需要对涉及到机密数据（KBS语义下称为Resource）和证明策略的内容进行配置和操作时，调用相关API需要一个被kbs认证密钥签名的JWT格式令牌来认证请求者身份。
-
-kbs认证密钥为一个ED25519算法的PEM格式私钥文件，在Trustee实例部署时生成，需要导出并妥善保存。
-
-下面提供了一个简单的Python脚本，用于生成KBS认证头令牌，用法如下：
-
-```shell
-pip install pyjwt cryptography
-python kbs_auth_token.py /path/to/kbs-auth-private.key
-```
-
-脚本内容如下 (kbs_auth_token.py)：
-
-```python
-import sys, datetime
-import jwt
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
-
-def sign_jwt(key_path):
-    with open(key_path, 'rb') as f: key = load_pem_private_key(f.read(), None)
-    now = datetime.datetime.now(datetime.timezone.utc)
-    token = jwt.encode(
-        {
-            'iat': int(now.timestamp()),
-            'exp': int((now + datetime.timedelta(hours=2)).timestamp()),
-        },
-        key,
-        algorithm='EdDSA',
-    )
-    # PyJWT 1.x returns bytes; 2.x returns str
-    return token.decode('utf-8') if isinstance(token, (bytes, bytearray)) else token
-
-if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print('Usage: python kbs_auth_token.py <private_key>')
-        sys.exit(1)
-    try:
-        print(sign_jwt(sys.argv[1]))
-    except Exception as e:
-        print(f'Error: {e}')
-        sys.exit(1)
-```
+**验证边界：**通用 CI 使用 `sample` verifier，不验证 TDX/SNP/CSV/TPM 等真实硬件签名、采证和生产证书链；也不声称验证云 KMS、PKCS#11、外部 OCI/Rekor 的真实服务。sample 不能证明运行环境可信，不能用于生产信任判断。WASM 保持原有内存存储设计，由既有 WASM 检查验证，不属于此原生进程 E2E。

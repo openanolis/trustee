@@ -252,12 +252,14 @@ pub(crate) async fn api(
             .map_err(From::from),
         #[cfg(feature = "as")]
         "attestation-policy" if request.method() == Method::POST => {
+            core.admin_auth.validate_auth(&request)?;
             core.attestation_service.set_policy(&body).await?;
 
             Ok(HttpResponse::Ok().finish())
         }
         #[cfg(feature = "as")]
         "attestation-policy" if request.method() == Method::GET && !additional_path.is_empty() => {
+            core.admin_auth.validate_auth(&request)?;
             let policy_id = additional_path.strip_prefix('/').unwrap_or(additional_path);
 
             let policy = core.attestation_service.get_policy(policy_id).await?;
@@ -269,6 +271,7 @@ pub(crate) async fn api(
         "attestation-policy"
             if request.method() == Method::DELETE && !additional_path.is_empty() =>
         {
+            core.admin_auth.validate_auth(&request)?;
             let policy_id = additional_path.strip_prefix('/').unwrap_or(additional_path);
 
             core.attestation_service.delete_policy(policy_id).await?;
@@ -276,6 +279,7 @@ pub(crate) async fn api(
         }
         #[cfg(feature = "as")]
         "attestation-policies" if request.method() == Method::GET => {
+            core.admin_auth.validate_auth(&request)?;
             let policies = core.attestation_service.list_policies().await?;
             let policies_json = serde_json::to_string(&policies)?;
 
@@ -352,6 +356,7 @@ pub(crate) async fn api(
             Ok(HttpResponse::Ok().content_type("text/xml").body(policy))
         }
         "resources" if request.method() == Method::GET => {
+            core.admin_auth.validate_auth(&request)?;
             // Get the resource plugin
             let plugin = core
                 .plugin_manager
