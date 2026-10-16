@@ -1,0 +1,89 @@
+name: Gateway API E2E
+
+on:
+  pull_request:
+    paths:
+      - "trustee-gateway/**"
+      - "kbs/**"
+      - "attestation-service/**"
+      - "rvps/**"
+      - "deps/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/gateway-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "trustee-gateway/**"
+      - "kbs/**"
+      - "attestation-service/**"
+      - "rvps/**"
+      - "deps/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/gateway-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gateway-api-e2e:
+    name: Gateway API E2E (${{ matrix.engine }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - engine: interpreter
+            regovm: "0"
+          - engine: regovm
+            regovm: "1"
+    env:
+      RUSTUP_TOOLCHAIN: "1.88.0"
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_DEV_OPT_LEVEL: "1"
+      MYSQL_TEST_URL: mysql://root@127.0.0.1:3306/
+      TRUSTEE_E2E_REGOVM: ${{ matrix.regovm }}
+      TRUSTEE_E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Exercise restrictive MySQL defaults
+        run: docker exec ${{ job.services.mysql.id }} mysql -uroot -e "SET GLOBAL innodb_default_row_format=COMPACT"
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gateway-api-e2e-${{ matrix.engine }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: trustee-gateway/go.mod
+          cache-dependency-path: trustee-gateway/go.sum
+      - name: Check route and documentation coverage guard
+        working-directory: trustee-gateway
+        run: go test ./cmd/server -run TestGatewayRoutesMatchDocumentedE2EContract -count=1
+      - name: Run all Gateway APIs against real services
+        run: bash trustee-gateway/test/e2e/run.sh
+      - name: Upload API coverage (no keys, tokens, configurations or service logs)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: gateway-api-coverage-${{ matrix.engine }}
+          path: e2e-artifacts/api-coverage.json
+          if-no-files-found: warn

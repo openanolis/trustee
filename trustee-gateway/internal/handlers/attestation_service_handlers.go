@@ -113,7 +113,7 @@ func (h *AttestationServiceHandler) HandleAttestation(c *gin.Context) {
 	record := &models.AttestationRecord{
 		ClientIP:      getClientIPAS(c, aaInstanceInfo),
 		SessionID:     sessionID, // Use extracted session ID if applicable
-		RequestBody:   "", // Do not save evidence content
+		RequestBody:   "",        // Do not save evidence content
 		Claims:        claims,
 		Status:        resp.StatusCode,
 		Successful:    resp.StatusCode == http.StatusOK,
@@ -244,7 +244,7 @@ func (h *AttestationServiceHandler) GetAttestationPolicy(c *gin.Context) {
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logrus.Errorf("Failed to read Attestation Service attestation policy response: %v", err)
@@ -259,6 +259,9 @@ func (h *AttestationServiceHandler) GetAttestationPolicy(c *gin.Context) {
 
 // ListAttestationPolicies handles listing all attestation policies from AttestationService
 func (h *AttestationServiceHandler) ListAttestationPolicies(c *gin.Context) {
+	// Both gateway aliases expose /policies; RESTful AS lists at /policy.
+	c.Request.URL.Path = "/policy"
+	c.Request.URL.RawPath = ""
 	// Forward the request to Attestation Service
 	resp, err := h.proxy.ForwardToAttestationService(c)
 	if err != nil {
