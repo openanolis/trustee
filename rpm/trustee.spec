@@ -8,7 +8,7 @@ Version:        1.10.1
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
-BuildArch:      x86_64
+ExclusiveArch:  x86_64 aarch64
 
 License:	Apache-2.0
 URL: 		  https://github.com/openanolis/trustee
@@ -19,9 +19,13 @@ Source3:  go-vendor.tar.gz
 Source4:  frontend_node_modules.tar.gz
 Source5:  challenge-ra-policy.rego
 
-Requires: openssl tzdata sqlite-libs libtdx-verify
+Requires: openssl tzdata sqlite-libs
+%ifarch x86_64
+Requires: libtdx-verify
+BuildRequires: libtdx-attest-devel libtdx-verify-devel
+%endif
 
-BuildRequires:  clang perl protobuf-devel git libtdx-attest-devel libtdx-verify-devel libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel
+BuildRequires:  clang perl protobuf-devel git libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel
 BuildRequires:  ca-certificates gcc golang
 
 # Dual toolchain mode. When `with_rustup` is defined, cargo is provided by rustup
@@ -62,7 +66,11 @@ tar -xvf %{SOURCE4} -C frontend
 
 %build
 pushd dist/
+%ifarch aarch64
+make DCAP_BACKEND=rust
+%else
 make
+%endif
 popd
 pushd frontend/
 npm run build
