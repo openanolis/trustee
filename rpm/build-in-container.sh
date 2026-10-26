@@ -7,7 +7,7 @@ cd /work
 arch=$(rpm --eval '%{_arch}')
 make -C dist create-build-artifacts
 cp tmp/* /build/SOURCES/
-rpmbuild -ba rpm/trustee.spec --define '_topdir /build' --define 'with_rustup 1'
+rpmbuild -ba rpm/trustee.spec --with check --define '_topdir /build' --define 'with_rustup 1'
 
 # Check package metadata and executable dependencies on the actual build platform.
 for package in /build/RPMS/"$arch"/*.rpm; do
