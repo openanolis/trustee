@@ -22,3 +22,4 @@ SNP, CSV, Hygon DCU, system and TPM); this set does **not** include SGX.
 x86_64 keeps the existing Intel DCAP backend. To use Rust on x86_64 when building
 binaries directly: `make -C dist DCAP_BACKEND=rust`.
 Frontend dependencies are prepared natively rather than reusing x86_64 node modules.
+The container build also runs the offline SNP signature/certificate regression tests.

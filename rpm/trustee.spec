@@ -2,6 +2,7 @@
 %global config_dir /etc/trustee
 %global debug_package %{nil}
 %global __brp_mangle_shebangs %{nil}
+%bcond_with check
 
 Name:           trustee
 Version:        1.10.1
@@ -88,6 +89,11 @@ popd
 # Install default EAR policy for attestation-challenge-client
 install -d %{buildroot}/var/lib/attestation/token/ear/policies/opa
 install -m 0644 %{SOURCE5} %{buildroot}/var/lib/attestation/token/ear/policies/opa/default.rego
+
+%if %{with check}
+%check
+cargo test --release --locked --offline -p verifier --no-default-features --features snp-verifier snp::tests
+%endif
 
 %pre
 if [ ! -s /etc/trustee/private.key ] && [ -s /etc/trustee/public.pub ]; then
