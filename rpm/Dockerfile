@@ -15,5 +15,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-ini
     sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain "${RUST_VERSION}" --no-modify-path && \
     rm /tmp/rustup-init.sh
 ENV CARGO_BUILD_JOBS=2 OPENSSL_NO_VENDOR=1
+# Do not inherit a distribution Go toolchain's empty proxy list.
+ENV GOPROXY=https://proxy.golang.org,direct
 COPY build-in-container.sh /usr/local/bin/build-rpm
 ENTRYPOINT ["bash", "/usr/local/bin/build-rpm"]

@@ -18,6 +18,7 @@ kbs --help >/dev/null
 restful-as --help >/dev/null
 grpc-as --help >/dev/null
 attestation-challenge-client --help >/dev/null
+file /usr/bin/kbs /usr/bin/restful-as /usr/bin/grpc-as
 mkdir -p /output/RPMS /output/SRPMS
 cp -a /build/RPMS/. /output/RPMS/
 cp -a /build/SRPMS/. /output/SRPMS/
