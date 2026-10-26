@@ -84,6 +84,8 @@ restful-bin = [
 
 # For attestation-challenge-client binary
 attestation-challenge-client = [
+    "clap",
+    "env_logger",
     "tokio/full",
     "fs",
     "policy-rvps",
