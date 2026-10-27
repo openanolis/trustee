@@ -66,7 +66,7 @@ snp-verifier = ["__snp", "openssl", "sev/openssl"]
 # Same SNP checks and evidence format, with RustCrypto certificate/report
 # signatures. No native crypto library; usable in wasm32-unknown-unknown.
 snp-rustcrypto = ["__snp", "dep:p384", "dep:rsa", "dep:x509-cert", "dep:pem"]
-__snp = ["asn1-rs", "sev", "x509-parser", "reqwest"]
+__snp = ["asn1-rs", "sev", "sev-modern", "x509-parser", "reqwest"]
 csv-verifier = ["codicon", "csv-rs", "openssl", "tokio/fs"]
 hygon-dcu-verifier = ["csv-rs"]
 # cca-verifier = ["ear", "jsonwebtoken", "veraison-apiclient", "ccatoken"]
@@ -126,6 +126,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_with = { workspace = true, optional = true }
 sev = { version = "4.0.0", default-features = false, features = ["snp"], optional = true }
+sev-modern = { package = "sev", version = "=7.1.0", default-features = false, features = ["snp", "serde"], optional = true }
 p384 = { version = "0.13", features = ["ecdsa"], optional = true }
 rsa = { version = "0.9", optional = true }
 x509-cert = { version = "0.2", features = ["pem"], optional = true }

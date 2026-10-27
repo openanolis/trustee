@@ -43,12 +43,33 @@ async fn get_vcek(_: &[u8], _: ProcessorGeneration, _: &[u8]) -> Result<Vec<u8>>
 
 #[derive(Serialize, Deserialize)]
 pub struct SnpEvidence {
+    #[serde(deserialize_with = "deserialize_report")]
     attestation_report: AttestationReport,
     cert_chain: Option<Vec<CertTableEntry>>,
     /// Base64-encoded SVSM service manifest. When present, REPORT_DATA must
     /// contain SHA-512(padded nonce || manifest), as defined by the SVSM ABI.
     #[serde(default)]
     svsm_manifest: Option<String>,
+}
+
+/// Current CoCo AA uses sev 7's named CPUID, TCB and mitigation fields.
+/// Normalize through that crate's ABI byte encoder into the shared report
+/// representation. Every reconstructed signed byte is still authenticated by
+/// the report signature; this is not an alternate appraisal path. Preserve the
+/// older schema (including its raw reserved bytes) for existing attesters.
+fn deserialize_report<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<AttestationReport, D::Error> {
+    use sev_modern::parser::ByteParser;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.get("key_info").is_some() {
+        let report: sev_modern::firmware::guest::AttestationReport =
+            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        let raw = report.to_bytes().map_err(serde::de::Error::custom)?;
+        bincode::deserialize(&raw).map_err(serde::de::Error::custom)
+    } else {
+        serde_json::from_value(value).map_err(serde::de::Error::custom)
+    }
 }
 
 const HW_ID_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .3704 .1 .4);
@@ -702,6 +723,24 @@ mod tests {
     // Real AMD EPYC 9xx5 "Turin" (Zen5) v5 attestation report and the matching
     // VCEK fetched from the AMD KDS.
     const TURIN_REPORT: &[u8; 1184] = include_bytes!("../../test_data/snp/turin-report.bin");
+
+    #[test]
+    fn modern_coco_schema_preserves_signed_report_bytes() {
+        use sev_modern::parser::ByteParser;
+        // The sev 7 codec itself refuses its masked-chip v2 VLEK fixture;
+        // legacy-schema VLEK evidence retains its existing verification path.
+        for bytes in [VCEK_REPORT, TURIN_REPORT] {
+            let modern = sev_modern::firmware::guest::AttestationReport::from_bytes(bytes).unwrap();
+            let evidence: SnpEvidence = serde_json::from_value(json!({
+                "attestation_report": modern, "cert_chain": null
+            }))
+            .unwrap();
+            assert_eq!(
+                bincode::serialize(&evidence.attestation_report).unwrap(),
+                bytes
+            );
+        }
+    }
     const TURIN_VCEK: &[u8; 1289] = include_bytes!("../../test_data/snp/turin-vcek.der");
 
     #[tokio::test]
