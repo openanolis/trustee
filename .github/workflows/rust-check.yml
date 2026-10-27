@@ -172,6 +172,12 @@ jobs:
           rustup component add --toolchain ${{ env.RUSTC_VERSION }} rustfmt rustc clippy
           rustup default ${{ env.RUSTC_VERSION }}
 
+      # Run before sudo-based tests create root-owned Cargo build/cache files.
+      - name: Run pure-Rust SNP verifier tests and lint
+        run: |
+          cargo test -p verifier --no-default-features --features snp-rustcrypto snp:: --lib
+          cargo clippy -p verifier --no-default-features --features snp-rustcrypto --all-targets -- -D warnings -A clippy::derive_partial_eq_without_eq
+
       - name: AS Build
         working-directory: attestation-service
         run: |
@@ -189,11 +195,6 @@ jobs:
         run: |
           sudo -E PATH="$PATH" -s cargo test -p verifier --no-default-features --features tdx-dcap-rust tdx::verify::native::tests
           sudo -E PATH="$PATH" -s cargo build -p attestation-service --bin restful-as --no-default-features --features restful-bin,all-verifier-rust,rvps-grpc
-
-      - name: Run pure-Rust SNP verifier tests and lint
-        run: |
-          cargo test -p verifier --no-default-features --features snp-rustcrypto snp:: --lib
-          cargo clippy -p verifier --no-default-features --features snp-rustcrypto --all-targets -- -D warnings -A clippy::derive_partial_eq_without_eq
 
       - name: Run cargo fmt check
         run: |

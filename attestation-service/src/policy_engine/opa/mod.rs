@@ -1096,7 +1096,7 @@ mod tests {
     async fn call_artifact_server_extension(base_url: String) -> Result<bool> {
         use anyhow::Context as _;
 
-        let http_client = reqwest::Client::builder().no_proxy().build()?;
+        let http_client = reqwest_sdk::Client::builder().no_proxy().build()?;
         let client = Arc::new(
             artifact_resolve_sdk::Client::builder()
                 .base_url(base_url)
