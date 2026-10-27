@@ -13,6 +13,9 @@
 - `RVDS_LISTEN_ADDR`：监听地址，默认 `0.0.0.0:8090`
 - `RVDS_DATA_DIR`：订阅持久化目录，默认 `data/rvds`
 - `RVDS_FORWARD_TIMEOUT_SECS`：转发超时秒数，默认 `10`
+- `RVDS_STORAGE_TYPE`：订阅表存储类型，设为 `mysql` 时启用共享存储；不设置则继续使用 `subscribers.json`
+- `RVDS_REQUIRE_SHARED`：多副本部署设为 `true`，启动时拒绝内存等非共享后端
+- `TRUSTEE_STORAGE_MYSQL_URL`：MySQL 连接 URL，建议由 Kubernetes Secret 注入
 - `RVDS_LEDGER_BACKEND`：`none`（默认）、`http`、`eth`
 - `RVDS_LEDGER_HTTP_ENDPOINT` / `RVDS_LEDGER_HTTP_API_KEY`：账本网关（http）配置
 - `RVDS_LEDGER_ETH_GATEWAY` / `RVDS_LEDGER_ETH_GATEWAY_API_KEY`：以太坊网关配置
@@ -37,12 +40,18 @@ docker build -f Dockerfile.rvds -t rvds:latest .
 ```bash
 docker run -it --rm \
   -e RVDS_LISTEN_ADDR=0.0.0.0:8090 \
-  -e RVDS_DATA_DIR=/var/lib/rvds \
+  -e RVDS_STORAGE_TYPE=mysql \
+  -e RVDS_REQUIRE_SHARED=true \
+  -e TRUSTEE_STORAGE_MYSQL_URL='mysql://user:password@mysql:3306/trustee' \
   -e RVDS_FORWARD_TIMEOUT_SECS=10 \
   -p 8090:8090 \
-  -v /path/to/data:/var/lib/rvds \
   rvds:latest
 ```
+
+生产环境不要把连接 URL 直接写入命令或镜像；上例仅展示变量名称，实际应由
+Secret 注入。启用共享存储时，如果旧的 `RVDS_DATA_DIR/subscribers.json`
+仍然存在，RVDS 会幂等导入其中的订阅，原文件不会被删除。单副本兼容模式可不
+设置 `RVDS_STORAGE_TYPE`，继续挂载数据目录。
 
 ## 订阅与发布示例
 
@@ -77,5 +86,4 @@ curl -k -X POST http://localhost:8090/rvds/rv-publish-event \
 - 在 release workflow 中生成 `PublishEventRequest`，通过 `curl`/`gh api` 等 POST 到 RVDS。
 - RVDS 会自动并发转发到已注册的 Trustee；失败结果会返回在响应中，供重试或告警。
 - 若配置了 ledger，RVDS 会在响应和下游 payload 中附带 `audit_proof`（含 event_hash/payload_hash/payload_b64、tx 句柄等），便于 RVPS/审计使用。
-
 

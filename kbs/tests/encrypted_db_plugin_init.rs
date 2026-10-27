@@ -33,9 +33,12 @@ async fn initializes_encrypted_db_through_plugin_manager() {
         ..Default::default()
     };
 
-    let manager = PluginManager::new(vec![PluginsConfig::ResourceStorage(
-        RepositoryConfig::EncryptedDb(config),
-    )])
+    let manager = PluginManager::new(
+        vec![PluginsConfig::ResourceStorage(
+            RepositoryConfig::EncryptedDb(config),
+        )],
+        None,
+    )
     .await
     .expect("EncryptedDb must initialize on the existing async runtime");
 

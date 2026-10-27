@@ -10,6 +10,7 @@ use anyhow::{anyhow, bail, Context};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use kbs_types::{Attestation, Challenge, Request, Tee, TeePubKey};
+use key_value_storage::{Storage, StorageProvider};
 use lazy_static::lazy_static;
 use log::{debug, info};
 use rand::{thread_rng, Rng};
@@ -200,13 +201,18 @@ pub struct SetPolicyInput {
 }
 
 impl AttestationService {
-    pub async fn new(config: AttestationConfig) -> Result<Self> {
+    pub async fn new(
+        config: AttestationConfig,
+        session_storage: Storage,
+        storage_provider: Option<Arc<dyn StorageProvider>>,
+    ) -> Result<Self> {
         let inner = match config.attestation_service {
             #[cfg(any(feature = "coco-as-builtin", feature = "coco-as-builtin-no-verifier"))]
             AttestationServiceConfig::CoCoASBuiltIn(cfg) => {
-                let built_in_as = super::coco::builtin::BuiltInCoCoAs::new(cfg)
-                    .await
-                    .map_err(|e| Error::AttestationServiceInitialization { source: e })?;
+                let built_in_as =
+                    super::coco::builtin::BuiltInCoCoAs::new(cfg, storage_provider.clone())
+                        .await
+                        .map_err(|e| Error::AttestationServiceInitialization { source: e })?;
                 Arc::new(built_in_as) as _
             }
             #[cfg(feature = "coco-as-grpc")]
@@ -218,17 +224,16 @@ impl AttestationService {
             }
         };
 
-        let session_map = Arc::new(SessionMap::new());
+        let session_map = Arc::new(SessionMap::new(session_storage));
 
         tokio::spawn({
             let session_map_clone = session_map.clone();
             async move {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                    session_map_clone
-                        .sessions
-                        .retain_async(|_, v| !v.is_expired())
-                        .await;
+                    if let Err(error) = session_map_clone.purge_expired().await {
+                        log::warn!("failed to purge expired KBS sessions: {error:#}");
+                    }
                 }
             }
         });
@@ -330,7 +335,7 @@ impl AttestationService {
             .cookie(session.cookie())
             .json(session.challenge());
 
-        self.session_map.insert(session);
+        self.session_map.insert(session).await?;
 
         Ok(response)
     }
@@ -352,14 +357,13 @@ impl AttestationService {
 
         let attestation: Attestation =
             serde_json::from_slice(attestation).context("deserialize Attestation")?;
+        let session_record = self
+            .session_map
+            .get(session_id)
+            .await?
+            .ok_or(anyhow!("No cookie found"))?;
         let (tee, nonce) = {
-            let session = self
-                .session_map
-                .sessions
-                .get_async(session_id)
-                .await
-                .ok_or(anyhow!("No cookie found"))?;
-            let session = session.get();
+            let session = &session_record.status;
 
             debug!("Session ID {}", session.id());
 
@@ -450,23 +454,23 @@ impl AttestationService {
             .await
             .context("verify TEE evidence failed")?;
 
-        let mut session = self
+        let mut updated_session = session_record.status;
+        updated_session.attest(token.clone());
+        if !self
             .session_map
-            .sessions
-            .get_async(session_id)
-            .await
-            .ok_or(anyhow!("session not found"))?;
-        let session = session.get_mut();
-
-        let body = serde_json::to_string(&json!({
-            "token": token,
-        }))
-        .context("Serialize token failed")?;
-
-        session.attest(token);
+            .update(&updated_session, session_record.revision)
+            .await?
+        {
+            bail!("KBS session changed concurrently; start a new authentication session")
+        }
+        let SessionStatus::Attested { token, .. } = &updated_session else {
+            unreachable!("attestation transition must produce an attested session")
+        };
+        let body =
+            serde_json::to_string(&json!({ "token": token })).context("Serialize token failed")?;
 
         Ok(HttpResponse::Ok()
-            .cookie(session.cookie())
+            .cookie(updated_session.cookie())
             .content_type("application/json")
             .body(body))
     }
@@ -481,12 +485,10 @@ impl AttestationService {
 
         let session = self
             .session_map
-            .sessions
-            .get_async(cookie.value())
-            .await
-            .context("session not found")?;
-
-        let session = session.get();
+            .get(cookie.value())
+            .await?
+            .context("session not found")?
+            .status;
 
         info!("Cookie {} request to get resource", session.id());
 
@@ -498,7 +500,7 @@ impl AttestationService {
             bail!("The session is not authorized");
         };
 
-        Ok(token.to_owned())
+        Ok(token)
     }
 }
 

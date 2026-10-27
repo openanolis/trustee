@@ -6,6 +6,7 @@ use std::{collections::HashMap, fmt::Display, sync::Arc};
 
 use actix_web::http::Method;
 use anyhow::{Context, Result};
+use key_value_storage::StorageProvider;
 use serde::Deserialize;
 
 use super::{sample, RepositoryConfig, ResourceStorage};
@@ -98,7 +99,10 @@ impl Display for PluginsConfig {
 }
 
 impl PluginsConfig {
-    async fn into_client_plugin(self) -> Result<ClientPluginInstance> {
+    async fn into_client_plugin(
+        self,
+        storage_provider: Option<Arc<dyn StorageProvider>>,
+    ) -> Result<ClientPluginInstance> {
         let plugin = match self {
             PluginsConfig::Sample(cfg) => {
                 let sample_plugin =
@@ -106,7 +110,7 @@ impl PluginsConfig {
                 Arc::new(sample_plugin) as _
             }
             PluginsConfig::ResourceStorage(repository_config) => {
-                let resource_storage = ResourceStorage::new(repository_config)
+                let resource_storage = ResourceStorage::new(repository_config, storage_provider)
                     .await
                     .context("Initialize 'Resource' plugin failed")?;
                 Arc::new(resource_storage) as _
@@ -142,11 +146,14 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
-    pub async fn new(configs: Vec<PluginsConfig>) -> Result<Self> {
+    pub async fn new(
+        configs: Vec<PluginsConfig>,
+        storage_provider: Option<Arc<dyn StorageProvider>>,
+    ) -> Result<Self> {
         let mut plugins = HashMap::new();
         for config in configs {
             let name = config.to_string();
-            let plugin = config.into_client_plugin().await?;
+            let plugin = config.into_client_plugin(storage_provider.clone()).await?;
             plugins.insert(name, plugin);
         }
         Ok(Self { plugins })

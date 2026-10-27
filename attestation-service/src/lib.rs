@@ -19,6 +19,8 @@ use canon_json::CanonicalFormatter;
 #[cfg(feature = "fs")]
 use config::Config;
 pub use kbs_types::{Attestation, Tee};
+#[cfg(feature = "fs")]
+use key_value_storage::{KvStorageProvider, StorageProvider};
 use log::info;
 use reqwest::Client;
 use rvps::{RvpsApi, RvpsError};
@@ -197,7 +199,6 @@ pub enum InitDataInput {
 
 /// A VerificationRequest contains hw evidence that the AS will verify along with some
 /// metadata required for verification.
-///
 pub struct VerificationRequest {
     /// TEE evidence bytes. This might not be the raw hardware evidence bytes. Definitions
     /// are in `verifier` crate.
@@ -246,6 +247,24 @@ impl AttestationService {
     /// with their own component instances.
     #[cfg(feature = "fs")]
     pub async fn new(config: Config) -> Result<Self, ServiceError> {
+        let storage_provider = config
+            .storage_backend
+            .clone()
+            .map(KvStorageProvider::new)
+            .map(|provider| provider as Arc<dyn StorageProvider>);
+        Self::new_with_storage_provider(config, storage_provider).await
+    }
+
+    /// Create a native AS while reusing a caller-owned storage provider. KBS
+    /// uses this entry point so its built-in AS shares the same backend and
+    /// connection configuration as KBS policies, resources, and sessions.
+    #[cfg(feature = "fs")]
+    pub async fn new_with_storage_provider(
+        config: Config,
+        storage_provider: Option<Arc<dyn StorageProvider>>,
+    ) -> Result<Self, ServiceError> {
+        validate_shared_deployment_keys(&config).await?;
+
         // Historical `new()` created the work dir at construction time. Kept
         // as a standalone mkdir purely for behavior parity.
         if !config.work_dir.as_path().exists() {
@@ -254,13 +273,23 @@ impl AttestationService {
                 .map_err(ServiceError::CreateDir)?;
         }
 
-        let rvps = rvps::initialize_rvps_client(&config.rvps_config)
+        let rvps = rvps::initialize_rvps_client(&config.rvps_config, storage_provider.clone())
             .await
             .map_err(ServiceError::Rvps)?;
 
+        let policy_storage = match storage_provider {
+            Some(provider) => Some(
+                provider
+                    .get_or_register(policy_engine::opa::AS_POLICY_NAMESPACE)
+                    .await
+                    .map_err(|e| ServiceError::Anyhow(e.into()))?,
+            ),
+            None => None,
+        };
         let token_broker = config
             .attestation_token_broker
-            .to_token_broker(&config.artifact_server_address)?;
+            .to_token_broker_with_policy_storage(&config.artifact_server_address, policy_storage)
+            .await?;
 
         let challenger: JwtChallenger = match config.challenge_key_path {
             Some(path) => JwtChallenger::new_with_private_key_path(&path).await?,
@@ -567,6 +596,87 @@ impl AttestationService {
     /// `Some`.
     pub async fn get_token_broker_oid_config(&self) -> Result<Option<String>> {
         self.token_broker.oid_config_json().await
+    }
+}
+
+#[cfg(feature = "fs")]
+async fn validate_shared_deployment_keys(config: &Config) -> Result<(), ServiceError> {
+    let require_shared = config
+        .storage_backend
+        .as_ref()
+        .is_some_and(|storage| storage.require_shared);
+    if !require_shared {
+        return Ok(());
+    }
+
+    if !config.attestation_token_broker.has_configured_signer() {
+        return Err(ServiceError::Anyhow(anyhow!(
+            "storage_backend.require_shared=true requires an explicitly configured token signer; mount the same key in every replica"
+        )));
+    }
+
+    let challenge_key_path = config.challenge_key_path.as_ref().ok_or_else(|| {
+        ServiceError::Anyhow(anyhow!(
+            "storage_backend.require_shared=true requires challenge_key_path; mount the same pre-created key in every replica"
+        ))
+    })?;
+    let metadata = fs::metadata(challenge_key_path).await.map_err(|error| {
+        ServiceError::Anyhow(anyhow!(
+            "shared-deployment challenge key {} is not readable: {error}",
+            challenge_key_path.display()
+        ))
+    })?;
+    if !metadata.is_file() {
+        return Err(ServiceError::Anyhow(anyhow!(
+            "shared-deployment challenge key {} is not a regular file",
+            challenge_key_path.display()
+        )));
+    }
+
+    Ok(())
+}
+
+#[cfg(all(test, feature = "fs"))]
+mod shared_deployment_tests {
+    use super::*;
+    use crate::token::{ear_broker, AttestationTokenConfig};
+
+    fn shared_config() -> Config {
+        Config {
+            storage_backend: Some(key_value_storage::StorageBackendConfig {
+                require_shared: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_deployment_rejects_ephemeral_keys() {
+        let error = validate_shared_deployment_keys(&shared_config())
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("explicitly configured token signer"));
+    }
+
+    #[tokio::test]
+    async fn shared_deployment_accepts_precreated_key_paths() {
+        let token_key = tempfile::NamedTempFile::new().unwrap();
+        let challenge_key = tempfile::NamedTempFile::new().unwrap();
+        let mut config = shared_config();
+        let AttestationTokenConfig::Ear(token) = &mut config.attestation_token_broker else {
+            panic!("default token broker must be EAR");
+        };
+        token.signer = Some(ear_broker::SignerConfig {
+            key_path: token_key.path().to_string_lossy().into_owned(),
+            cert_url: None,
+            cert_path: None,
+        });
+        config.challenge_key_path = Some(challenge_key.path().to_path_buf());
+
+        validate_shared_deployment_keys(&config).await.unwrap();
     }
 }
 

@@ -10,6 +10,7 @@ use anyhow::anyhow;
 use clap::Parser;
 use config::{Config, File};
 use const_format::concatcp;
+use key_value_storage::{StorageBackendConfig, StorageType};
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -52,6 +53,16 @@ impl Default for HttpServerConfig {
 /// Contains all configurable KBS properties.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct KbsConfig {
+    /// Unified storage backend for KBS authoritative state. When omitted,
+    /// legacy file and process-memory behavior is preserved.
+    #[serde(default)]
+    pub storage_backend: Option<StorageBackendConfig>,
+
+    /// Optional override for RCAR session storage. It defaults to the unified
+    /// backend's storage type when `storage_backend` is configured.
+    #[serde(default)]
+    pub session_storage_type: Option<StorageType>,
+
     /// Attestation token result broker config.
     #[serde(default)]
     pub attestation_token: AttestationTokenVerifierConfig,
@@ -88,6 +99,9 @@ const CONFIG_DOC: &str = concatcp!(
 /// Best-effort mapping from a config error string to the relevant section anchor
 /// in the KBS configuration documentation.
 fn config_section_hint(err: &str) -> Option<&'static str> {
+    if err.contains("storage_backend") || err.contains("session_storage_type") {
+        return Some(concatcp!(CONFIG_DOC, "#shared-storage-configuration"));
+    }
     if err.contains("admin") {
         return Some(concatcp!(CONFIG_DOC, "#admin-api-configuration"));
     }
@@ -217,6 +231,7 @@ mod tests {
         token::{simple, AttestationTokenConfig, COCO_AS_ISSUER_NAME, DEFAULT_TOKEN_DURATION},
     };
 
+    #[cfg(any(feature = "coco-as-builtin", feature = "coco-as-builtin-no-verifier"))]
     use reference_value_provider_service::storage::{local_fs, ReferenceValueStorageConfig};
 
     use rstest::rstest;
@@ -282,6 +297,8 @@ mod tests {
 
     #[rstest]
     #[case("test_data/configs/coco-as-grpc-1.toml",         KbsConfig {
+        storage_backend: None,
+        session_storage_type: None,
         attestation_token: AttestationTokenVerifierConfig {
             trusted_certs_paths: vec!["/etc/ca".into(), "/etc/ca2".into()],
             insecure_key: false,
@@ -323,6 +340,8 @@ mod tests {
         ))],
     })]
     #[case("test_data/configs/coco-as-builtin-1.toml",         KbsConfig {
+        storage_backend: None,
+        session_storage_type: None,
         attestation_token: AttestationTokenVerifierConfig {
             trusted_certs_paths: vec![],
             insecure_key: false,
@@ -334,6 +353,7 @@ mod tests {
             attestation_service:
                 crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(
                     attestation_service::config::Config {
+                        storage_backend: None,
                         work_dir: "/opt/coco/attestation-service".into(),
                         rvps_config: RvpsConfig::GrpcRemote(RvpsRemoteConfig {
                             address: "http://127.0.0.1:50003".into(),
@@ -369,6 +389,8 @@ mod tests {
         plugins: Vec::new(),
     })]
     #[case("test_data/configs/coco-as-grpc-2.toml",         KbsConfig {
+        storage_backend: None,
+        session_storage_type: None,
         attestation_token: AttestationTokenVerifierConfig {
             ..Default::default()
         },
@@ -398,6 +420,8 @@ mod tests {
         plugins: Vec::new(),
     })]
     #[case("test_data/configs/coco-as-builtin-2.toml",         KbsConfig {
+        storage_backend: None,
+        session_storage_type: None,
         attestation_token: AttestationTokenVerifierConfig {
             trusted_certs_paths: vec![],
             insecure_key: false,
@@ -409,8 +433,10 @@ mod tests {
             attestation_service:
                 crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(
                     attestation_service::config::Config {
+                        storage_backend: None,
                         work_dir: "/opt/confidential-containers/attestation-service".into(),
                         rvps_config: RvpsConfig::BuiltIn(RvpsCrateConfig{
+                            storage_backend: None,
                             storage: ReferenceValueStorageConfig::LocalFs(local_fs::Config{
                                 file_path: "/opt/confidential-containers/attestation-service/reference_values".into(),
                             }),
@@ -443,6 +469,8 @@ mod tests {
         plugins: Vec::new(),
     })]
     #[case("test_data/configs/coco-as-grpc-3.toml",         KbsConfig {
+        storage_backend: None,
+        session_storage_type: None,
         attestation_token: AttestationTokenVerifierConfig {
             ..Default::default()
         },
@@ -469,6 +497,8 @@ mod tests {
         plugins: Vec::new(),
     })]
     #[case("test_data/configs/coco-as-builtin-3.toml",         KbsConfig {
+        storage_backend: None,
+        session_storage_type: None,
         attestation_token: AttestationTokenVerifierConfig {
             trusted_certs_paths: vec![],
             insecure_key: false,
@@ -480,6 +510,7 @@ mod tests {
             attestation_service:
                 crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(
                     attestation_service::config::Config {
+                        storage_backend: None,
                         work_dir: "/opt/confidential-containers/attestation-service".into(),
                         rvps_config: RvpsConfig::BuiltIn(RvpsCrateConfig::default()),
                         attestation_token_broker: AttestationTokenConfig::Simple(simple::Configuration {
@@ -519,6 +550,48 @@ mod tests {
         let _env = EnvGuard::clear();
         let config = KbsConfig::try_from(Path::new(config_path)).unwrap();
         assert_eq!(config, expected, "case {config_path}");
+    }
+
+    #[test]
+    #[serial]
+    fn read_shared_storage_config() {
+        use key_value_storage::{mysql::DEFAULT_MYSQL_URL_ENV, StorageType};
+
+        let _env = EnvGuard::clear();
+        let config =
+            KbsConfig::try_from(Path::new("test_data/configs/shared-storage.toml")).unwrap();
+        let storage = config.storage_backend.unwrap();
+        assert_eq!(storage.storage_type, StorageType::Mysql);
+        assert!(storage.require_shared);
+        assert_eq!(config.session_storage_type, Some(StorageType::Mysql));
+        assert_eq!(
+            storage.backends.mysql.unwrap().url_env.as_deref(),
+            Some(DEFAULT_MYSQL_URL_ENV)
+        );
+        assert_eq!(
+            config.plugins,
+            vec![PluginsConfig::ResourceStorage(
+                RepositoryConfig::SharedStore
+            )]
+        );
+        #[cfg(any(feature = "coco-as-builtin", feature = "coco-as-builtin-no-verifier"))]
+        {
+            let crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(as_config) =
+                config.attestation_service.attestation_service
+            else {
+                panic!("expected built-in attestation service");
+            };
+            let attestation_service::rvps::RvpsConfig::BuiltIn(rvps_config) = as_config.rvps_config
+            else {
+                panic!("expected built-in RVPS");
+            };
+            assert!(matches!(
+                rvps_config.storage,
+                reference_value_provider_service::storage::ReferenceValueStorageConfig::SharedStore(
+                    _
+                )
+            ));
+        }
     }
 
     #[test]

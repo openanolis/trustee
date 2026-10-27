@@ -1,5 +1,7 @@
 name: Actionlint
 on: [pull_request]
+permissions:
+  contents: read
 jobs:
   actionlint:
     name: Workflow Files
@@ -8,4 +10,8 @@ jobs:
     - uses: actions/checkout@v5
     - uses: reviewdog/action-actionlint@v1
       with:
-        fail_on_error: true
+        # Keep lint gating independent of check-run write permissions (forks
+        # and read-only workflow tokens cannot publish reviewdog reports).
+        reporter: local
+        filter_mode: nofilter
+        fail_level: error

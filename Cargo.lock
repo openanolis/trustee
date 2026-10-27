@@ -646,6 +646,7 @@ dependencies = [
  "hex",
  "jsonwebtoken",
  "kbs-types",
+ "key-value-storage",
  "lazy_static",
  "log",
  "openssl",
@@ -3985,6 +3986,7 @@ dependencies = [
  "jsonwebtoken",
  "jwt-simple",
  "kbs-types",
+ "key-value-storage",
  "kms",
  "lazy_static",
  "libloading 0.8.9",
@@ -4003,12 +4005,12 @@ dependencies = [
  "rstest",
  "rustls-pki-types",
  "rustls-webpki 0.103.15",
- "scc",
  "semver",
  "serde",
  "serde_json",
  "serde_qs",
  "serial_test 3.5.0",
+ "sha2",
  "sqlx",
  "strum 0.25.0",
  "tempfile",
@@ -4054,6 +4056,20 @@ checksum = "d8f198d1db720e4940b5a493201d199d9f24f568f8f746bd13706243a2f71598"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
+]
+
+[[package]]
+name = "key-value-storage"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "derivative",
+ "serde",
+ "serial_test 3.5.0",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -4819,14 +4835,14 @@ dependencies = [
 
 [[package]]
 name = "parity-scale-codec-derive"
-version = "3.7.5"
+version = "3.6.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34b4653168b563151153c9e4c08ebed57fb8262bebfa79711552fa983c623e7a"
+checksum = "d830939c76d294956402033aee57a6da7b438f2294eb94864c37b0569053a42c"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -5614,15 +5630,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rdrand"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d92195228612ac8eed47adbc2ed0f04e513a4ccb98175b6f2bd04d963b533655"
-dependencies = [
- "rand_core 0.6.4",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5703,8 +5710,10 @@ dependencies = [
  "clap",
  "config",
  "env_logger 0.10.2",
+ "futures",
  "git2",
  "hex",
+ "key-value-storage",
  "log",
  "path-clean",
  "prost",
@@ -6253,12 +6262,14 @@ dependencies = [
  "ethabi",
  "futures",
  "hex",
+ "key-value-storage",
  "log",
  "rand 0.8.8",
  "reqwest 0.13.5",
  "secp256k1",
  "serde",
  "serde_json",
+ "serial_test 3.5.0",
  "sha2",
  "thiserror 2.0.21",
  "tokio",
@@ -6345,15 +6356,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "scc"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46e6f046b7fef48e2660c57ed794263155d713de679057f2d0c169bfc6e756cc"
-dependencies = [
- "sdd",
 ]
 
 [[package]]
@@ -6455,12 +6457,6 @@ dependencies = [
  "ring",
  "untrusted",
 ]
-
-[[package]]
-name = "sdd"
-version = "3.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
 
 [[package]]
 name = "sec1"
@@ -6811,8 +6807,6 @@ dependencies = [
  "iocuddle",
  "lazy_static",
  "libc",
- "openssl",
- "rdrand",
  "serde",
  "serde-big-array",
  "serde_bytes",

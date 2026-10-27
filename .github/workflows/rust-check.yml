@@ -104,6 +104,16 @@ jobs:
           mysql -uroot -e "SET GLOBAL innodb_default_row_format=COMPACT"
         make check TEST_FEATURES=encrypted-db
 
+    - name: Shared Storage Test
+      env:
+        MYSQL_TEST_URL: mysql://root@127.0.0.1:3306/trustee_kbs_test
+      run: |
+        cargo test -p key-value-storage
+        cargo test -p kbs shared_storage_mysql
+        cargo test -p attestation-service shared_storage_mysql
+        cargo test -p reference-value-provider-service shared_storage_mysql
+        cargo test -p rvds shared_storage_mysql
+
   as-check:
     if: |
       github.event_name == 'pull_request' || 
@@ -180,6 +190,11 @@ jobs:
           sudo -E PATH="$PATH" -s cargo test -p verifier --no-default-features --features tdx-dcap-rust tdx::verify::native::tests
           sudo -E PATH="$PATH" -s cargo build -p attestation-service --bin restful-as --no-default-features --features restful-bin,all-verifier-rust,rvps-grpc
 
+      - name: Run pure-Rust SNP verifier tests and lint
+        run: |
+          cargo test -p verifier --no-default-features --features snp-rustcrypto snp:: --lib
+          cargo clippy -p verifier --no-default-features --features snp-rustcrypto --all-targets -- -D warnings -A clippy::derive_partial_eq_without_eq
+
       - name: Run cargo fmt check
         run: |
           sudo -E PATH="$PATH" -s cargo fmt -p attestation-service -p verifier --check
@@ -254,5 +269,5 @@ jobs:
         run: |
           RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p eventlog --target wasm32-unknown-unknown
           RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p reference-value-provider-service --target wasm32-unknown-unknown --no-default-features  # no "fs" feature in wasm
-          RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p attestation-service --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust,policy-artifact-server,policy-rvps,regorus-regovm
-          RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p verifier --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust
+          RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p attestation-service --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust,snp-rustcrypto,policy-artifact-server,policy-rvps,regorus-regovm
+          RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p verifier --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust,snp-rustcrypto

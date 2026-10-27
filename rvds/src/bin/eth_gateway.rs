@@ -111,7 +111,7 @@ async fn record(body: web::Json<RecordRequest>, data: web::Data<AppState>) -> im
     };
 
     HttpResponse::Ok().json(RecordResponse {
-        tx_hash: format!("{:#x}", pending),
+        tx_hash: format!("{pending:#x}"),
     })
 }
 

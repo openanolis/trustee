@@ -1,14 +1,15 @@
-%define alinux_release beta
+%define alinux_release 1
 %global config_dir /etc/trustee
 %global debug_package %{nil}
 %global __brp_mangle_shebangs %{nil}
+%bcond_with check
 
 Name:           trustee
 Version:        1.10.1
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
-BuildArch:      x86_64
+ExclusiveArch:  x86_64 aarch64
 
 License:	Apache-2.0
 URL: 		  https://github.com/openanolis/trustee
@@ -19,9 +20,13 @@ Source3:  go-vendor.tar.gz
 Source4:  frontend_node_modules.tar.gz
 Source5:  challenge-ra-policy.rego
 
-Requires: openssl tzdata sqlite-libs libtdx-verify
+Requires: openssl tzdata sqlite-libs
+%ifarch x86_64
+Requires: libtdx-verify
+BuildRequires: libtdx-attest-devel libtdx-verify-devel
+%endif
 
-BuildRequires:  clang perl protobuf-devel git libtdx-attest-devel libtdx-verify-devel libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel
+BuildRequires:  clang perl protobuf-devel git libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel
 BuildRequires:  ca-certificates gcc golang
 
 # Dual toolchain mode. When `with_rustup` is defined, cargo is provided by rustup
@@ -62,7 +67,11 @@ tar -xvf %{SOURCE4} -C frontend
 
 %build
 pushd dist/
+%ifarch aarch64
+make DCAP_BACKEND=rust
+%else
 make
+%endif
 popd
 pushd frontend/
 npm run build
@@ -80,6 +89,11 @@ popd
 # Install default EAR policy for attestation-challenge-client
 install -d %{buildroot}/var/lib/attestation/token/ear/policies/opa
 install -m 0644 %{SOURCE5} %{buildroot}/var/lib/attestation/token/ear/policies/opa/default.rego
+
+%if %{with check}
+%check
+cargo test --release --locked --offline -p verifier --no-default-features --features snp-verifier snp::tests
+%endif
 
 %pre
 if [ ! -s /etc/trustee/private.key ] && [ -s /etc/trustee/public.pub ]; then
@@ -207,6 +221,15 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Mon Oct 12 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.10.1-1
+- Verifier/Hygon DCU: publish mixed-adapter attestation support using public
+  openanolis/csv-rs and normalize chip IDs for local certificate lookup
+- RPM: preserve configuration and signing keys across upgrades and support
+  package lifecycle operations without systemd
+- Rekor: migrate v2 uploads and verification from DSSE to hashedrekord
+- RVPS: reduce reference-value query log noise
+- CI: refresh Actions runtimes and fix release workflow shellcheck findings
+
 * Mon Sep 21 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.10.1-beta
 - Verifier/Hygon DCU: update csv-rs to Hygon's latest secure-adapter revision
   and normalize fixed-width chip IDs for local certificate lookup

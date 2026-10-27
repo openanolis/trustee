@@ -41,6 +41,13 @@ spec:
           env:
             - name: RUST_LOG
               value: {{ .Values.log_level }}
+            {{- if .Values.sharedStorage.enabled }}
+            - name: TRUSTEE_GATEWAY_DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sharedStorage.existingSecret is required when sharedStorage.enabled=true" .Values.sharedStorage.existingSecret | quote }}
+                  key: {{ .Values.sharedStorage.gatewayDsnKey | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.gateway.service.port }}
@@ -51,14 +58,15 @@ spec:
             - name: config
               mountPath: /app/config.yaml
               subPath: trustee-gateway.yml
+            {{- if not .Values.sharedStorage.enabled }}
             - name: data
               mountPath: /app/data
+            {{- end }}
       volumes:
         - name: config
           configMap:
             name: gateway-config
-  {{- if .Values.gateway.storage.enabled }}
-  {{- else }}
+  {{- if and (not .Values.sharedStorage.enabled) (not .Values.gateway.storage.enabled) }}
         - name: data
           emptyDir: {}
   {{- end }}
@@ -71,7 +79,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 
-{{- if .Values.gateway.storage.enabled }}
+{{- if and (not .Values.sharedStorage.enabled) .Values.gateway.storage.enabled }}
   volumeClaimTemplates:
   - metadata:
       name: data

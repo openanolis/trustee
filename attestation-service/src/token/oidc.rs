@@ -173,6 +173,33 @@ impl OIDCAttestationTokenBroker {
         })
     }
 
+    #[cfg(feature = "fs")]
+    pub async fn from_config_with_policy_storage(
+        config: Configuration,
+        artifact_server_address: &str,
+        policy_storage: key_value_storage::Storage,
+    ) -> Result<Self> {
+        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(
+            crate::policy_engine::opa::OPAShared::new_with_policy_file(
+                policy_storage,
+                std::path::Path::new(&config.policy_dir),
+                DEFAULT_POLICY,
+                DEFAULT_POLICY_ID,
+                artifact_server_address,
+            )
+            .await?,
+        );
+        let signer: Arc<dyn SignKeyProvider<RsaPrivateKey>> = match config.signer {
+            Some(sc) => Arc::new(super::signer::FsSigner::<RsaPrivateKey>::from_config(sc)?),
+            None => Arc::new(super::signer::EphemeralSigner::<RsaPrivateKey>::new()?),
+        };
+        Ok(Self {
+            settings: config.settings,
+            signer,
+            policy_engine,
+        })
+    }
+
     pub fn from_components(
         settings: TokenBrokerSettings,
         signer: Arc<dyn SignKeyProvider<RsaPrivateKey>>,

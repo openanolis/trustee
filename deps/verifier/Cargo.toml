@@ -62,7 +62,7 @@ tdx-dcap-rust = [
 sgx-verifier = ["scroll", "intel-tee-quote-verification-rs"]
 az-snp-vtpm-verifier = ["az-snp-vtpm", "sev", "snp-verifier"]
 az-tdx-vtpm-verifier = ["az-tdx-vtpm", "openssl", "tdx-dcap-ffi"]
-snp-verifier = ["__snp", "openssl", "sev/openssl"]
+snp-verifier = ["__snp", "openssl"]
 # Same SNP checks and evidence format, with RustCrypto certificate/report
 # signatures. No native crypto library; usable in wasm32-unknown-unknown.
 snp-rustcrypto = ["__snp", "dep:p384", "dep:rsa", "dep:x509-cert", "dep:pem"]
@@ -125,6 +125,8 @@ scroll = { version = "0.11.0", default-features = false, features = [
 serde.workspace = true
 serde_json.workspace = true
 serde_with = { workspace = true, optional = true }
+# Only SNP wire types are needed. Neither crypto backend needs sev/openssl,
+# which pulls in the x86-only rdrand dependency.
 sev = { version = "4.0.0", default-features = false, features = ["snp"], optional = true }
 sev-modern = { package = "sev", version = "=7.1.0", default-features = false, features = ["snp", "serde"], optional = true }
 p384 = { version = "0.13", features = ["ecdsa"], optional = true }

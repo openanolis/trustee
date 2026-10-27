@@ -8,6 +8,7 @@ use asn1_rs::{oid, Integer, OctetString, Oid};
 use async_trait::async_trait;
 #[cfg(not(feature = "snp-rustcrypto"))]
 use openssl::{
+    bn::BigNum,
     ec::EcKey,
     ecdsa,
     nid::Nid,
@@ -589,7 +590,16 @@ pub(crate) fn verify_report_signature(
     // verify report signature
     #[cfg(not(feature = "snp-rustcrypto"))]
     {
-        let sig = ecdsa::EcdsaSig::try_from(&report.signature)?;
+        // SNP stores R and S in little-endian 72-byte fields. Convert directly
+        // instead of enabling sev's OpenSSL feature and its x86 RDRAND dependency.
+        let mut r = *report.signature.r();
+        let mut s = *report.signature.s();
+        r.reverse();
+        s.reverse();
+        let sig = ecdsa::EcdsaSig::from_private_components(
+            BigNum::from_slice(&r)?,
+            BigNum::from_slice(&s)?,
+        )?;
         let data = &raw[..=0x29f];
 
         let pub_key = EcKey::try_from(endorsement_key.public_key()?)?;

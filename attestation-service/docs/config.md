@@ -15,6 +15,7 @@ section:
 
 | Property                   | Type                        | Description                                         | Required | Default |
 |----------------------------|-----------------------------|-----------------------------------------------------|----------|---------|
+| `storage_backend`          | SharedStorageConfiguration  | Optional namespaced backend for AS policies and built-in RVPS reference values. | False | None |
 | `work_dir`                 | String                      | The location for Attestation Service to store data. | False      | Firstly try to read from ENV `AS_WORK_DIR`. If not any, use `/opt/confidential-containers/attestation-service`       |
 | `rvps_config`              | [RVPSConfiguration][2]      | RVPS configuration                                  | False      | -       |
 | `artifact_server_address`  | String                      | Artifact Server URL used by policy `query_artifact_server`. | False | `https://attest-pre.aliyuncs.com` |
@@ -24,6 +25,27 @@ section:
 To rotate the challenge key without restarting AS, replace the key file
 atomically. Outstanding challenge tokens signed by the previous key become
 invalid immediately after replacement.
+
+#### Shared Storage Configuration
+
+Configure `storage_backend` together with the built-in RVPS `SharedStore`
+backend to run multiple AS replicas over one authoritative state store. AS
+policies use the `attestation_service_policy` namespace and reference values
+use `reference_value`; compare-and-swap protects concurrent RVPS updates.
+
+| Property | Type | Description | Default |
+|----------|------|-------------|---------|
+| `storage_type` | String | `memory` or `mysql`. | `memory` |
+| `require_shared` | Boolean | Reject a backend without cross-replica sharing, compare-and-swap, and TTL. Set to `true` for HA. | `false` |
+| `backends.mysql.url_env` | String | Environment variable containing the MySQL URL. | `TRUSTEE_STORAGE_MYSQL_URL` |
+| `backends.mysql.max_connections` | Integer | Maximum connections in each replica's pool. | `10` |
+| `backends.mysql.min_connections` | Integer | Minimum connections in each replica's pool. | `0` |
+| `backends.mysql.acquire_timeout_seconds` | Integer | Connection acquisition timeout. | `10` |
+
+The token-signing key, certificate, and challenge key are cryptographic key
+material rather than ordinary mutable records. Every replica must receive the
+same keys through a Kubernetes Secret, CSI secret-store driver, or KMS-backed
+mount. Do not place private keys in the MySQL URL or inline configuration.
 
 [1]: #attestationtokenbroker
 [2]: #rvps-configuration
@@ -80,9 +102,11 @@ If `type` is set to `BuiltIn`, the following extra properties can be set
 
 | Property       | Type                    | Description                                                           | Required | Default  |
 |----------------|-------------------------|-----------------------------------------------------------------------|----------|----------|
-| `storage`   | ReferenceValueStorageConfig | Configuration of storage for reference values (`LocalFs`, `LocalJson`, or `InMemory`)       | No       | `LocalFs`|
+| `storage`   | ReferenceValueStorageConfig | Configuration of storage for reference values (`SharedStore`, `LocalFs`, `LocalJson`, or `InMemory`)       | No       | `LocalFs`|
 
-`ReferenceValueStorageConfig` can contain a `LocalFs`, `LocalJson`, or `InMemory` configuration.
+`ReferenceValueStorageConfig` can contain a `SharedStore`, `LocalFs`,
+`LocalJson`, or `InMemory` configuration. `SharedStore` has no extra fields and
+requires `storage_backend`. The other variants retain their legacy behavior.
 
 For `LocalFs`, the following properties can be set
 
@@ -109,26 +133,45 @@ If `type` is set to `GrpcRemote`, the following extra properties can be set
 
 ## Configuration Examples
 
-Running with a built-in RVPS:
+Running multiple replicas with shared policies and a shared built-in RVPS:
 
 ```json
 {
+    "storage_backend": {
+        "storage_type": "mysql",
+        "require_shared": true,
+        "backends": {
+            "mysql": {
+                "url_env": "TRUSTEE_STORAGE_MYSQL_URL",
+                "max_connections": 20,
+                "min_connections": 2,
+                "acquire_timeout_seconds": 10
+            }
+        }
+    },
     "work_dir": "/var/lib/attestation-service/",
-    "policy_engine": "opa",
+    "challenge_key_path": "/run/secrets/trustee/challenge-key.pem",
     "rvps_config": {
         "type": "BuiltIn",
         "storage": {
-            "type": "LocalFs"
-            "file_path": "/var/lib/attestation-service/reference-values"
+            "type": "SharedStore"
         }
     },
     "artifact_server_address": "https://attest-pre.aliyuncs.com",
     "attestation_token_broker": {
         "type": "Ear",
-        "duration_min": 5
+        "duration_min": 5,
+        "signer": {
+            "key_path": "/run/secrets/trustee/token-signer-key.pem"
+        }
     }
 }
 ```
+
+Set `TRUSTEE_STORAGE_MYSQL_URL` in every replica, for example from a
+Kubernetes Secret. Omitting `storage_backend` keeps the existing filesystem
+policy and RVPS configuration. Pure-library/WASM users continue to construct
+the in-memory policy engine and `InMemory` RVPS through the fs-free APIs.
 
 Running with a remote RVPS:
 

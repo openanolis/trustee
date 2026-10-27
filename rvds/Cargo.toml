@@ -13,8 +13,9 @@
  chrono = { workspace = true }
  env_logger = { workspace = true }
  futures = "0.3"
- log = { workspace = true }
- reqwest.workspace = true
+log = { workspace = true }
+key-value-storage = { path = "../deps/key-value-storage" }
+reqwest.workspace = true
  serde = { workspace = true, features = ["derive"] }
  serde_json = { workspace = true }
  thiserror = { workspace = true }
@@ -29,4 +30,6 @@ ethabi = "18"
 secp256k1 = { version = "0.27", features = ["rand"] }
 base64 = { workspace = true }
 
+[dev-dependencies]
+serial_test = "3.0"
 

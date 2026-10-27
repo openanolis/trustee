@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
@@ -59,7 +61,8 @@ type RVPSConfig struct {
 
 // DatabaseConfig holds database configuration
 type DatabaseConfig struct {
-	Type string `mapstructure:"type"` // "sqlite" or "mysql"
+	Type          string `mapstructure:"type"` // "sqlite" or "mysql"
+	RequireShared bool   `mapstructure:"require_shared"`
 
 	// SQLite configuration
 	Path                   string `mapstructure:"path"` // SQLite file path
@@ -118,6 +121,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	viper.SetDefault("attestation_service.url", "http://localhost:50005")
 	viper.SetDefault("rvps.grpc_addr", "localhost:50003")
 	viper.SetDefault("database.type", "sqlite")
+	viper.SetDefault("database.require_shared", false)
 	viper.SetDefault("database.path", "./trustee-gateway.db")
 	viper.SetDefault("database.use_memory", true)
 	viper.SetDefault("database.backup_interval", "2m")
@@ -133,6 +137,9 @@ func LoadConfig(configPath string) (*Config, error) {
 	viper.SetDefault("audit.cleanup_interval_hours", 24)
 	viper.SetDefault("attestation_agent_instance_info.heartbeat_timeout_minutes", 10)
 	viper.SetDefault("credential.path", "")
+	if err := viper.BindEnv("database.dsn", "TRUSTEE_GATEWAY_DATABASE_DSN"); err != nil {
+		return nil, fmt.Errorf("bind gateway database DSN environment variable: %w", err)
+	}
 
 	if err := viper.ReadInConfig(); err != nil {
 		logrus.Warnf("Failed to read config file: %v. Using default values.", err)
@@ -141,6 +148,12 @@ func LoadConfig(configPath string) (*Config, error) {
 	var config Config
 	if err := viper.Unmarshal(&config); err != nil {
 		return nil, err
+	}
+	if config.Database.RequireShared && config.Database.Type != "mysql" {
+		return nil, fmt.Errorf(
+			"database.require_shared=true requires database.type=mysql, got %q",
+			config.Database.Type,
+		)
 	}
 
 	return &config, nil

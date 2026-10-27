@@ -22,6 +22,7 @@ spec:
         app: attestation-service
         {{- include "coco-kbs.selectorLabels" . | nindent 8 }}
     spec:
+      {{- if not .Values.sharedStorage.enabled }}
       initContainers:
         - name: init-as-policy
           image: alpine:3.20
@@ -37,6 +38,7 @@ spec:
               mountPath: /opt/confidential-containers/attestation-service/token/ear/policies/opa
             - name: policy-default
               mountPath: /tmp/policy-default
+      {{- end }}
       {{- with .Values.as.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -57,6 +59,13 @@ spec:
           env:
             - name: RUST_LOG
               value: {{ .Values.log_level }}
+            {{- if .Values.sharedStorage.enabled }}
+            - name: TRUSTEE_STORAGE_MYSQL_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sharedStorage.existingSecret is required when sharedStorage.enabled=true" .Values.sharedStorage.existingSecret | quote }}
+                  key: {{ .Values.sharedStorage.mysqlUrlKey | quote }}
+            {{- end }}
           ports:
             - name: tcp
               containerPort: {{ .Values.as.service.port }}
@@ -76,8 +85,18 @@ spec:
               mountPath: /etc/attestation-service
             - name: sgx-config
               mountPath: /etc/sgx-config
+            {{- if .Values.sharedStorage.enabled }}
+            - name: as-keys
+              mountPath: /run/secrets/trustee
+              readOnly: true
+            - name: policy-default
+              mountPath: /opt/confidential-containers/attestation-service/token/ear/policies/opa/default.rego
+              subPath: default.rego
+              readOnly: true
+            {{- else }}
             - name: policy
               mountPath: /opt/confidential-containers/attestation-service/token/ear/policies/opa
+            {{- end }}
       dnsConfig:
         nameservers:
           - 100.100.2.136
@@ -107,11 +126,25 @@ spec:
         - name: sgx-config
           configMap:
             name: sgx-config
+        {{- if .Values.sharedStorage.enabled }}
+        - name: as-keys
+          secret:
+            secretName: {{ required "sharedStorage.asKeysExistingSecret is required when sharedStorage.enabled=true" .Values.sharedStorage.asKeysExistingSecret | quote }}
+            items:
+              - key: {{ .Values.sharedStorage.tokenSignerKey | quote }}
+                path: token-signer-key.pem
+              - key: {{ .Values.sharedStorage.challengeKey | quote }}
+                path: challenge-key.pem
+        - name: policy-default
+          configMap:
+            name: {{ $policyConfigMap }}
+        {{- else }}
         - name: policy
           emptyDir: {}
         - name: policy-default
           configMap:
             name: {{ $policyConfigMap }}
+        {{- end }}
       {{- with .Values.as.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

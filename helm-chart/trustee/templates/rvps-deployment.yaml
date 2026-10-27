@@ -40,6 +40,13 @@ spec:
           env:
             - name: RUST_LOG
               value: {{ .Values.log_level }}
+            {{- if .Values.sharedStorage.enabled }}
+            - name: TRUSTEE_STORAGE_MYSQL_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sharedStorage.existingSecret is required when sharedStorage.enabled=true" .Values.sharedStorage.existingSecret | quote }}
+                  key: {{ .Values.sharedStorage.mysqlUrlKey | quote }}
+            {{- end }}
           ports:
             - name: tcp
               containerPort: {{ .Values.rvps.service.port }}
@@ -57,14 +64,18 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/rvps-config
+            {{- if not .Values.sharedStorage.enabled }}
             - mountPath: /opt/confidential-containers/attestation-service/reference_values
               name: reference-values
+            {{- end }}
       volumes:
         - name: config
           configMap:
             name: rvps-config
+        {{- if not .Values.sharedStorage.enabled }}
         - name: reference-values
           emptyDir: {}
+        {{- end }}
       {{- with .Values.rvps.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

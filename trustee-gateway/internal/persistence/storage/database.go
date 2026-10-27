@@ -153,7 +153,15 @@ func (d *Database) migrateSchema() error {
 	logrus.Info("Migrating database schema")
 
 	// Create tables for all models
-	err := d.DB.AutoMigrate(
+	migrationDB := d.DB
+	if d.config.Type == "mysql" {
+		// Audit rows contain several large text columns and instance metadata.
+		// Inheriting COMPACT stores text prefixes inline and can exceed InnoDB's
+		// row limit before the Gateway can serve any requests. Specify the row
+		// format for new tables without changing the server's global defaults.
+		migrationDB = migrationDB.Set("gorm:table_options", "ENGINE=InnoDB ROW_FORMAT=DYNAMIC")
+	}
+	err := migrationDB.AutoMigrate(
 		&models.AttestationRecord{},
 		&models.ResourceRequest{},
 		&models.AAInstanceHeartbeat{},

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod local_fs;
+pub mod shared_store;
 
 #[cfg(feature = "encrypted-local-fs")]
 pub mod encrypted_local_fs;

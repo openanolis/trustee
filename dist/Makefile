@@ -6,6 +6,19 @@ BUILDROOT ?=
 PREFIX ?= /usr
 CONFIG_DIR ?= /etc/trustee
 
+# aarch64 RPMs use the existing Rust DCAP backend instead of Intel's
+# x86-only shared libraries. Keep every non-DCAP default AS capability.
+DCAP_BACKEND ?= ffi
+ifeq ($(DCAP_BACKEND),rust)
+AS_BUILD_FLAGS := --no-default-features
+AS_FEATURES := rvps-grpc,all-verifier-rust,fs,policy-rvps,policy-artifact-server,shared-storage-mysql
+else ifeq ($(DCAP_BACKEND),ffi)
+AS_BUILD_FLAGS :=
+AS_FEATURES := hygon-dcu-verifier
+else
+$(error DCAP_BACKEND must be ffi or rust)
+endif
+
 # 获取版本号
 VERSION ?= $(shell grep "^Version:" ../rpm/trustee.spec | awk '{print $$2}')
 
@@ -42,11 +55,11 @@ build:
 	CGO_ENABLED=1 GOOS=linux go build -mod vendor -a -installsuffix cgo -ldflags="-s -w" -o gateway cmd/server/main.go && \
 	cd ..
 	cargo build -p kbs --locked --release --no-default-features --features coco-as-grpc,aliyun,tpm-pca,encrypted-local-fs,encrypted-db
-	cargo build --bin restful-as --release --features restful-bin,hygon-dcu-verifier --locked
-	cargo build --bin grpc-as --release --features grpc-bin,hygon-dcu-verifier --locked
-	cargo build --bin rvps --release
-	cargo build --bin rvps-tool --release
-	cargo build --bin attestation-challenge-client --release --features attestation-challenge-client --locked
+	cargo build -p attestation-service --bin restful-as --release $(AS_BUILD_FLAGS) --features restful-bin,$(AS_FEATURES) --locked
+	cargo build -p attestation-service --bin grpc-as --release $(AS_BUILD_FLAGS) --features grpc-bin,$(AS_FEATURES) --locked
+	cargo build -p reference-value-provider-service --bin rvps --release --locked
+	cargo build -p reference-value-provider-service --bin rvps-tool --release --locked
+	cargo build -p attestation-service --bin attestation-challenge-client --release $(AS_BUILD_FLAGS) --features attestation-challenge-client,$(AS_FEATURES) --locked
 	@echo "编译 trustee-gateway..."
 	@echo "编译完成"
 

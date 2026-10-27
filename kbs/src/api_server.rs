@@ -11,8 +11,10 @@ use actix_web::{
 };
 use actix_web_httpauth::headers::authorization::{Authorization, Bearer};
 use anyhow::{anyhow, Context};
+use key_value_storage::{memory::MemoryStorage, KvStorageProvider, Storage, StorageProvider};
 use log::info;
 use serde::Deserialize;
+use std::sync::Arc;
 
 use crate::{
     admin::Admin, config::KbsConfig, jwe::jwe, plugins::PluginManager, policy_engine::PolicyEngine,
@@ -80,16 +82,67 @@ impl ApiServer {
     }
 
     pub async fn new(config: KbsConfig) -> Result<Self> {
-        let plugin_manager = PluginManager::new(config.plugins.clone())
+        let (storage_provider, policy_storage, session_storage): (
+            Option<Arc<dyn StorageProvider>>,
+            Option<Storage>,
+            Storage,
+        ) = if let Some(storage_config) = config.storage_backend.clone() {
+            let session_storage_type = config
+                .session_storage_type
+                .unwrap_or(storage_config.storage_type);
+            let provider = KvStorageProvider::new(storage_config);
+            let policy_storage = provider
+                .get_or_register("kbs")
+                .await
+                .map_err(|e| Error::PluginManagerInitialization { source: e.into() })?;
+            let session_storage = provider
+                .get_or_register_with_type("kbs_protocol_session", session_storage_type)
+                .await
+                .map_err(|e| Error::PluginManagerInitialization { source: e.into() })?;
+            let provider: Arc<dyn StorageProvider> = provider;
+            (Some(provider), Some(policy_storage), session_storage)
+        } else {
+            if config.session_storage_type.is_some() {
+                return Err(Error::PluginManagerInitialization {
+                    source: anyhow!(
+                        "session_storage_type requires a storage_backend configuration"
+                    ),
+                });
+            }
+            (None, None, Arc::new(MemoryStorage::default()))
+        };
+
+        let plugin_manager = PluginManager::new(config.plugins.clone(), storage_provider.clone())
             .await
             .map_err(|e| Error::PluginManagerInitialization { source: e })?;
         let token_verifier = TokenVerifier::from_config(config.attestation_token.clone()).await?;
-        let policy_engine = PolicyEngine::new(&config.policy_engine).await?;
+        let policy_engine = PolicyEngine::new(&config.policy_engine, policy_storage).await?;
         let admin_auth = Admin::try_from(config.admin.clone())?;
 
         #[cfg(feature = "as")]
-        let attestation_service =
-            crate::attestation::AttestationService::new(config.attestation_service.clone()).await?;
+        let mut attestation_config = config.attestation_service.clone();
+        #[cfg(feature = "as")]
+        match &mut attestation_config.attestation_service {
+            #[cfg(any(feature = "coco-as-builtin", feature = "coco-as-builtin-no-verifier"))]
+            crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(as_config) => {
+                if as_config.storage_backend.is_none() {
+                    as_config.storage_backend = config.storage_backend.clone();
+                }
+            }
+            #[cfg(feature = "coco-as-grpc")]
+            crate::attestation::config::AttestationServiceConfig::CoCoASGrpc(_) => {}
+        }
+
+        #[cfg(feature = "as")]
+        let attestation_service = crate::attestation::AttestationService::new(
+            attestation_config,
+            session_storage,
+            storage_provider,
+        )
+        .await?;
+
+        #[cfg(not(feature = "as"))]
+        let _ = session_storage;
 
         Ok(Self {
             config,
@@ -199,12 +252,14 @@ pub(crate) async fn api(
             .map_err(From::from),
         #[cfg(feature = "as")]
         "attestation-policy" if request.method() == Method::POST => {
+            core.admin_auth.validate_auth(&request)?;
             core.attestation_service.set_policy(&body).await?;
 
             Ok(HttpResponse::Ok().finish())
         }
         #[cfg(feature = "as")]
         "attestation-policy" if request.method() == Method::GET && !additional_path.is_empty() => {
+            core.admin_auth.validate_auth(&request)?;
             let policy_id = additional_path.strip_prefix('/').unwrap_or(additional_path);
 
             let policy = core.attestation_service.get_policy(policy_id).await?;
@@ -216,6 +271,7 @@ pub(crate) async fn api(
         "attestation-policy"
             if request.method() == Method::DELETE && !additional_path.is_empty() =>
         {
+            core.admin_auth.validate_auth(&request)?;
             let policy_id = additional_path.strip_prefix('/').unwrap_or(additional_path);
 
             core.attestation_service.delete_policy(policy_id).await?;
@@ -223,6 +279,7 @@ pub(crate) async fn api(
         }
         #[cfg(feature = "as")]
         "attestation-policies" if request.method() == Method::GET => {
+            core.admin_auth.validate_auth(&request)?;
             let policies = core.attestation_service.list_policies().await?;
             let policies_json = serde_json::to_string(&policies)?;
 
@@ -299,6 +356,7 @@ pub(crate) async fn api(
             Ok(HttpResponse::Ok().content_type("text/xml").body(policy))
         }
         "resources" if request.method() == Method::GET => {
+            core.admin_auth.validate_auth(&request)?;
             // Get the resource plugin
             let plugin = core
                 .plugin_manager
