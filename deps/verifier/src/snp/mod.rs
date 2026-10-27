@@ -6,6 +6,7 @@ use self::serde::{Deserialize, Serialize};
 use super::*;
 use asn1_rs::{oid, Integer, OctetString, Oid};
 use async_trait::async_trait;
+#[cfg(not(feature = "snp-rustcrypto"))]
 use openssl::{
     bn::BigNum,
     ec::EcKey,
@@ -15,6 +16,10 @@ use openssl::{
     sha::sha384,
     x509::{self, X509},
 };
+#[cfg(feature = "snp-rustcrypto")]
+mod rustcrypto;
+#[cfg(feature = "snp-rustcrypto")]
+use rustcrypto::{get_common_name, verify_signature, Certificate as X509};
 use serde_json::json;
 use sev::firmware::guest::AttestationReport;
 use sev::firmware::host::{CertTableEntry, CertType};
@@ -28,14 +33,44 @@ use std::{
 };
 use x509_parser::prelude::*;
 
+#[cfg(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+))]
+async fn get_vcek(_: &[u8], _: ProcessorGeneration, _: &[u8]) -> Result<Vec<u8>> {
+    bail!("Browser SNP evidence must include its AMD-signed VCEK or VLEK certificate")
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct SnpEvidence {
+    #[serde(deserialize_with = "deserialize_report")]
     attestation_report: AttestationReport,
     cert_chain: Option<Vec<CertTableEntry>>,
     /// Base64-encoded SVSM service manifest. When present, REPORT_DATA must
     /// contain SHA-512(padded nonce || manifest), as defined by the SVSM ABI.
     #[serde(default)]
     svsm_manifest: Option<String>,
+}
+
+/// Current CoCo AA uses sev 7's named CPUID, TCB and mitigation fields.
+/// Normalize through that crate's ABI byte encoder into the shared report
+/// representation. Every reconstructed signed byte is still authenticated by
+/// the report signature; this is not an alternate appraisal path. Preserve the
+/// older schema (including its raw reserved bytes) for existing attesters.
+fn deserialize_report<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<AttestationReport, D::Error> {
+    use sev_modern::parser::ByteParser;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.get("key_info").is_some() {
+        let report: sev_modern::firmware::guest::AttestationReport =
+            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        let raw = report.to_bytes().map_err(serde::de::Error::custom)?;
+        bincode::deserialize(&raw).map_err(serde::de::Error::custom)
+    } else {
+        serde_json::from_value(value).map_err(serde::de::Error::custom)
+    }
 }
 
 const HW_ID_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .3704 .1 .4);
@@ -294,6 +329,11 @@ async fn fetch_vcek_from_kds(
     Ok(der)
 }
 
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
 async fn get_vcek(raw: &[u8], gen: ProcessorGeneration, chip_id: &[u8]) -> Result<Vec<u8>> {
     match fetch_vcek_from_offline_store(raw, gen, chip_id) {
         Ok(Some(vcek)) => return Ok(vcek),
@@ -338,7 +378,15 @@ pub(crate) struct VendorCertificates {
     asvk: X509,
 }
 
-#[async_trait]
+#[cfg_attr(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"), async_trait(?Send))]
+#[cfg_attr(
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )),
+    async_trait
+)]
 impl Verifier for Snp {
     async fn evaluate(
         &self,
@@ -540,25 +588,33 @@ pub(crate) fn verify_report_signature(
     }
 
     // verify report signature
-    // SNP stores R and S in little-endian 72-byte fields. Convert directly
-    // instead of enabling sev's OpenSSL feature, which also requires x86 RDRAND.
-    let mut r = *report.signature.r();
-    let mut s = *report.signature.s();
-    r.reverse();
-    s.reverse();
-    let sig =
-        ecdsa::EcdsaSig::from_private_components(BigNum::from_slice(&r)?, BigNum::from_slice(&s)?)?;
-    let data = &raw[..=0x29f];
+    #[cfg(not(feature = "snp-rustcrypto"))]
+    {
+        // SNP stores R and S in little-endian 72-byte fields. Convert directly
+        // instead of enabling sev's OpenSSL feature and its x86 RDRAND dependency.
+        let mut r = *report.signature.r();
+        let mut s = *report.signature.s();
+        r.reverse();
+        s.reverse();
+        let sig = ecdsa::EcdsaSig::from_private_components(
+            BigNum::from_slice(&r)?,
+            BigNum::from_slice(&s)?,
+        )?;
+        let data = &raw[..=0x29f];
 
-    let pub_key = EcKey::try_from(endorsement_key.public_key()?)?;
-    let signed = sig.verify(&sha384(data), &pub_key)?;
-    if !signed {
-        return Err(anyhow!("Signature validation failed."));
+        let pub_key = EcKey::try_from(endorsement_key.public_key()?)?;
+        let signed = sig.verify(&sha384(data), &pub_key)?;
+        if !signed {
+            return Err(anyhow!("Signature validation failed."));
+        }
     }
+    #[cfg(feature = "snp-rustcrypto")]
+    rustcrypto::verify_report(report, raw, &endorsement_key)?;
 
     Ok(())
 }
 
+#[cfg(not(feature = "snp-rustcrypto"))]
 fn verify_signature(cert: &X509, issuer: &X509, name: &str) -> Result<()> {
     cert.verify(&(issuer.public_key()? as PKey<Public>))?
         .then_some(())
@@ -581,8 +637,7 @@ fn verify_cert_chain(
         bail!("Could not find either VCEK or VLEK in cert chain")
     };
 
-    let decoded_key =
-        x509::X509::from_der(key.data()).context("Failed to decode endorsement key")?;
+    let decoded_key = X509::from_der(key.data()).context("Failed to decode endorsement key")?;
 
     match key.cert_type {
         CertType::VCEK => {
@@ -629,6 +684,11 @@ pub(crate) fn parse_tee_evidence(
         "platform_tsme_enabled": format!("{}", report.plat_info.tsme_enabled()),
         "platform_smt_enabled": format!("{}", report.plat_info.smt_enabled()),
 
+        // Signed report fields needed by EAR appraisal and transport key / nonce
+        // binding. They are never taken from unverified input metadata.
+        "init_data": hex::encode(report.host_data),
+        "report_data": hex::encode(report.report_data),
+        "chip_id": hex::encode(report.chip_id),
         // measurement
         "measurement": format!("{}", base64::engine::general_purpose::STANDARD.encode(report.measurement)),
     });
@@ -643,6 +703,7 @@ pub(crate) fn parse_tee_evidence(
     Ok(claims_map as TeeEvidenceParsedClaim)
 }
 
+#[cfg(not(feature = "snp-rustcrypto"))]
 fn get_common_name(cert: &x509::X509) -> Result<String> {
     let mut entries = cert.subject_name().entries_by_nid(Nid::COMMONNAME);
     let Some(e) = entries.next() else {
@@ -672,7 +733,70 @@ mod tests {
     // Real AMD EPYC 9xx5 "Turin" (Zen5) v5 attestation report and the matching
     // VCEK fetched from the AMD KDS.
     const TURIN_REPORT: &[u8; 1184] = include_bytes!("../../test_data/snp/turin-report.bin");
+
+    #[test]
+    fn modern_coco_schema_preserves_signed_report_bytes() {
+        use sev_modern::parser::ByteParser;
+        // The sev 7 codec itself refuses its masked-chip v2 VLEK fixture;
+        // legacy-schema VLEK evidence retains its existing verification path.
+        for bytes in [VCEK_REPORT, TURIN_REPORT] {
+            let modern = sev_modern::firmware::guest::AttestationReport::from_bytes(bytes).unwrap();
+            let evidence: SnpEvidence = serde_json::from_value(json!({
+                "attestation_report": modern, "cert_chain": null
+            }))
+            .unwrap();
+            assert_eq!(
+                bincode::serialize(&evidence.attestation_report).unwrap(),
+                bytes
+            );
+        }
+    }
     const TURIN_VCEK: &[u8; 1289] = include_bytes!("../../test_data/snp/turin-vcek.der");
+
+    #[tokio::test]
+    async fn signed_bindings_are_appraised_and_mismatch_is_rejected() {
+        let report = bincode::deserialize::<AttestationReport>(VCEK_REPORT.as_slice()).unwrap();
+        let evidence = serde_json::to_value(SnpEvidence {
+            attestation_report: report,
+            cert_chain: Some(vec![CertTableEntry::new(CertType::VCEK, VCEK.to_vec())]),
+            svsm_manifest: None,
+        })
+        .unwrap();
+        let (claims, _) = Snp::new()
+            .unwrap()
+            .evaluate(
+                evidence.clone(),
+                &ReportData::Value(&report.report_data),
+                &InitDataHash::Value(&report.host_data),
+            )
+            .await
+            .unwrap();
+        assert_eq!(claims["init_data"], hex::encode(report.host_data));
+        assert_eq!(claims["report_data"], hex::encode(report.report_data));
+        assert_eq!(claims["chip_id"], hex::encode(report.chip_id));
+        let mut wrong_report = report.report_data;
+        wrong_report[0] ^= 1;
+        assert!(Snp::new()
+            .unwrap()
+            .evaluate(
+                evidence.clone(),
+                &ReportData::Value(&wrong_report),
+                &InitDataHash::NotProvided
+            )
+            .await
+            .is_err());
+        let mut wrong_host = report.host_data;
+        wrong_host[0] ^= 1;
+        assert!(Snp::new()
+            .unwrap()
+            .evaluate(
+                evidence,
+                &ReportData::Value(&report.report_data),
+                &InitDataHash::Value(&wrong_host)
+            )
+            .await
+            .is_err());
+    }
 
     #[test]
     fn check_milan_certificates() {
@@ -681,20 +805,9 @@ mod tests {
         assert_eq!(get_common_name(ask).unwrap(), "SEV-Milan");
         assert_eq!(get_common_name(asvk).unwrap(), "SEV-VLEK-Milan");
 
-        assert!(ark
-            .verify(&(ark.public_key().unwrap() as PKey<Public>))
-            .context("Invalid ARK Signature")
-            .unwrap());
-
-        assert!(ask
-            .verify(&(ark.public_key().unwrap() as PKey<Public>))
-            .context("Invalid ASK Signature")
-            .unwrap());
-
-        assert!(asvk
-            .verify(&(ark.public_key().unwrap() as PKey<Public>))
-            .context("Invalid ASVK Signature")
-            .unwrap());
+        verify_signature(ark, ark, "ARK").unwrap();
+        verify_signature(ask, ark, "ASK").unwrap();
+        verify_signature(asvk, ark, "ASVK").unwrap();
     }
 
     fn check_oid_ints(cert: &TbsCertificate) {

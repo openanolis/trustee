@@ -172,6 +172,12 @@ jobs:
           rustup component add --toolchain ${{ env.RUSTC_VERSION }} rustfmt rustc clippy
           rustup default ${{ env.RUSTC_VERSION }}
 
+      # Run before sudo-based tests create root-owned Cargo build/cache files.
+      - name: Run pure-Rust SNP verifier tests and lint
+        run: |
+          cargo test -p verifier --no-default-features --features snp-rustcrypto snp:: --lib
+          cargo clippy -p verifier --no-default-features --features snp-rustcrypto --all-targets -- -D warnings -A clippy::derive_partial_eq_without_eq
+
       - name: AS Build
         working-directory: attestation-service
         run: |
@@ -264,5 +270,5 @@ jobs:
         run: |
           RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p eventlog --target wasm32-unknown-unknown
           RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p reference-value-provider-service --target wasm32-unknown-unknown --no-default-features  # no "fs" feature in wasm
-          RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p attestation-service --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust,policy-artifact-server,policy-rvps,regorus-regovm
-          RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p verifier --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust
+          RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p attestation-service --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust,snp-rustcrypto,policy-artifact-server,policy-rvps,regorus-regovm
+          RUSTUP_TOOLCHAIN=nightly-2025-07-07 cargo check -p verifier --target wasm32-unknown-unknown --no-default-features --features tdx-dcap-rust,snp-rustcrypto
