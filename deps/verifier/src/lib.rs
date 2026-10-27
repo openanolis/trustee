@@ -20,7 +20,7 @@ pub mod az_snp_vtpm;
 #[cfg(feature = "az-tdx-vtpm-verifier")]
 pub mod az_tdx_vtpm;
 
-#[cfg(feature = "snp-verifier")]
+#[cfg(any(feature = "snp-verifier", feature = "snp-rustcrypto"))]
 pub mod snp;
 
 #[cfg(feature = "tdx-verifier")]
@@ -87,7 +87,7 @@ pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
         }
         Tee::Snp => {
             cfg_if::cfg_if! {
-                if #[cfg(feature = "snp-verifier")] {
+                if #[cfg(any(feature = "snp-verifier", feature = "snp-rustcrypto"))] {
                     let verifier = snp::Snp::new()?;
                     Ok(Box::new(verifier) as Box<dyn Verifier + Send + Sync>)
                 } else {

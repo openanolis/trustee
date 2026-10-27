@@ -8291,9 +8291,12 @@ dependencies = [
  "log",
  "openssl",
  "openssl-sys",
+ "p384",
+ "pem",
  "quick-xml",
  "regex",
  "reqwest 0.13.5",
+ "rsa",
  "rstest",
  "s390_pv",
  "scroll 0.11.0",
@@ -8316,6 +8319,7 @@ dependencies = [
  "uuid",
  "veraison-apiclient",
  "web-time",
+ "x509-cert",
  "x509-parser",
 ]
 

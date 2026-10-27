@@ -6,6 +6,7 @@ use self::serde::{Deserialize, Serialize};
 use super::*;
 use asn1_rs::{oid, Integer, OctetString, Oid};
 use async_trait::async_trait;
+#[cfg(not(feature = "snp-rustcrypto"))]
 use openssl::{
     ec::EcKey,
     ecdsa,
@@ -14,6 +15,10 @@ use openssl::{
     sha::sha384,
     x509::{self, X509},
 };
+#[cfg(feature = "snp-rustcrypto")]
+mod rustcrypto;
+#[cfg(feature = "snp-rustcrypto")]
+use rustcrypto::{get_common_name, verify_signature, Certificate as X509};
 use serde_json::json;
 use sev::firmware::guest::AttestationReport;
 use sev::firmware::host::{CertTableEntry, CertType};
@@ -26,6 +31,15 @@ use std::{
     result::Result::Ok,
 };
 use x509_parser::prelude::*;
+
+#[cfg(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+))]
+async fn get_vcek(_: &[u8], _: ProcessorGeneration, _: &[u8]) -> Result<Vec<u8>> {
+    bail!("Browser SNP evidence must include its AMD-signed VCEK or VLEK certificate")
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct SnpEvidence {
@@ -293,6 +307,11 @@ async fn fetch_vcek_from_kds(
     Ok(der)
 }
 
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
 async fn get_vcek(raw: &[u8], gen: ProcessorGeneration, chip_id: &[u8]) -> Result<Vec<u8>> {
     match fetch_vcek_from_offline_store(raw, gen, chip_id) {
         Ok(Some(vcek)) => return Ok(vcek),
@@ -337,7 +356,15 @@ pub(crate) struct VendorCertificates {
     asvk: X509,
 }
 
-#[async_trait]
+#[cfg_attr(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"), async_trait(?Send))]
+#[cfg_attr(
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    )),
+    async_trait
+)]
 impl Verifier for Snp {
     async fn evaluate(
         &self,
@@ -539,18 +566,24 @@ pub(crate) fn verify_report_signature(
     }
 
     // verify report signature
-    let sig = ecdsa::EcdsaSig::try_from(&report.signature)?;
-    let data = &raw[..=0x29f];
+    #[cfg(not(feature = "snp-rustcrypto"))]
+    {
+        let sig = ecdsa::EcdsaSig::try_from(&report.signature)?;
+        let data = &raw[..=0x29f];
 
-    let pub_key = EcKey::try_from(endorsement_key.public_key()?)?;
-    let signed = sig.verify(&sha384(data), &pub_key)?;
-    if !signed {
-        return Err(anyhow!("Signature validation failed."));
+        let pub_key = EcKey::try_from(endorsement_key.public_key()?)?;
+        let signed = sig.verify(&sha384(data), &pub_key)?;
+        if !signed {
+            return Err(anyhow!("Signature validation failed."));
+        }
     }
+    #[cfg(feature = "snp-rustcrypto")]
+    rustcrypto::verify_report(report, raw, &endorsement_key)?;
 
     Ok(())
 }
 
+#[cfg(not(feature = "snp-rustcrypto"))]
 fn verify_signature(cert: &X509, issuer: &X509, name: &str) -> Result<()> {
     cert.verify(&(issuer.public_key()? as PKey<Public>))?
         .then_some(())
@@ -573,8 +606,7 @@ fn verify_cert_chain(
         bail!("Could not find either VCEK or VLEK in cert chain")
     };
 
-    let decoded_key =
-        x509::X509::from_der(key.data()).context("Failed to decode endorsement key")?;
+    let decoded_key = X509::from_der(key.data()).context("Failed to decode endorsement key")?;
 
     match key.cert_type {
         CertType::VCEK => {
@@ -621,6 +653,11 @@ pub(crate) fn parse_tee_evidence(
         "platform_tsme_enabled": format!("{}", report.plat_info.tsme_enabled()),
         "platform_smt_enabled": format!("{}", report.plat_info.smt_enabled()),
 
+        // Signed report fields needed by EAR appraisal and transport key / nonce
+        // binding. They are never taken from unverified input metadata.
+        "init_data": hex::encode(report.host_data),
+        "report_data": hex::encode(report.report_data),
+        "chip_id": hex::encode(report.chip_id),
         // measurement
         "measurement": format!("{}", base64::engine::general_purpose::STANDARD.encode(report.measurement)),
     });
@@ -635,6 +672,7 @@ pub(crate) fn parse_tee_evidence(
     Ok(claims_map as TeeEvidenceParsedClaim)
 }
 
+#[cfg(not(feature = "snp-rustcrypto"))]
 fn get_common_name(cert: &x509::X509) -> Result<String> {
     let mut entries = cert.subject_name().entries_by_nid(Nid::COMMONNAME);
     let Some(e) = entries.next() else {
@@ -666,6 +704,51 @@ mod tests {
     const TURIN_REPORT: &[u8; 1184] = include_bytes!("../../test_data/snp/turin-report.bin");
     const TURIN_VCEK: &[u8; 1289] = include_bytes!("../../test_data/snp/turin-vcek.der");
 
+    #[tokio::test]
+    async fn signed_bindings_are_appraised_and_mismatch_is_rejected() {
+        let report = bincode::deserialize::<AttestationReport>(VCEK_REPORT.as_slice()).unwrap();
+        let evidence = serde_json::to_value(SnpEvidence {
+            attestation_report: report,
+            cert_chain: Some(vec![CertTableEntry::new(CertType::VCEK, VCEK.to_vec())]),
+            svsm_manifest: None,
+        })
+        .unwrap();
+        let (claims, _) = Snp::new()
+            .unwrap()
+            .evaluate(
+                evidence.clone(),
+                &ReportData::Value(&report.report_data),
+                &InitDataHash::Value(&report.host_data),
+            )
+            .await
+            .unwrap();
+        assert_eq!(claims["init_data"], hex::encode(report.host_data));
+        assert_eq!(claims["report_data"], hex::encode(report.report_data));
+        assert_eq!(claims["chip_id"], hex::encode(report.chip_id));
+        let mut wrong_report = report.report_data;
+        wrong_report[0] ^= 1;
+        assert!(Snp::new()
+            .unwrap()
+            .evaluate(
+                evidence.clone(),
+                &ReportData::Value(&wrong_report),
+                &InitDataHash::NotProvided
+            )
+            .await
+            .is_err());
+        let mut wrong_host = report.host_data;
+        wrong_host[0] ^= 1;
+        assert!(Snp::new()
+            .unwrap()
+            .evaluate(
+                evidence,
+                &ReportData::Value(&report.report_data),
+                &InitDataHash::Value(&wrong_host)
+            )
+            .await
+            .is_err());
+    }
+
     #[test]
     fn check_milan_certificates() {
         let VendorCertificates { ask, ark, asvk } = load_milan_cert_chain().as_ref().unwrap();
@@ -673,20 +756,9 @@ mod tests {
         assert_eq!(get_common_name(ask).unwrap(), "SEV-Milan");
         assert_eq!(get_common_name(asvk).unwrap(), "SEV-VLEK-Milan");
 
-        assert!(ark
-            .verify(&(ark.public_key().unwrap() as PKey<Public>))
-            .context("Invalid ARK Signature")
-            .unwrap());
-
-        assert!(ask
-            .verify(&(ark.public_key().unwrap() as PKey<Public>))
-            .context("Invalid ASK Signature")
-            .unwrap());
-
-        assert!(asvk
-            .verify(&(ark.public_key().unwrap() as PKey<Public>))
-            .context("Invalid ASVK Signature")
-            .unwrap());
+        verify_signature(ark, ark, "ARK").unwrap();
+        verify_signature(ask, ark, "ASK").unwrap();
+        verify_signature(asvk, ark, "ASVK").unwrap();
     }
 
     fn check_oid_ints(cert: &TbsCertificate) {
