@@ -27,7 +27,7 @@ BuildRequires: libtdx-attest-devel libtdx-verify-devel
 %endif
 
 BuildRequires:  clang perl protobuf-devel git libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel
-BuildRequires:  ca-certificates gcc golang
+BuildRequires:  ca-certificates gcc golang >= 1.25.0
 
 # Dual toolchain mode. When `with_rustup` is defined, cargo is provided by rustup
 # and these BuildRequires are skipped. When it is not defined, build against the
@@ -50,7 +50,7 @@ A standalone CLI that fetches evidence from attestation-agent and verifies it lo
 Summary:        Web frontend for trustee services
 Requires:       trustee = %{version}-%{release}
 Requires:       nginx >= 1.16
-BuildRequires:  nodejs >= 16.0.0 npm
+BuildRequires:  nodejs >= 20.0.0 npm
 
 %description -n trustee-frontend
 Web frontend for trustee attestation and secret distribution services.

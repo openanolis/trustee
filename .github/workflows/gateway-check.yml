@@ -6,28 +6,39 @@ on:
       - "main"
     paths:
       - 'trustee-gateway/**'
+      - 'rvps/cgo/**'
+      - 'kbs/kbs-init/**'
       - '.github/workflows/gateway-check.yml'
   pull_request:
     paths:
       - 'trustee-gateway/**'
+      - 'rvps/cgo/**'
+      - 'kbs/kbs-init/**'
       - '.github/workflows/gateway-check.yml'
 
 jobs:
   gateway-check:
-    name: Go Test and Vet
+    name: Go Test and Vet (${{ matrix.module }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [trustee-gateway, rvps/cgo, kbs/kbs-init]
     defaults:
       run:
-        working-directory: trustee-gateway
+        working-directory: ${{ matrix.module }}
     steps:
       - name: Code checkout
         uses: actions/checkout@v5
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: trustee-gateway/go.mod
-          cache-dependency-path: trustee-gateway/go.sum
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
       - name: Gateway test
         run: go test ./...
       - name: Gateway vet
         run: go vet ./...
+      - name: Build RVPS shared library
+        if: matrix.module == 'rvps/cgo'
+        run: go build -buildmode=c-shared -o "${{ runner.temp }}/libcgo.so" .
