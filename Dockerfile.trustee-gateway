@@ -1,5 +1,7 @@
 ARG BASE_IMAGE=registry.openanolis.cn/openanolis/anolisos:23.3
 
+FROM golang:1.26 AS go-toolchain
+
 FROM ${BASE_IMAGE} AS builder
 
 ARG ALL_PROXY
@@ -13,11 +15,7 @@ COPY . .
 
 RUN yum install -y wget ca-certificates gcc
 
-RUN wget https://mirrors.aliyun.com/golang/go1.21.6.linux-amd64.tar.gz && \
-    sha256sum go1.21.6.linux-amd64.tar.gz > go1.21.6.linux-amd64.tar.gz.sha256 && \
-    sha256sum -c go1.21.6.linux-amd64.tar.gz.sha256 && \
-    rm -rf /usr/local/go && \
-    tar -C /usr/local -xzf go1.21.6.linux-amd64.tar.gz
+COPY --from=go-toolchain /usr/local/go /usr/local/go
 
 ENV PATH=$PATH:/usr/local/go/bin
 
