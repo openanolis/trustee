@@ -27,7 +27,10 @@ BuildRequires: libtdx-attest-devel libtdx-verify-devel
 %endif
 
 BuildRequires:  clang perl protobuf-devel git libgudev-devel openssl-devel tpm2-tss tpm2-tss-devel
-BuildRequires:  ca-certificates gcc golang >= 1.25.0
+BuildRequires:  ca-certificates gcc
+%if 0%{!?with_go_toolchain:1}
+BuildRequires:  golang >= 1.26.10
+%endif
 
 # Dual toolchain mode. When `with_rustup` is defined, cargo is provided by rustup
 # and these BuildRequires are skipped. When it is not defined, build against the

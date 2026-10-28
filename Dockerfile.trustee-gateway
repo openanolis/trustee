@@ -1,6 +1,6 @@
 ARG BASE_IMAGE=registry.openanolis.cn/openanolis/anolisos:23.3
 
-FROM golang:1.26 AS go-toolchain
+FROM golang:1.26.10 AS go-toolchain
 
 FROM ${BASE_IMAGE} AS builder
 
