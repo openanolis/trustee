@@ -291,8 +291,46 @@ impl JwkAttestationTokenVerifier {
 
 #[cfg(test)]
 mod tests {
-    use super::get_jwks_from_file_or_url;
+    use super::{get_jwks_from_file_or_url, JwkAttestationTokenVerifier};
+    use base64::Engine;
+    use jsonwebtoken::{encode, jwk, Algorithm, EncodingKey, Header};
     use rstest::rstest;
+    use serde_json::{json, Value};
+
+    #[rstest]
+    #[case(None, false)]
+    #[case(Some(json!(0)), false)]
+    #[case(Some(json!("99999999999")), true)]
+    #[case(Some(json!(true)), true)]
+    #[case(Some(json!({"time": 0})), true)]
+    #[tokio::test]
+    async fn test_nbf_claim_type(#[case] nbf: Option<Value>, #[case] expect_error: bool) {
+        let secret = b"test-only symmetric key for registered-claim validation";
+        let verifier = JwkAttestationTokenVerifier {
+            trusted_jwk_sets: serde_json::from_value::<jwk::JwkSet>(json!({
+                "keys": [{
+                    "kty": "oct",
+                    "alg": "HS256",
+                    "kid": "test-key",
+                    "k": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret),
+                }],
+            }))
+            .unwrap(),
+            trusted_certs: Vec::new(),
+            insecure_key: false,
+        };
+        let header = Header {
+            kid: Some("test-key".into()),
+            ..Header::new(Algorithm::HS256)
+        };
+        let mut claims = json!({"exp": 99_999_999_999_u64});
+        if let Some(nbf) = nbf {
+            claims["nbf"] = nbf;
+        }
+        let token = encode(&header, &claims, &EncodingKey::from_secret(secret)).unwrap();
+
+        assert_eq!(verifier.verify(token).await.is_err(), expect_error);
+    }
 
     #[rstest]
     #[case("https://", true)]

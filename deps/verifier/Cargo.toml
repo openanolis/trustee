@@ -102,7 +102,7 @@ csv-rs = { git = "https://github.com/openanolis/csv-rs.git", rev = "86d68fd4e1b5
     "network",
 ] }
 eventlog = { path = "../eventlog" }
-eventlog-rs = { version = "0.1.7" }
+eventlog-rs = { git = "https://github.com/inclavare-containers/eventlog-rs.git", rev = "832215c6aa22bb79924da6d5de6be5fb6d89e285" }
 futures = { version = "0.3", optional = true }
 hex.workspace = true
 jsonwebkey = "0.3.5"
