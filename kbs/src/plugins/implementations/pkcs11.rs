@@ -138,7 +138,7 @@ impl StorageBackend for Pkcs11Backend {
 
         // check that object has a readable value attribute
         let value_attribute = vec![AttributeType::Value];
-        let attribute_map = session.get_attribute_info_map(object, value_attribute.clone())?;
+        let attribute_map = session.get_attribute_info_map(object, &value_attribute)?;
         let Some(AttributeInfo::Available(_size)) = attribute_map.get(&AttributeType::Value) else {
             bail!("Key does not have value attribute available.");
         };
@@ -170,6 +170,14 @@ impl StorageBackend for Pkcs11Backend {
         let _object = self.session.lock().await.create_object(&attributes)?;
 
         Ok(())
+    }
+
+    async fn delete_secret_resource(&self, _resource_desc: ResourceDesc) -> Result<()> {
+        bail!("PKCS11 backend does not support resource deletion")
+    }
+
+    async fn list_secret_resources(&self) -> Result<Vec<ResourceDesc>> {
+        bail!("PKCS11 backend does not support resource listing")
     }
 }
 
@@ -286,7 +294,7 @@ mod tests {
     async fn write_and_read_resource() {
         let config = Pkcs11Config {
             module: "/usr/lib64/pkcs11/libsofthsm2.so".into(),
-            slot_index: Some(1),
+            slot_index: 1,
             // This pin must be set for SoftHSM
             pin: "test".to_string(),
         };
@@ -318,7 +326,7 @@ mod tests {
     async fn wrap_and_unwrap_data() {
         let config = Pkcs11Config {
             module: "/usr/lib64/pkcs11/libsofthsm2.so".into(),
-            slot_index: Some(1),
+            slot_index: 1,
             // This pin must be set for SoftHSM
             pin: "test".to_string(),
         };
