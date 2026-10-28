@@ -1,12 +1,12 @@
 ARG NODE_IMAGE=docker.io/library/node
 
-FROM ${NODE_IMAGE}:latest as builder
+FROM ${NODE_IMAGE}:22 AS builder
 
 WORKDIR /app
 
-COPY frontend/package.json .
+COPY frontend/package.json frontend/package-lock.json ./
 
-RUN npm install
+RUN npm ci
 
 COPY frontend/ .
 
@@ -33,4 +33,4 @@ RUN echo 'server { \
 
 EXPOSE 8082
 
-CMD ["nginx", "-g", "daemon off;"] 
+CMD ["nginx", "-g", "daemon off;"]
