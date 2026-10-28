@@ -52,7 +52,7 @@ async fn get_jwks_from_file_or_url(
     p: &str,
 ) -> Result<jwk::JwkSet, JwksGetError> {
     let mut url = Url::parse(p).map_err(|e| JwksGetError::InvalidSourcePath(e.to_string()))?;
-    match url.scheme() {
+    let jwkset = match url.scheme() {
         "https" => {
             url.set_path(OPENID_CONFIG_URL_SUFFIX);
 
@@ -88,7 +88,23 @@ async fn get_jwks_from_file_or_url(
             "unsupported scheme {} (must be either file or https)",
             url.scheme()
         ))),
+    }?;
+
+    // jsonwebtoken 10 maps unrecognized algorithms to this catch-all instead
+    // of rejecting them during deserialization. Keep trusted JWKS loading
+    // strict, as it was before the dependency upgrade.
+    if jwkset.keys.iter().any(|key| {
+        matches!(
+            key.common.key_algorithm,
+            Some(jwk::KeyAlgorithm::UNKNOWN_ALGORITHM)
+        )
+    }) {
+        return Err(JwksGetError::DeserializeSource(
+            "unsupported JWK algorithm".to_string(),
+        ));
     }
+
+    Ok(jwkset)
 }
 
 fn new_http_client() -> reqwest::Client {
@@ -355,6 +371,18 @@ mod tests {
     )]
     #[case(
         "{\"keys\":[{\"kty\":\"oct\",\"alg\":\"COCO42\",\"kid\":\"coco123\",\"k\":\"foobar\"}]}",
+        true
+    )]
+    #[case(
+        "{\"keys\":[{\"kty\":\"oct\",\"kid\":\"coco123\",\"k\":\"foobar\"}]}",
+        false
+    )]
+    #[case(
+        "{\"keys\":[{\"kty\":\"RSA\",\"alg\":\"RSA-OAEP-256\",\"kid\":\"encryption\",\"n\":\"AQAB\",\"e\":\"AQAB\"}]}",
+        false
+    )]
+    #[case(
+        "{\"keys\":[{\"kty\":\"oct\",\"alg\":\"HS256\",\"kid\":\"valid\",\"k\":\"foobar\"},{\"kty\":\"oct\",\"alg\":\"COCO42\",\"kid\":\"invalid\",\"k\":\"foobar\"}]}",
         true
     )]
     #[tokio::test]
