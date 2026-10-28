@@ -25,11 +25,11 @@ sha2 = { workspace = true }
 async-trait = { workspace = true }
 hex = { workspace = true }
 rand = "0.8"
-web3 = { version = "0.19", default-features = false, features = ["http", "signing"] }
+# The next upstream release removes the vulnerable idna 0.4 dependency.
+web3 = { git = "https://github.com/tomusdrw/rust-web3.git", rev = "8d889ae3270508f1e68b6a29bbe51b2bedf7fb1e", default-features = false, features = ["http", "signing"] }
 ethabi = "18"
-secp256k1 = { version = "0.27", features = ["rand"] }
+secp256k1 = { version = "0.29", features = ["rand"] }
 base64 = { workspace = true }
 
 [dev-dependencies]
 serial_test = "3.0"
-
