@@ -95,6 +95,9 @@ jobs:
       working-directory: kbs
       run: make check
 
+    - name: KBS PKCS11 Check
+      run: cargo check -p kbs --no-default-features --features pkcs11
+
     - name: KBS EncryptedDb Test
       working-directory: kbs
       env:

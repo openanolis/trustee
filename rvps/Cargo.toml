@@ -57,7 +57,7 @@ chrono = { workspace = true, features = [ "serde", "wasmbind" ] }
 clap = { workspace = true, optional = true }
 config = { workspace = true, optional = true }
 env_logger = { workspace = true, optional = true }
-git2 = { version = "0.20.4", optional = true }
+git2 = { version = "0.21.0", features = ["https", "ssh"], optional = true }
 hex = { version = "0.4", optional = true }
 log.workspace = true
 key-value-storage = { path = "../deps/key-value-storage", default-features = false }
