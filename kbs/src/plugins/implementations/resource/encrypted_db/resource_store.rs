@@ -155,8 +155,12 @@ pub async fn delete_resource(pool: &DbPool, desc: &ResourceDesc) -> Result<()> {
 /// payloads on demand.
 pub async fn list_resources(pool: &DbPool) -> Result<Vec<ResourceDesc>> {
     let rows: Vec<(String, String, String)> = match pool {
+        // SQLx 0.8 treats ascii_bin identifiers as binary columns. Project
+        // them as UTF-8 text while retaining binary ordering in the schema.
         DbPool::MySql(p) => sqlx::query_as(
-            "SELECT repository_name, resource_type, resource_tag
+            "SELECT CAST(repository_name AS CHAR CHARACTER SET utf8mb4),
+                    CAST(resource_type AS CHAR CHARACTER SET utf8mb4),
+                    CAST(resource_tag AS CHAR CHARACTER SET utf8mb4)
              FROM kbs_resources
              ORDER BY repository_name, resource_type, resource_tag",
         )
@@ -192,7 +196,9 @@ pub async fn fetch_batch_older_than(
 ) -> Result<Vec<ResourceRow>> {
     let rows: Vec<(String, String, String, String, Generation)> = match pool {
         DbPool::MySql(p) => sqlx::query_as(
-            "SELECT repository_name, resource_type, resource_tag, envelope, generation
+            "SELECT CAST(repository_name AS CHAR CHARACTER SET utf8mb4),
+                    CAST(resource_type AS CHAR CHARACTER SET utf8mb4),
+                    CAST(resource_tag AS CHAR CHARACTER SET utf8mb4), envelope, generation
              FROM kbs_resources
              WHERE generation < ?
              ORDER BY repository_name, resource_type, resource_tag
@@ -233,7 +239,9 @@ pub async fn fetch_batch_older_than(
 pub async fn fetch_all(pool: &DbPool) -> Result<Vec<ResourceRow>> {
     let rows: Vec<(String, String, String, String, Generation)> = match pool {
         DbPool::MySql(p) => sqlx::query_as(
-            "SELECT repository_name, resource_type, resource_tag, envelope, generation
+            "SELECT CAST(repository_name AS CHAR CHARACTER SET utf8mb4),
+                    CAST(resource_type AS CHAR CHARACTER SET utf8mb4),
+                    CAST(resource_tag AS CHAR CHARACTER SET utf8mb4), envelope, generation
              FROM kbs_resources
              ORDER BY repository_name, resource_type, resource_tag",
         )
