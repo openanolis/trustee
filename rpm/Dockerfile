@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 ARG BASE_IMAGE=registry.openanolis.cn/openanolis/anolisos:23.4
+FROM golang:1.26.10 AS go-toolchain
 FROM ${BASE_IMAGE}
 
 # Cloud Linux images default to a VPC-only mirror; native CI also runs outside ECS.
@@ -18,6 +19,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-ini
     sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain "${RUST_VERSION}" --no-modify-path && \
     rm /tmp/rustup-init.sh
 ENV CARGO_BUILD_JOBS=2 OPENSSL_NO_VENDOR=1
+COPY --from=go-toolchain /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:$PATH
 # Do not inherit a distribution Go toolchain's empty proxy list.
 ENV GOPROXY=https://proxy.golang.org,direct
 COPY build-in-container.sh /usr/local/bin/build-rpm
