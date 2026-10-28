@@ -1,4 +1,6 @@
 .github
 .git
 target
+**/node_modules
+frontend/dist
 **Dockerfile**
