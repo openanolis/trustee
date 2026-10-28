@@ -7,6 +7,10 @@ inputs:
   source:
     url: "https://github.com/openanolis/trustee/releases/download/${GITHUB_RELEASE}/build-artifacts-v${VERSION}.tar.gz"
     targetPath: "/home/build-artifacts-v${VERSION}.tar.gz"
+  goToolchain:
+    url: "https://go.dev/dl/go1.26.10.linux-amd64.tar.gz"
+    sha256: "ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5"
+    targetPath: "/home/go1.26.10.linux-amd64.tar.gz"
 
 environment:
   systemPackages:
@@ -47,21 +51,25 @@ environment:
       version: "17.0.6-8.an23"
     - name: "perl"
       version: "5.36.3-18.an23"
-    - name: "golang"
-      version: "1.24.0-12.an23"
     - name: "nodejs-npm"
       version: "10.9.2-1.22.16.0.1"
 
 phases:
   prepare:
     commands:
+      - |
+        set -eu
+        test "$(uname -m)" = x86_64
+        rm -rf /usr/local/go
+        tar -xzf /home/go1.26.10.linux-amd64.tar.gz -C /usr/local
+        test "$(GOTOOLCHAIN=local GOROOT=/usr/local/go /usr/local/go/bin/go env GOVERSION)" = go1.26.10
       - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0 && ln -sf /root/.cargo/bin/cargo /usr/local/bin/cargo && ln -sf /root/.cargo/bin/rustc /usr/local/bin/rustc
       - mkdir -p /home/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
       - tar -xzf "/home/build-artifacts-v${VERSION}.tar.gz" -C /home/rpmbuild/SOURCES/
       - tar -xzf /home/rpmbuild/SOURCES/trustee-${VERSION}.tar.gz -C /home/rpmbuild/SPECS --strip-components=2 trustee-${VERSION}/rpm/trustee.spec
   build:
     commands:
-      - rpmbuild --define "_topdir /home/rpmbuild" --define 'with_rustup 1' -ba /home/rpmbuild/SPECS/trustee.spec
+      - GOTOOLCHAIN=local GOROOT=/usr/local/go PATH=/usr/local/go/bin:$PATH rpmbuild --define "_topdir /home/rpmbuild" --define 'with_rustup 1' --define 'with_go_toolchain 1' -ba /home/rpmbuild/SPECS/trustee.spec
 
 outputs:
   - path: /home/rpmbuild/SRPMS/trustee-${VERSION}-${RELEASE}.an23.src.rpm
