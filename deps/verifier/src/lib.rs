@@ -238,6 +238,21 @@ pub trait Verifier {
         expected_init_data_hash: &InitDataHash,
     ) -> Result<(TeeEvidenceParsedClaim, TeeClass)>;
 
+    /// Verify with attest-supplied DCAP collateral (skip PCCS fetch).
+    /// Default: ignore collateral, delegate to evaluate. TDX native overrides.
+    #[cfg(feature = "tdx-dcap-rust")]
+    async fn evaluate_with_collateral(
+        &self,
+        evidence: TeeEvidence,
+        expected_report_data: &ReportData,
+        expected_init_data_hash: &InitDataHash,
+        collateral: &serde_json::Value,
+    ) -> Result<(TeeEvidenceParsedClaim, TeeClass)> {
+        let _ = collateral;
+        self.evaluate(evidence, expected_report_data, expected_init_data_hash)
+            .await
+    }
+
     /// Generate the supplemental challenge
     ///
     /// Some TEE like IBM SE need a `challenge` generated on verifier side
