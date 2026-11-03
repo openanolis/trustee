@@ -115,10 +115,41 @@ impl Verifier for Tdx {
             }
         })?;
 
-        let claims = verify_evidence(expected_report_data, expected_init_data_hash, tdx_evidence)
-            .await
-            .context("TDX verifier")?;
+        let claims = verify_evidence(
+            expected_report_data,
+            expected_init_data_hash,
+            tdx_evidence,
+            None,
+        )
+        .await
+        .context("TDX verifier")?;
 
+        Ok((claims, "cpu".to_string()))
+    }
+
+    /// Verify with attest-supplied DCAP collateral (skip PCCS fetch).
+    #[cfg(feature = "tdx-dcap-rust")]
+    async fn evaluate_with_collateral(
+        &self,
+        evidence: TeeEvidence,
+        expected_report_data: &ReportData,
+        expected_init_data_hash: &InitDataHash,
+        collateral: &serde_json::Value,
+    ) -> Result<(TeeEvidenceParsedClaim, TeeClass)> {
+        let tdx_evidence = serde_json::from_value::<TdxEvidence>(evidence).map_err(|source| {
+            VerifierError::InvalidEvidenceFormat {
+                field: "evidence",
+                source: source.into(),
+            }
+        })?;
+        let claims = verify_evidence(
+            expected_report_data,
+            expected_init_data_hash,
+            tdx_evidence,
+            Some(collateral),
+        )
+        .await
+        .context("TDX verifier")?;
         Ok((claims, "cpu".to_string()))
     }
 }
@@ -127,6 +158,7 @@ async fn verify_evidence(
     expected_report_data: &ReportData<'_>,
     expected_init_data_hash: &InitDataHash<'_>,
     evidence: TdxEvidence,
+    collateral: Option<&serde_json::Value>,
 ) -> Result<TeeEvidenceParsedClaim> {
     if evidence.quote.is_empty() {
         return Err(VerifierError::InvalidEvidenceFormat {
@@ -147,7 +179,17 @@ async fn verify_evidence(
     })?;
 
     // Verify TD quote ECDSA signature.
-    let tcb_verification_result = ecdsa_quote_verification(quote_bin.as_slice()).await?;
+    let tcb_verification_result = {
+        #[cfg(feature = "tdx-dcap-rust")]
+        {
+            ecdsa_quote_verification(quote_bin.as_slice(), collateral).await?
+        }
+        #[cfg(feature = "tdx-dcap-ffi")]
+        {
+            let _ = collateral;
+            ecdsa_quote_verification(quote_bin.as_slice()).await?
+        }
+    };
 
     info!(
         "Quote DCAP check succeeded. TCB status: {}",
@@ -416,6 +458,29 @@ mod tests {
             classified_error(&error),
             VerifierError::InvalidQuote { field: "quote", .. }
         ));
+    }
+
+    /// evaluate_with_collateral uses the caller-supplied DCAP collateral
+    /// (from test_data/tdx_collateral.json, fetched from PCCS for the
+    /// prerecorded tdx_quote_4.dat) instead of contacting a PCCS.
+    #[cfg(feature = "tdx-dcap-rust")]
+    #[tokio::test]
+    async fn evaluate_with_collateral_uses_supplied() {
+        let quote_bin = std::fs::read("./test_data/tdx_quote_4.dat").expect("read quote");
+        let quote_b64 = STANDARD.encode(&quote_bin);
+        let collateral_json =
+            std::fs::read("./test_data/tdx_collateral.json").expect("read collateral");
+        let collateral: serde_json::Value =
+            serde_json::from_slice(&collateral_json).expect("parse collateral");
+        let result = Tdx::default()
+            .evaluate_with_collateral(
+                json!({ "quote": quote_b64 }),
+                &ReportData::NotProvided,
+                &InitDataHash::NotProvided,
+                &collateral,
+            )
+            .await;
+        assert!(result.is_ok(), "evaluate_with_collateral failed: {:?}", result.err());
     }
 
     #[test]

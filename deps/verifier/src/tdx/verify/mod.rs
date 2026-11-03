@@ -16,6 +16,9 @@
 //! Both backends expose the same entry point:
 //!
 //! ```ignore
+//! // tdx-dcap-rust backend (with optional collateral):
+//! pub async fn ecdsa_quote_verification(quote: &[u8], collateral: Option<&serde_json::Value>) -> Result<TcbVerificationResult>
+//! // tdx-dcap-ffi backend (upstream, no collateral):
 //! pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationResult>
 //! ```
 //!
@@ -84,6 +87,9 @@ mod tests {
     #[case("./test_data/tdx_quote_5.dat")]
     async fn test_verify_tdx_quote(#[case] quote: &str) {
         let quote_bin = fs::read(quote).unwrap();
+        #[cfg(feature = "tdx-dcap-rust")]
+        let res = ecdsa_quote_verification(quote_bin.as_slice(), None).await;
+        #[cfg(not(feature = "tdx-dcap-rust"))]
         let res = ecdsa_quote_verification(quote_bin.as_slice()).await;
         assert!(res.is_ok(), "{res:?}");
         let tcb_result = res.unwrap();

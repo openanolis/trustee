@@ -373,6 +373,33 @@ impl AttestationService {
         verification_requests: Vec<VerificationRequest>,
         policy_ids: Vec<String>,
     ) -> Result<String> {
+        self.evaluate_inner(verification_requests, policy_ids, None)
+            .await
+    }
+
+    /// Verify with attest-supplied DCAP collateral for the primary (first) request.
+    /// Like evaluate but the first request uses verifier.evaluate_with_collateral
+    /// (skip PCCS fetch); subsequent requests use the original evaluate.
+    #[cfg(feature = "tdx-dcap-rust")]
+    pub async fn evaluate_with_collateral(
+        &self,
+        verification_requests: Vec<VerificationRequest>,
+        policy_ids: Vec<String>,
+        collateral: &Value,
+    ) -> Result<String> {
+        self.evaluate_inner(verification_requests, policy_ids, Some(collateral))
+            .await
+    }
+
+    /// Shared logic for evaluate / evaluate_with_collateral.
+    /// When first_request_collateral is Some, the primary (index 0) request uses
+    /// verifier.evaluate_with_collateral; otherwise all use verifier.evaluate.
+    async fn evaluate_inner(
+        &self,
+        verification_requests: Vec<VerificationRequest>,
+        policy_ids: Vec<String>,
+        first_request_collateral: Option<&Value>,
+    ) -> Result<String> {
         if verification_requests.is_empty() {
             return Err(AttestationError::InvalidRequest {
                 request_index: None,
@@ -437,14 +464,54 @@ impl AttestationService {
                 None => InitDataHash::NotProvided,
             };
 
-            let (claims_from_tee_evidence, tee_class) = verifier
-                .evaluate(verification_request.evidence, &report_data, &init_data_hash)
-                .await
-                .map_err(|source| AttestationError::Verification {
-                    request_index,
-                    tee: verification_request.tee,
-                    source,
-                })?;
+            let (claims_from_tee_evidence, tee_class) = if request_index == 0 {
+                #[cfg(feature = "tdx-dcap-rust")]
+                if let Some(collateral) = first_request_collateral {
+                    verifier
+                        .evaluate_with_collateral(
+                            verification_request.evidence,
+                            &report_data,
+                            &init_data_hash,
+                            collateral,
+                        )
+                        .await
+                        .map_err(|source| AttestationError::Verification {
+                            request_index,
+                            tee: verification_request.tee,
+                            source,
+                        })?
+                } else {
+                    verifier
+                        .evaluate(verification_request.evidence, &report_data, &init_data_hash)
+                        .await
+                        .map_err(|source| AttestationError::Verification {
+                            request_index,
+                            tee: verification_request.tee,
+                            source,
+                        })?
+                }
+                #[cfg(not(feature = "tdx-dcap-rust"))]
+                {
+                    let _ = first_request_collateral;
+                    verifier
+                        .evaluate(verification_request.evidence, &report_data, &init_data_hash)
+                        .await
+                        .map_err(|source| AttestationError::Verification {
+                            request_index,
+                            tee: verification_request.tee,
+                            source,
+                        })?
+                }
+            } else {
+                verifier
+                    .evaluate(verification_request.evidence, &report_data, &init_data_hash)
+                    .await
+                    .map_err(|source| AttestationError::Verification {
+                        request_index,
+                        tee: verification_request.tee,
+                        source,
+                    })?
+            };
             info!(
                 "{:?} Verifier/endorsement check passed.",
                 verification_request.tee
