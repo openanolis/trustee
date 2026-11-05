@@ -806,7 +806,10 @@ fn pccs_http_client() -> Result<reqwest::Client> {
         .map_err(|e| pccs_unavailable(anyhow!("failed to build HTTP client for PCCS: {e}")))
 }
 
-pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationResult> {
+pub async fn ecdsa_quote_verification(
+    quote: &[u8],
+    collateral: Option<&serde_json::Value>,
+) -> Result<TcbVerificationResult> {
     let pccs_urls = resolve_pccs_urls();
 
     // The PCK certificate chain is embedded in the quote's certification data
@@ -828,13 +831,23 @@ pub async fn ecdsa_quote_verification(quote: &[u8]) -> Result<TcbVerificationRes
         })?;
     debug!("dcap-qvl backend: fmspc={fmspc}, ca={ca}, pccs={pccs_urls:?}");
 
-    let cache_key = CollateralCacheKey {
-        pccs_base_urls: pccs_urls,
-        fmspc: fmspc.clone(),
-        ca: ca.to_string(),
+    // Use attest-supplied collateral if present (skip PCCS); else fetch via PCCS cache.
+    let collateral: QuoteCollateralV3 = match collateral {
+        Some(v) => {
+            debug!("Using attest-supplied collateral; skipping PCCS fetch.");
+            serde_json::from_value(v.clone())
+                .context("failed to deserialize attest-supplied collateral as QuoteCollateralV3")?
+        }
+        None => {
+            let cache_key = CollateralCacheKey {
+                pccs_base_urls: pccs_urls,
+                fmspc: fmspc.clone(),
+                ca: ca.to_string(),
+            };
+            let cache_policy = resolve_collateral_cache_policy();
+            get_collateral(cache_key, pck_chain, cache_policy).await?
+        }
     };
-    let cache_policy = resolve_collateral_cache_policy();
-    let collateral = get_collateral(cache_key, pck_chain, cache_policy).await?;
 
     let real_now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
