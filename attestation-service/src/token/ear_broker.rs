@@ -44,6 +44,18 @@ const DEFAULT_POLICY_DIR: &str = concatcp!(DEFAULT_TOKEN_WORK_DIR, "/ear/policie
 pub const DEFAULT_POLICY: &str = include_str!("ear_default_policy_cpu.rego");
 pub const DEFAULT_POLICY_ID: &str = "default.rego";
 
+/// Rego rule the policy may define to return extensions for the token.
+/// It is not an AR4SI trust vector dimension, so the appraisal loop skips it.
+const EXTENSIONS_RULE: &str = "extensions";
+
+/// One extension entry returned by the policy engine, carried into the EAR.
+#[derive(Debug, Deserialize)]
+struct Extension {
+    name: String,
+    key: i32,
+    value: Value,
+}
+
 pub use super::signer::SignerConfig;
 
 /// Part 1 — fs-free token-issuance metadata. This is the *only* part of the
@@ -266,10 +278,11 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
 
             let tcb_claims_json = serde_json::to_string(&tcb_claims)?;
 
-            let rules = TrustVector::new()
+            let mut rules: Vec<String> = TrustVector::new()
                 .into_iter()
                 .map(|c| c.tag().replace('-', "_").to_string())
                 .collect();
+            rules.push(EXTENSIONS_RULE.to_string());
 
             // There is a policy for each tee class.
             // The cpu tee class is loaded as the default.
@@ -284,6 +297,10 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
                 .await?;
 
             for (k, v) in &policy_results.rules_result {
+                if k == EXTENSIONS_RULE {
+                    continue;
+                }
+
                 let claim_value =
                     i8::try_from(v.as_i64().context("Policy claim value is not an integer")?)
                         .context("Policy claim value is outside the i8 range")?;
@@ -305,6 +322,23 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
             if !appraisal.trust_vector.any_set() {
                 bail!("At least one policy claim must be set.");
             }
+
+            // The policy may return extensions to carry in the token verbatim.
+            let extension_claims: Vec<Extension> = policy_results
+                .rules_result
+                .get(EXTENSIONS_RULE)
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()?
+                .unwrap_or_default();
+
+            let mut extensions = Extensions::new();
+            for extension in extension_claims {
+                let value: ExtensionValue = serde_json::from_value(extension.value)?;
+                extensions.register(&extension.name, extension.key, value.kind())?;
+                extensions.set_by_name(&extension.name, value)?;
+            }
+            appraisal.extensions = extensions;
 
             appraisal.update_status_from_trust_vector();
             appraisal.annotated_evidence = tcb_claims;
@@ -677,6 +711,165 @@ mod tests {
     async fn test_snp_default_policy_rejects_debug_guest() {
         let ear = issue_snp_ear("1").await;
         assert_eq!(ear["submods"]["cpu0"]["ear.status"], "warning");
+    }
+
+    /// Policy with the AR4SI defaults only, no `extensions` claim.
+    const TRUST_VECTOR_ONLY_POLICY: &str = r#"package policy
+import rego.v1
+default executables := 33
+default hardware := 97
+default configuration := 36
+default file_system := 35
+"#;
+
+    /// Same defaults plus a policy-defined `extensions` claim.
+    ///
+    /// The values cover the shapes that reach the token unchanged. A nested
+    /// JSON object does not: it arrives as an array of key/value pairs.
+    const EXTENSIONS_POLICY: &str = r#"package policy
+import rego.v1
+default executables := 33
+default hardware := 97
+default configuration := 36
+default file_system := 35
+
+extensions := [
+    {
+        "name": "test-extension",
+        "key": -65537,
+        "value": "diagnostic-payload",
+    },
+    {
+        "name": "test-integer",
+        "key": -65538,
+        "value": 7,
+    },
+    {
+        "name": "test-list",
+        "key": -65539,
+        "value": ["a", "b"],
+    },
+]
+"#;
+
+    /// Issue an EAR through the fs-free in-memory engine so the test runs with
+    /// or without the `fs` feature. Returns the signed token.
+    async fn try_issue_ear_with_in_memory_policy(
+        policy: &str,
+        tee_claims: Vec<TeeClaims>,
+    ) -> anyhow::Result<String> {
+        use crate::policy_engine::opa::OPAInMemory;
+
+        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(
+            OPAInMemory::with_raw_default_policy(
+                policy,
+                DEFAULT_POLICY_ID,
+                crate::config::DEFAULT_ARTIFACT_SERVER_ADDRESS,
+            )
+            .unwrap(),
+        );
+        let broker = EarAttestationTokenBroker::from_components(
+            TokenBrokerSettings::default(),
+            Arc::new(crate::token::signer::EphemeralSigner::<SecretKey>::new()),
+            policy_engine,
+        );
+
+        broker
+            .issue(
+                tee_claims,
+                vec!["default".into()],
+                crate::rvps::empty_test_resolver(),
+            )
+            .await
+    }
+
+    fn sample_tee_claims(claim: &str) -> TeeClaims {
+        TeeClaims {
+            tee: Tee::Sample,
+            tee_class: "cpu".to_string(),
+            claims: json!({"claim": claim}),
+            runtime_data_claims: Value::Null,
+            init_data_claims: Value::Null,
+            additional_data: None,
+        }
+    }
+
+    fn decode_ear_payload(token: &str) -> Value {
+        let payload = token.split('.').nth(1).unwrap();
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
+    }
+
+    /// Issue an EAR with a single `cpu` submod and return its decoded payload.
+    async fn issue_ear_with_in_memory_policy(policy: &str) -> Value {
+        let token = try_issue_ear_with_in_memory_policy(policy, vec![sample_tee_claims("claim1")])
+            .await
+            .unwrap();
+        decode_ear_payload(&token)
+    }
+
+    #[tokio::test]
+    async fn policy_extensions_land_in_submod_appraisal() {
+        let ear = issue_ear_with_in_memory_policy(EXTENSIONS_POLICY).await;
+        let submod = &ear["submods"]["cpu0"];
+
+        assert_eq!(submod["test-extension"], json!("diagnostic-payload"));
+        assert_eq!(submod["test-integer"], json!(7));
+        assert_eq!(submod["test-list"], json!(["a", "b"]));
+        // The extensions rule must not disturb the trust-vector loop.
+        assert_eq!(submod["ear.trustworthiness-vector"]["executables"], 33);
+    }
+
+    #[tokio::test]
+    async fn policy_without_extensions_adds_no_extension() {
+        let ear = issue_ear_with_in_memory_policy(TRUST_VECTOR_ONLY_POLICY).await;
+        let submod = &ear["submods"]["cpu0"];
+
+        assert!(submod.get("test-extension").is_none());
+        assert!(submod.get("test-integer").is_none());
+        assert_eq!(submod["ear.trustworthiness-vector"]["executables"], 33);
+    }
+
+    #[tokio::test]
+    async fn extensions_are_added_to_each_submod() {
+        let token = try_issue_ear_with_in_memory_policy(
+            EXTENSIONS_POLICY,
+            vec![sample_tee_claims("claim1"), sample_tee_claims("claim2")],
+        )
+        .await
+        .unwrap();
+        let ear = decode_ear_payload(&token);
+
+        assert_eq!(
+            ear["submods"]["cpu0"]["test-extension"],
+            json!("diagnostic-payload")
+        );
+        assert_eq!(
+            ear["submods"]["cpu1"]["test-extension"],
+            json!("diagnostic-payload")
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_policy_extensions_return_error() {
+        // Not an array.
+        const NOT_AN_ARRAY: &str = r#"package policy
+import rego.v1
+default executables := 33
+extensions := {"name": "test-extension", "key": -65537, "value": "v"}
+"#;
+        // Array element missing the required `name`.
+        const MISSING_NAME: &str = r#"package policy
+import rego.v1
+default executables := 33
+extensions := [{"key": -65537, "value": "v"}]
+"#;
+
+        for policy in [NOT_AN_ARRAY, MISSING_NAME] {
+            let result =
+                try_issue_ear_with_in_memory_policy(policy, vec![sample_tee_claims("claim1")])
+                    .await;
+            assert!(result.is_err(), "malformed extensions must be rejected");
+        }
     }
 
     #[cfg(not(feature = "fs"))]
