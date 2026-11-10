@@ -329,13 +329,17 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
             }
 
             // The policy may return extensions to carry in the token verbatim.
-            let extension_claims: Vec<Extension> = policy_results
-                .rules_result
-                .get(EXTENSIONS_RULE)
-                .cloned()
-                .map(serde_json::from_value)
-                .transpose()?
-                .unwrap_or_default();
+            // A rule that exists in the policy but whose body does not match
+            // evaluates to undefined. The regovm backend reports that as the
+            // JSON string "<undefined>" (the interpreter does the same), so
+            // treat it as no extensions. `None` covers a policy that never
+            // defines the rule at all.
+            let extension_claims: Vec<Extension> =
+                match policy_results.rules_result.get(EXTENSIONS_RULE) {
+                    None | Some(Value::Null) => Vec::new(),
+                    Some(Value::String(value)) if value == "<undefined>" => Vec::new(),
+                    Some(value) => serde_json::from_value(value.clone())?,
+                };
 
             let mut extensions = Extensions::new();
             for extension in extension_claims {
@@ -831,6 +835,24 @@ extensions := [
 
         assert!(submod.get("test-extension").is_none());
         assert!(submod.get("test-integer").is_none());
+        assert_eq!(submod["ear.trustworthiness-vector"]["executables"], 33);
+    }
+
+    #[tokio::test]
+    async fn undefined_extensions_add_no_extension() {
+        // A conditional rule exists in the source but evaluates to undefined
+        // when its condition does not match. Issuance must treat that as no
+        // extensions rather than fail on the undefined result.
+        const CONDITIONAL_EXTENSIONS_POLICY: &str = r#"package policy
+import rego.v1
+default executables := 33
+extensions := [{"name": "test-extension", "key": -65537, "value": "v"}] if { false }
+"#;
+
+        let ear = issue_ear_with_in_memory_policy(CONDITIONAL_EXTENSIONS_POLICY).await;
+        let submod = &ear["submods"]["cpu0"];
+
+        assert!(submod.get("test-extension").is_none());
         assert_eq!(submod["ear.trustworthiness-vector"]["executables"], 33);
     }
 
