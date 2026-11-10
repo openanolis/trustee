@@ -104,6 +104,27 @@ These dimensions can be used to return a detailed, but generic description of th
 More information about these trust claims, including what the numerical values of the claims represent,
 can be found [here](https://datatracker.ietf.org/doc/draft-ietf-rats-ar4si/).
 
+A policy can also optionally define a claim called `extensions`.
+An array of extension objects in this claim is added to the attestation token.
+An extension object has the following shape:
+
+```json
+{
+    "name": "<name-of-extension>",
+    "key": -1,
+    "value": ...
+}
+```
+
+Extension names should be Collision-Resistant Public Claim Names.
+The extension key is an i32.
+If the extension is registered in the EAR specification, the key is positive.
+Otherwise, the key should be negative.
+The extension value can be any valid JSON.
+
+The name `extensions` is reserved for this claim.
+A policy that defines an `extensions` rule with a different shape will fail token issuance.
+
 See the [default policy](../src/token/ear_default_policy_cpu.rego) for an example.
 
 When using EAR tokens, the policy used to evaluate CPU evidence should end in `_cpu`.

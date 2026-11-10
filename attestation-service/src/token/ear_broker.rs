@@ -45,7 +45,8 @@ pub const DEFAULT_POLICY: &str = include_str!("ear_default_policy_cpu.rego");
 pub const DEFAULT_POLICY_ID: &str = "default.rego";
 
 /// Rego rule the policy may define to return extensions for the token.
-/// It is not an AR4SI trust vector dimension, so the appraisal loop skips it.
+/// `extensions` is a reserved policy rule name. It is not an AR4SI trust
+/// vector dimension, so the appraisal loop skips it.
 const EXTENSIONS_RULE: &str = "extensions";
 
 /// One extension entry returned by the policy engine, carried into the EAR.
@@ -282,6 +283,10 @@ impl AttestationTokenBroker for EarAttestationTokenBroker {
                 .into_iter()
                 .map(|c| c.tag().replace('-', "_").to_string())
                 .collect();
+            // `extensions` is a reserved policy rule name. A pre-existing
+            // policy that defines an `extensions` rule of another shape now
+            // fails issuance, because the broker parses it as a
+            // `[{name, key, value}]` list.
             rules.push(EXTENSIONS_RULE.to_string());
 
             // There is a policy for each tee class.
