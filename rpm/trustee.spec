@@ -5,7 +5,7 @@
 %bcond_with check
 
 Name:           trustee
-Version:        1.10.1
+Version:        1.10.2
 Release:	    %{alinux_release}%{?dist}
 Summary:        Daemon services for attestation and secret distribution
 Group:          Applications/System
@@ -224,6 +224,16 @@ fi
 /var/lib/attestation/token/ear/policies/opa/default.rego
 
 %changelog
+* Thu Nov 12 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.10.2-1
+- Storage: share KBS, AS, RVPS and Gateway state across replicas with
+  transactional MySQL storage and fail-closed configuration validation
+- Verifier: support attest-supplied DCAP collateral and current CoCo SNP
+  evidence with portable RustCrypto verification
+- RPM: support native aarch64 builds using the Rust DCAP backend
+- Security: refresh Rust, Go and frontend dependencies and require the
+  patched Go toolchain while preserving PKCS11 and MySQL compatibility
+- Gateway: cover service APIs with real-service end-to-end tests
+
 * Mon Oct 12 2026 Jiale Zhang <zhangjiale@linux.alibaba.com> - 1.10.1-1
 - Verifier/Hygon DCU: publish mixed-adapter attestation support using public
   openanolis/csv-rs and normalize chip IDs for local certificate lookup
