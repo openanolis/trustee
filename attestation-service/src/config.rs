@@ -14,6 +14,10 @@ pub const DEFAULT_ARTIFACT_SERVER_ADDRESS: &str = "https://attest-pre.aliyuncs.c
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Config {
+    /// NVIDIA verification defaults to local RIM; environment overrides apply
+    /// when verifying GPU evidence. Also used by KBS's built-in AS.
+    #[serde(default)]
+    pub nvidia_verifier: verifier::nvidia_config::NvidiaVerifierConfig,
     /// Optional shared backend for AS policy and built-in RVPS state.
     #[serde(default)]
     pub storage_backend: Option<StorageBackendConfig>,
@@ -67,6 +71,7 @@ impl Default for Config {
     // Construct a default instance of `Config`
     fn default() -> Config {
         Config {
+            nvidia_verifier: Default::default(),
             storage_backend: None,
             work_dir: default_work_dir(),
             rvps_config: RvpsConfig::default(),
@@ -103,6 +108,15 @@ impl TryFrom<&Path> for Config {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn nvidia_config_is_optional_and_selects_local_rim_by_default() {
+        use verifier::nvidia_config::NvidiaVerificationMode;
+        let config: super::Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.nvidia_verifier.mode, NvidiaVerificationMode::Rim);
+        let config: super::Config =
+            serde_json::from_str(r#"{"nvidia_verifier":{"mode":"nras"}}"#).unwrap();
+        assert_eq!(config.nvidia_verifier.mode, NvidiaVerificationMode::Nras);
+    }
     use rstest::rstest;
     use std::path::PathBuf;
 
@@ -130,6 +144,7 @@ mod tests {
             signer: None,
             policy_dir: "/var/lib/attestation-service/policies".into(),
         }),
+        nvidia_verifier: Default::default(),
         challenge_key_path: None,
         artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
@@ -152,6 +167,7 @@ mod tests {
                 cert_path: Some("/etc/cert.pem".into())
             }),
         }),
+        nvidia_verifier: Default::default(),
         challenge_key_path: None,
         artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
@@ -173,6 +189,7 @@ mod tests {
             signer: None,
             policy_dir: "/var/lib/attestation-service/policies".into(),
         }),
+        nvidia_verifier: Default::default(),
         challenge_key_path: None,
         artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
@@ -198,6 +215,7 @@ mod tests {
                 cert_path: Some("/etc/cert.pem".into())
             }),
         }),
+        nvidia_verifier: Default::default(),
         challenge_key_path: None,
         artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]
@@ -228,6 +246,7 @@ mod tests {
             }),
             policy_dir: "/var/lib/attestation-service/policies".into(),
         }),
+        nvidia_verifier: Default::default(),
         challenge_key_path: None,
         artifact_server_address: DEFAULT_ARTIFACT_SERVER_ADDRESS.to_string(),
     })]

@@ -11,8 +11,12 @@ pub use error::Error as VerifierError;
 pub mod status;
 pub use status::DependencyStatus;
 
+pub mod nvidia_config;
 pub mod sample;
 pub mod sample_device;
+
+#[cfg(feature = "gpu-verifier")]
+pub(crate) mod nvidia;
 
 #[cfg(feature = "az-snp-vtpm-verifier")]
 pub mod az_snp_vtpm;
@@ -54,6 +58,14 @@ pub mod hygon_tpm;
 pub mod tpm_registrar;
 
 pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
+    to_verifier_with_nvidia_config(tee, &nvidia_config::NvidiaVerifierConfig::default())
+}
+
+pub fn to_verifier_with_nvidia_config(
+    tee: &Tee,
+    nvidia_config: &nvidia_config::NvidiaVerifierConfig,
+) -> Result<Box<dyn Verifier + Send + Sync>> {
+    let _ = nvidia_config;
     match tee {
         Tee::Sev => bail!("TEE `sev` verifier is not implemented."),
         Tee::Nvidia => bail!("TEE `nvidia` verifier is not implemented."),
@@ -79,7 +91,7 @@ pub fn to_verifier(tee: &Tee) -> Result<Box<dyn Verifier + Send + Sync>> {
         Tee::Tdx => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "tdx-verifier")] {
-                    Ok(Box::<tdx::Tdx>::default() as Box<dyn Verifier + Send + Sync>)
+                    Ok(Box::new(tdx::Tdx { nvidia_config: nvidia_config.clone() }) as Box<dyn Verifier + Send + Sync>)
                 } else {
                     bail!("feature `tdx-verifier` is not enabled for `verifier` crate.")
                 }

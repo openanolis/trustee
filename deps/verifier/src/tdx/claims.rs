@@ -501,10 +501,13 @@ mod tests {
             return;
         }
 
-        let expected_result_str = format!("{result:?}");
-        let actual_result_str = format!("{actual_result:?}");
-
-        assert_eq!(expected_result_str, actual_result_str, "{msg}");
+        // Compare JSON objects semantically. Feature unification can enable
+        // serde_json/preserve_order, which changes Debug ordering, not values.
+        assert_eq!(
+            result.as_ref().unwrap(),
+            actual_result.as_ref().unwrap(),
+            "{msg}"
+        );
 
         let result = result.unwrap();
         let actual_result = actual_result.unwrap();
