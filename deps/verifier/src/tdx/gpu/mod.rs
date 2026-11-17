@@ -1,187 +1,211 @@
-use crate::TeeEvidenceParsedClaim;
-use anyhow::{anyhow, Result};
-use base64::{engine::general_purpose, Engine as _};
-use log::{debug, error, info, warn};
+use crate::{nvidia::NvidiaVerifier, nvidia_config::NvidiaVerifierConfig, TeeEvidenceParsedClaim};
+use anyhow::{anyhow, ensure, Result};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
-use sha2::{Digest, Sha384};
+use sha2::{Digest, Sha256, Sha512};
+use std::collections::HashSet;
 
-mod opaque_data;
-mod report;
-mod rim;
+/// Compatibility API. Prefer nvidia_verifier.rim_url in AS configuration.
+/// Environment settings still take precedence.
+#[deprecated(note = "Use NvidiaVerifierConfig.rim_url")]
+pub fn set_rim_service_url(url: Option<String>) {
+    crate::nvidia_config::set_legacy_rim_url(url.map(|url| {
+        url.trim_end_matches('/')
+            .trim_end_matches("/v1/rim")
+            .to_owned()
+    }));
+}
 
-pub use rim::set_rim_service_url;
-
-use report::AttestationReport;
-use rim::{parse_rim_content, RimInfo};
-
-/// Evidence list
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuEvidenceList {
-    /// List of GPU evidence
+    #[serde(default)]
+    pub binding_version: u32,
     pub evidence_list: Vec<GpuEvidence>,
-    /// Collection time
     pub collection_time: chrono::DateTime<chrono::Utc>,
 }
 
-/// GPU attestation evidence
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuEvidence {
-    /// Device index
+    pub arch: String,
     pub index: u32,
-    /// Device UUID
     pub uuid: String,
-    /// Device name
     pub name: String,
-    /// Driver version
     pub driver_version: String,
-    /// VBIOS version
     pub vbios_version: String,
-    /// Attestation report (Base64 encoded)
     pub attestation_report: Option<String>,
-    /// Certificate (Base64 encoded)
     pub certificate: Option<String>,
-    /// Confidential computing status
     pub cc_enabled: bool,
 }
 
-impl GpuEvidence {
-    pub async fn evaluate(&self) -> Result<TeeEvidenceParsedClaim> {
-        let mut claim = Map::new();
-        claim.insert("uuid".to_string(), Value::String(self.uuid.clone()));
-        claim.insert("name".to_string(), Value::String(self.name.clone()));
-        claim.insert(
-            "driver_version".to_string(),
-            Value::String(self.driver_version.clone()),
+pub fn gpu_nonce(padded_report_data: &[u8]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"tdx-nvidia-nonce-v1\0");
+    hash.update(padded_report_data);
+    hash.finalize().into()
+}
+
+impl GpuEvidenceList {
+    pub fn bound_report_data(&self, report_data: &[u8]) -> Result<Vec<u8>> {
+        ensure!(report_data.len() <= 64, "TDX report data exceeds 64 bytes");
+        ensure!(
+            self.binding_version == 1,
+            "Unbound or unsupported GPU evidence version"
         );
-        claim.insert(
-            "vbios_version".to_string(),
-            Value::String(self.vbios_version.clone()),
+        ensure!(
+            !self.evidence_list.is_empty() && self.evidence_list.len() <= 32,
+            "Invalid GPU count"
         );
-        claim.insert("cc_enabled".to_string(), Value::Bool(self.cc_enabled));
-
-        if let Some(attestation_report) = self.attestation_report.as_ref() {
-            let report = general_purpose::STANDARD.decode(attestation_report)?;
-            let attestation_report = AttestationReport::parse(&report)?;
-            let opaque_data = &attestation_report.opaque_data;
-
-            let driver_version = self.driver_version.clone();
-            let vbios_version = self.vbios_version.clone();
-            let project = opaque_data.get_string_field("PROJECT")?;
-            let project_sku = opaque_data.get_string_field("PROJECT_SKU")?;
-            let chip_sku = opaque_data.get_string_field("CHIP_SKU")?;
-
-            // Parallel fetching of Driver and VBIOS RIMs
-            info!("Fetching Driver and VBIOS RIMs in parallel...");
-            let (driver_rim_result, vbios_rim_result) = tokio::join!(
-                rim::get_driver_rim(&driver_version),
-                rim::get_vbios_rim(&project, &project_sku, &chip_sku, &vbios_version)
+        let mut padded = [0u8; 64];
+        padded[..report_data.len()].copy_from_slice(report_data);
+        let mut hash = Sha512::new();
+        hash.update(b"tdx-nvidia-evidence-v1\0");
+        hash.update(padded);
+        hash.update((self.evidence_list.len() as u32).to_le_bytes());
+        let mut indices = HashSet::new();
+        for gpu in &self.evidence_list {
+            ensure!(indices.insert(gpu.index), "Duplicate GPU index");
+            ensure!(
+                matches!(gpu.arch.as_str(), "HOPPER" | "BLACKWELL"),
+                "Unsupported NVIDIA architecture"
             );
-
-            let driver_rim_content = driver_rim_result
-                .map_err(|e| anyhow!("Cannot get Driver RIM from RIM service: {e}"))?;
-            let vbios_rim_content = vbios_rim_result
-                .map_err(|e| anyhow!("Cannot get VBIOS RIM from RIM service: {e}"))?;
-
-            let driver_rim = parse_rim_content(&driver_rim_content, "driver")?;
-            let vbios_rim = parse_rim_content(&vbios_rim_content, "vbios")?;
-
-            verify_measurements(&attestation_report, &driver_rim, &vbios_rim)?;
-
-            // Calculate SHA384 hash of all measurements combined
-            let mut hasher = Sha384::new();
-            for measurement in attestation_report.measurements.values() {
-                hasher.update(hex::decode(measurement)?);
+            hash.update(gpu.index.to_le_bytes());
+            let (report, cert) = gpu.report_and_certificate()?;
+            for field in [gpu.arch.as_bytes(), report.as_slice(), cert.as_slice()] {
+                hash.update(u32::try_from(field.len())?.to_le_bytes());
+                hash.update(field);
             }
-            let hash_result = hasher.finalize();
-            let hash_hex = hex::encode(hash_result);
-
-            claim.insert("measurement".to_string(), Value::String(hash_hex));
         }
+        Ok(hash.finalize().to_vec())
+    }
 
-        if let Some(certificate) = self.certificate.as_ref() {
-            claim.insert(
-                "certificate".to_string(),
-                Value::String(certificate.clone()),
+    pub async fn evaluate(
+        &self,
+        nonce: &[u8; 32],
+        config: &NvidiaVerifierConfig,
+    ) -> Result<serde_json::Map<String, serde_json::Value>> {
+        let verifier = NvidiaVerifier::new(config).await?;
+        let mut claims = serde_json::Map::new();
+        let mut identities = HashSet::new();
+        for (index, gpu) in self.evidence_list.iter().enumerate() {
+            let claim = gpu.evaluate(&verifier, nonce).await?;
+            let identity = claim["ueid"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Missing GPU identity"))?;
+            ensure!(
+                identities.insert(identity.to_owned()),
+                "Repeated NVIDIA device identity"
             );
+            claims.insert(format!("nvidia_gpu.{index}"), claim);
         }
-
-        Ok(Value::Object(claim) as TeeEvidenceParsedClaim)
+        claims.insert(
+            "nvidia_gpu_count".into(),
+            serde_json::json!(identities.len()),
+        );
+        Ok(claims)
     }
 }
 
-fn verify_measurements(
-    attestation_report: &AttestationReport,
-    driver_rim: &RimInfo,
-    vbios_rim: &RimInfo,
-) -> Result<()> {
-    let runtime_measurements = &attestation_report.measurements;
-
-    info!("Runtime measurement count: {}", runtime_measurements.len());
-
-    let mut matches = 0;
-    let mut mismatches = 0;
-
-    // Verify driver measurements
-    for (index, measurement) in &driver_rim.measurements {
-        if measurement.active {
-            if let Some(runtime_value) = runtime_measurements.get(index) {
-                let mut found_match = false;
-                for golden_value in &measurement.values {
-                    if runtime_value == golden_value {
-                        found_match = true;
-                        break;
-                    }
-                }
-
-                if found_match {
-                    matches += 1;
-                    debug!("Measurement index {index} matches (Driver)");
-                } else {
-                    mismatches += 1;
-                    warn!("Measurement index {index} does not match (Driver)");
-                    warn!("   Runtime value: {runtime_value}");
-                    warn!("   Expected values: {:?}", measurement.values);
-                }
-            }
-        }
+impl GpuEvidence {
+    fn report_and_certificate(&self) -> Result<(Vec<u8>, Vec<u8>)> {
+        let report = STANDARD.decode(
+            self.attestation_report
+                .as_ref()
+                .ok_or_else(|| anyhow!("Missing NVIDIA report"))?,
+        )?;
+        let cert = STANDARD.decode(
+            self.certificate
+                .as_ref()
+                .ok_or_else(|| anyhow!("Missing NVIDIA certificate"))?,
+        )?;
+        ensure!(
+            !report.is_empty() && !cert.is_empty(),
+            "Empty NVIDIA report or certificate"
+        );
+        ensure!(
+            report.len() <= 128 * 1024 && cert.len() <= 128 * 1024,
+            "NVIDIA evidence too large"
+        );
+        Ok((report, cert))
     }
 
-    // Verify vbios measurements
-    for (index, measurement) in &vbios_rim.measurements {
-        if measurement.active {
-            if let Some(runtime_value) = runtime_measurements.get(index) {
-                let mut found_match = false;
-                for golden_value in &measurement.values {
-                    if runtime_value == golden_value {
-                        found_match = true;
-                        break;
-                    }
-                }
-
-                if found_match {
-                    matches += 1;
-                    debug!("Measurement index {index} matches (VBIOS)");
-                } else {
-                    mismatches += 1;
-                    warn!("Measurement index {index} does not match (VBIOS)");
-                    warn!("   Runtime value: {runtime_value}");
-                    warn!("   Expected values: {:?}", measurement.values);
-                }
-            }
-        }
+    async fn evaluate(
+        &self,
+        verifier: &NvidiaVerifier,
+        nonce: &[u8; 32],
+    ) -> Result<TeeEvidenceParsedClaim> {
+        self.report_and_certificate()?;
+        // Guest-provided UUID, name, CC state, driver and VBIOS versions are
+        // metadata, not device-signed facts. Only authenticated verifier claims
+        // enter policy input, including the signed device identity (ueid).
+        verifier
+            .verify(
+                &self.arch,
+                self.attestation_report
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("Missing NVIDIA report"))?,
+                self.certificate
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("Missing NVIDIA certificate"))?,
+                nonce,
+            )
+            .await
     }
+}
 
-    info!("Measurement verification result:");
-    info!("   Matches: {matches}");
-    info!("   Mismatches: {mismatches}");
-
-    if mismatches > 0 {
-        error!("Measurement mismatch found! Device may be tampered with or using unsupported software version.");
-        return Err(anyhow!("Measurement verification failed"));
-    } else {
-        info!("All measurements verified successfully!");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn vector() -> (serde_json::Value, Vec<u8>, GpuEvidenceList) {
+        let vector: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../test_data/nvidia/tdx_gpu_binding_v1.json"
+        ))
+        .unwrap();
+        let data = hex::decode(vector["report_data"].as_str().unwrap()).unwrap();
+        let gpus = serde_json::from_value(vector["gpu_evidence"].clone()).unwrap();
+        (vector, data, gpus)
     }
-
-    Ok(())
+    #[test]
+    fn shared_cpu_gpu_binding_vector() {
+        let (vector, data, gpus) = vector();
+        assert_eq!(
+            hex::encode(gpus.bound_report_data(&data).unwrap()),
+            vector["bound_report_data"]
+        );
+        assert_eq!(hex::encode(gpu_nonce(&data)), vector["nonce"]);
+        let mut changed = data.clone();
+        changed[63] ^= 1;
+        assert_ne!(gpu_nonce(&data), gpu_nonce(&changed));
+    }
+    #[test]
+    fn gpu_removal_reordering_and_substitution_change_cpu_commitment() {
+        let (_, data, gpus) = vector();
+        let expected = gpus.bound_report_data(&data).unwrap();
+        let mut partial = gpus.clone();
+        partial.evidence_list.pop();
+        assert_ne!(expected, partial.bound_report_data(&data).unwrap());
+        let mut reordered = gpus.clone();
+        reordered.evidence_list.reverse();
+        assert_ne!(expected, reordered.bound_report_data(&data).unwrap());
+        let mut substituted = gpus;
+        substituted.evidence_list[0].certificate = Some(STANDARD.encode(b"another certificate"));
+        assert_ne!(expected, substituted.bound_report_data(&data).unwrap());
+        // Stripping the whole list cannot recover the original CPU report data.
+        assert_ne!(expected, data);
+    }
+    #[test]
+    fn unbound_empty_duplicate_and_partial_gpu_evidence_is_rejected() {
+        let (_, data, gpus) = vector();
+        let mut old = gpus.clone();
+        old.binding_version = 0;
+        assert!(old.bound_report_data(&data).is_err());
+        let mut empty = gpus.clone();
+        empty.evidence_list.clear();
+        assert!(empty.bound_report_data(&data).is_err());
+        let mut duplicate = gpus.clone();
+        duplicate.evidence_list[1].index = duplicate.evidence_list[0].index;
+        assert!(duplicate.bound_report_data(&data).is_err());
+        let mut missing = gpus;
+        missing.evidence_list[0].attestation_report = None;
+        assert!(missing.bound_report_data(&data).is_err());
+    }
 }

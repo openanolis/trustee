@@ -5396,15 +5396,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quick-xml"
-version = "0.41.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "quinn"
 version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8202,7 +8193,6 @@ dependencies = [
  "ear",
  "eventlog",
  "eventlog-rs",
- "futures",
  "getrandom 0.2.17",
  "hex",
  "intel-tee-quote-verification-rs",
@@ -8214,8 +8204,6 @@ dependencies = [
  "openssl-sys",
  "p384",
  "pem",
- "quick-xml",
- "regex",
  "reqwest 0.13.5",
  "rsa",
  "rstest",

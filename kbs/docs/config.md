@@ -16,6 +16,10 @@ environment variable.
 The following sections list the KBS properties which can be set through the
 configuration file.
 
+For NVIDIA GPUs, the built-in AS accepts `[attestation_service.nvidia_verifier]`.
+It defaults to local RIM verification; NRAS is optional and environment variables
+override the file. See [NVIDIA verifier configuration](../../deps/verifier/src/nvidia/README.md).
+
 ### Shared Storage Configuration
 
 The optional top-level `storage_backend` configures one namespaced storage

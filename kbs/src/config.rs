@@ -366,6 +366,7 @@ mod tests {
                             signer: None,
                             ..Default::default()
                         }),
+                        nvidia_verifier: Default::default(),
                         challenge_key_path: None,
                         ..Default::default()
                     }
@@ -448,6 +449,7 @@ mod tests {
                             },
                             ..Default::default()
                         }),
+                        nvidia_verifier: Default::default(),
                         challenge_key_path: None,
                         ..Default::default()
                     }
@@ -521,6 +523,7 @@ mod tests {
                             policy_dir: "/opt/confidential-containers/attestation-service/simple-policies".into(),
                             ..Default::default()
                         }),
+                        nvidia_verifier: Default::default(),
                         challenge_key_path: None,
                         ..Default::default()
                     }
@@ -550,6 +553,28 @@ mod tests {
         let _env = EnvGuard::clear();
         let config = KbsConfig::try_from(Path::new(config_path)).unwrap();
         assert_eq!(config, expected, "case {config_path}");
+    }
+
+    #[cfg(any(feature = "coco-as-builtin", feature = "coco-as-builtin-no-verifier"))]
+    #[test]
+    #[serial]
+    fn nvidia_settings_are_deserialized_for_builtin_as() {
+        let _env = EnvGuard::clear();
+        let config = concat!(
+            include_str!("../test_data/configs/coco-as-builtin-1.toml"),
+            "\n[attestation_service.nvidia_verifier]\nmode = 'nras'\n"
+        );
+        let file = tempfile::Builder::new().suffix(".toml").tempfile().unwrap();
+        std::fs::write(file.path(), config).unwrap();
+        let config = KbsConfig::try_from(file.path()).unwrap();
+        let crate::attestation::config::AttestationServiceConfig::CoCoASBuiltIn(config) =
+            config.attestation_service.attestation_service
+        else {
+            panic!("expected built-in AS")
+        };
+        let expected: attestation_service::config::Config =
+            serde_json::from_str(r#"{"nvidia_verifier":{"mode":"nras"}}"#).unwrap();
+        assert_eq!(config.nvidia_verifier, expected.nvidia_verifier);
     }
 
     #[test]

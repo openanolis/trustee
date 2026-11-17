@@ -82,6 +82,7 @@ fn as_config(work_dir: &Path, rvps_config: RvpsConfig) -> Config {
             policy_dir: work_dir.join("policies").to_string_lossy().into_owned(),
             ..Default::default()
         }),
+        nvidia_verifier: Default::default(),
         challenge_key_path: None,
         artifact_server_address: attestation_service::config::DEFAULT_ARTIFACT_SERVER_ADDRESS
             .to_string(),

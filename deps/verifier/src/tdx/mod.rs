@@ -18,8 +18,6 @@ use quote::parse_tdx_quote;
 use serde::{Deserialize, Serialize};
 use verify::ecdsa_quote_verification;
 
-use serde_json::Value;
-
 pub(crate) mod claims;
 pub(crate) mod gpu;
 pub(crate) mod quote;
@@ -28,22 +26,18 @@ pub(crate) mod verify;
 #[cfg(feature = "tdx-dcap-rust")]
 pub use verify::{dependency_statuses, set_pccs_url, set_pccs_urls};
 
+#[allow(deprecated)]
 pub use gpu::set_rim_service_url;
 
 use crate::tdx::gpu::GpuEvidenceList;
 use crate::VerifierError;
 
-/// Injectable GPU-verify skip override (pure-lib / wasm host). When set,
-/// takes precedence over the `TRUSTEE_SKIP_NVGPU_VERIFY` env var. Pass `None`
-/// to restore env / default resolution. On wasm the default is `false`
-/// (verify); a host that cannot supply a RIM URL may set `Some(true)` to
-/// skip explicitly.
+/// Legacy override retained for source compatibility. Requesting a bypass now
+/// rejects GPU-bearing evidence; unverified device claims are never emitted.
 static SKIP_GPU_VERIFY_OVERRIDE: RwLock<Option<bool>> = RwLock::new(None);
 
-/// Inject the GPU-verify skip flag (pure-lib / wasm host). `Some(true)` skips
-/// GPU RIM verification (pass-through), `Some(false)` forces verification,
-/// `None` restores the default (native: `TRUSTEE_SKIP_NVGPU_VERIFY` env;
-/// wasm: `false`).
+/// `Some(true)` rejects GPU-bearing evidence. `Some(false)` and `None` require
+/// normal verification, including any legacy environment flag.
 pub fn set_skip_gpu_verify(skip: Option<bool>) {
     *SKIP_GPU_VERIFY_OVERRIDE.write().unwrap() = skip;
 }
@@ -62,9 +56,7 @@ fn default_skip_gpu_verify() -> bool {
         .unwrap_or(false)
 }
 
-/// On wasm there is no `TRUSTEE_SKIP_NVGPU_VERIFY` env var; default to
-/// verifying (a host that cannot supply a RIM URL may call
-/// `set_skip_gpu_verify(Some(true))` explicitly).
+/// Wasm has no environment; verification is required.
 #[cfg(all(
     target_arch = "wasm32",
     target_vendor = "unknown",
@@ -90,7 +82,9 @@ struct TdxEvidence {
 }
 
 #[derive(Debug, Default)]
-pub struct Tdx {}
+pub struct Tdx {
+    pub nvidia_config: crate::nvidia_config::NvidiaVerifierConfig,
+}
 
 #[cfg_attr(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"), async_trait(?Send))]
 #[cfg_attr(
@@ -120,6 +114,7 @@ impl Verifier for Tdx {
             expected_init_data_hash,
             tdx_evidence,
             None,
+            &self.nvidia_config,
         )
         .await
         .context("TDX verifier")?;
@@ -147,6 +142,7 @@ impl Verifier for Tdx {
             expected_init_data_hash,
             tdx_evidence,
             Some(collateral),
+            &self.nvidia_config,
         )
         .await
         .context("TDX verifier")?;
@@ -159,6 +155,7 @@ async fn verify_evidence(
     expected_init_data_hash: &InitDataHash<'_>,
     evidence: TdxEvidence,
     collateral: Option<&serde_json::Value>,
+    nvidia_config: &crate::nvidia_config::NvidiaVerifierConfig,
 ) -> Result<TeeEvidenceParsedClaim> {
     if evidence.quote.is_empty() {
         return Err(VerifierError::InvalidEvidenceFormat {
@@ -200,7 +197,10 @@ async fn verify_evidence(
 
     if let ReportData::Value(expected_report_data) = expected_report_data {
         debug!("Check the binding of REPORT_DATA.");
-        let expected_report_data = regularize_data(expected_report_data, 64, "REPORT_DATA", "TDX");
+        let expected_report_data = match &evidence.gpu_evidence {
+            Some(gpus) => gpus.bound_report_data(expected_report_data)?,
+            None => regularize_data(expected_report_data, 64, "REPORT_DATA", "TDX"),
+        };
         if expected_report_data != quote.report_data() {
             return Err(VerifierError::BindingMismatch {
                 field: "quote.report_data",
@@ -275,108 +275,21 @@ async fn verify_evidence(
             as serde_json::Value;
 
     if let Some(gpu_evidence) = evidence.gpu_evidence {
-        let mut gpu_claims = serde_json::Map::new();
-        // Skip opt-in: injected override takes precedence; otherwise the
-        // target-specific default (native: `TRUSTEE_SKIP_NVGPU_VERIFY` env;
-        // wasm: `false`, i.e. verify). A wasm host that cannot supply a RIM
-        // URL should call set_skip_gpu_verify(Some(true)) explicitly.
-        let skip_gpu_verify =
-            (*SKIP_GPU_VERIFY_OVERRIDE.read().unwrap()).unwrap_or_else(default_skip_gpu_verify);
-
-        if skip_gpu_verify {
-            info!("Skipping GPU evidence verification per TRUSTEE_SKIP_NVGPU_VERIFY.");
-            for (index, single_gpu_evidence) in gpu_evidence.evidence_list.iter().enumerate() {
-                match serde_json::to_value(single_gpu_evidence) {
-                    Result::Ok(ev) => {
-                        gpu_claims.insert(format!("nvidia_gpu.{index}"), ev);
-                    }
-                    Result::Err(err) => {
-                        warn!("GPU {index} serialization failed: {err}");
-                    }
-                }
-            }
-        } else {
-            // Evaluate each GPU concurrently. On native (multi-threaded
-            // runtime) `tokio::spawn` lets the I/O-bound RIM fetches run in
-            // parallel across cores; on the single-threaded wasm target
-            // `tokio::spawn` is unavailable, so cooperative polling via
-            // `futures::future::join_all` is used instead.
-            #[cfg(not(all(
-                target_arch = "wasm32",
-                target_vendor = "unknown",
-                target_os = "unknown"
-            )))]
-            {
-                // Create tasks for parallel GPU processing
-                let mut tasks = Vec::new();
-                for (index, single_gpu_evidence) in gpu_evidence.evidence_list.iter().enumerate() {
-                    let gpu_evidence = single_gpu_evidence.clone();
-                    let task = tokio::spawn(async move {
-                        let result = gpu::GpuEvidence::evaluate(&gpu_evidence).await;
-                        (index, result)
-                    });
-                    tasks.push(task);
-                }
-
-                // Wait for all tasks to complete
-                for task in tasks {
-                    match task.await {
-                        std::result::Result::Ok((
-                            index,
-                            std::result::Result::Ok(gpu_evidence_claims),
-                        )) => {
-                            gpu_claims.insert(format!("nvidia_gpu.{index}"), gpu_evidence_claims);
-                        }
-                        std::result::Result::Ok((index, std::result::Result::Err(e))) => {
-                            warn!("GPU {index} evaluation failed: {e}");
-                        }
-                        std::result::Result::Err(e) => {
-                            warn!("GPU task failed: {e}");
-                        }
-                    }
-                }
-            }
-            #[cfg(all(
-                target_arch = "wasm32",
-                target_vendor = "unknown",
-                target_os = "unknown"
-            ))]
-            {
-                let futs = gpu_evidence.evidence_list.iter().enumerate().map(
-                    |(index, single_gpu_evidence)| {
-                        let gpu_evidence = single_gpu_evidence.clone();
-                        async move {
-                            let result = gpu::GpuEvidence::evaluate(&gpu_evidence).await;
-                            (index, result)
-                        }
-                    },
-                );
-                let results = futures::future::join_all(futs).await;
-                for (index, result) in results {
-                    match result {
-                        std::result::Result::Ok(gpu_evidence_claims) => {
-                            gpu_claims.insert(format!("nvidia_gpu.{}", index), gpu_evidence_claims);
-                        }
-                        std::result::Result::Err(e) => {
-                            warn!("GPU {} evaluation failed: {}", index, e);
-                        }
-                    }
-                }
-            }
-        }
-
-        tdx_attestation_claims = match (tdx_attestation_claims.clone(), gpu_claims) {
-            (Value::Object(mut tdx), gpu) => {
-                tdx.extend(gpu);
-                Value::Object(tdx)
-            }
-            _ => {
-                warn!("Merge TDX and GPU evidence claims failed");
-                tdx_attestation_claims
-            }
+        ensure!(
+            !default_skip_gpu_verify() && *SKIP_GPU_VERIFY_OVERRIDE.read().unwrap() != Some(true),
+            "Skipping NVIDIA GPU verification is no longer supported"
+        );
+        let ReportData::Value(report_data) = expected_report_data else {
+            bail!("GPU evidence requires expected report data");
         };
-    } else {
-        warn!("GPU Attestation Evidence is null, skipping GPU Evidence validation.");
+        let padded = regularize_data(report_data, 64, "REPORT_DATA", "TDX");
+        let gpu_claims = gpu_evidence
+            .evaluate(&gpu::gpu_nonce(&padded), nvidia_config)
+            .await?;
+        tdx_attestation_claims
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("TDX claims must be an object"))?
+            .extend(gpu_claims);
     }
 
     Ok(tdx_attestation_claims as TeeEvidenceParsedClaim)

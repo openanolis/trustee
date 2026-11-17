@@ -18,6 +18,7 @@ section:
 | `storage_backend`          | SharedStorageConfiguration  | Optional namespaced backend for AS policies and built-in RVPS reference values. | False | None |
 | `work_dir`                 | String                      | The location for Attestation Service to store data. | False      | Firstly try to read from ENV `AS_WORK_DIR`. If not any, use `/opt/confidential-containers/attestation-service`       |
 | `rvps_config`              | [RVPSConfiguration][2]      | RVPS configuration                                  | False      | -       |
+| `nvidia_verifier`          | [NVIDIA verification](../../deps/verifier/src/nvidia/README.md) | Local RIM or optional NRAS verification; environment variables override file settings. | False | Local RIM with NVIDIA NVAT 2.x |
 | `artifact_server_address`  | String                      | Artifact Server URL used by policy `query_artifact_server`. | False | `https://attest-pre.aliyuncs.com` |
 | `attestation_token_broker` | [AttestationTokeBroker][1]  | Attestation result token configuration.             | False      | -       |
 | `challenge_key_path`       | String                      | Path to the RSA private key (PEM) used to sign and verify attestation challenge (nonce) tokens. The key is generated atomically on the first challenge request if the file does not exist, and is reloaded for every signing and verification request. | False | `/etc/trustee/attestation-service/nonce_token_issuer/key.pem` |

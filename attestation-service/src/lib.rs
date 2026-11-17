@@ -219,6 +219,7 @@ pub struct VerificationRequest {
 }
 
 pub struct AttestationService {
+    nvidia_config: verifier::nvidia_config::NvidiaVerifierConfig,
     rvps: Arc<dyn RvpsApi>,
     token_broker: Box<dyn AttestationTokenBroker + Send + Sync>,
     challenger: JwtChallenger,
@@ -296,7 +297,9 @@ impl AttestationService {
             None => JwtChallenger::new_with_private_key_default_path().await?,
         };
 
-        Ok(Self::from_components(rvps, token_broker, challenger))
+        let mut service = Self::from_components(rvps, token_broker, challenger);
+        service.nvidia_config = config.nvidia_verifier;
+        Ok(service)
     }
 
     /// Assemble an [`AttestationService`] from already-constructed component
@@ -308,10 +311,21 @@ impl AttestationService {
         challenger: JwtChallenger,
     ) -> Self {
         Self {
+            nvidia_config: Default::default(),
             rvps,
             token_broker,
             challenger,
         }
+    }
+
+    /// Configure a library/wasm AS instance without filesystem or global state.
+    /// Per-process environment overrides, when available, retain priority.
+    pub fn with_nvidia_config(
+        mut self,
+        config: verifier::nvidia_config::NvidiaVerifierConfig,
+    ) -> Self {
+        self.nvidia_config = config;
+        self
     }
 
     /// Return AS and verifier dependency status without performing network I/O.
@@ -427,12 +441,14 @@ impl AttestationService {
                 }
             }
 
-            let verifier = verifier::to_verifier(&verification_request.tee).map_err(|source| {
-                AttestationError::UnsupportedTee {
-                    request_index,
-                    tee: verification_request.tee,
-                    source,
-                }
+            let verifier = verifier::to_verifier_with_nvidia_config(
+                &verification_request.tee,
+                &self.nvidia_config,
+            )
+            .map_err(|source| AttestationError::UnsupportedTee {
+                request_index,
+                tee: verification_request.tee,
+                source,
             })?;
 
             let (report_data, runtime_data_claims) = parse_runtime_data(
@@ -589,7 +605,7 @@ impl AttestationService {
         tee: Tee,
         tee_parameters: String,
     ) -> Result<String> {
-        let verifier = verifier::to_verifier(&tee)?;
+        let verifier = verifier::to_verifier_with_nvidia_config(&tee, &self.nvidia_config)?;
         verifier
             .generate_supplemental_challenge(tee_parameters)
             .await
