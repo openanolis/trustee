@@ -543,4 +543,119 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("exit 12"), "{error}");
     }
+
+    // Files stay outside the repository: fresh reports identify the test GPU.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn hardware_evidence() -> (Value, Vec<u8>) {
+        let evidence = std::fs::read(
+            std::env::var("TRUSTEE_NVIDIA_HARDWARE_EVIDENCE")
+                .expect("Set TRUSTEE_NVIDIA_HARDWARE_EVIDENCE to collected evidence JSON"),
+        )
+        .unwrap();
+        let report_data =
+            std::fs::read(std::env::var("TRUSTEE_NVIDIA_HARDWARE_REPORT_DATA").expect(
+                "Set TRUSTEE_NVIDIA_HARDWARE_REPORT_DATA to the original 64-byte challenge",
+            ))
+            .unwrap();
+        assert_eq!(report_data.len(), 64);
+        (serde_json::from_slice(&evidence).unwrap(), report_data)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    #[ignore = "Requires fresh GPU evidence and live NVIDIA services; see nvidia/README.md"]
+    async fn live_hardware_gpu_evidence() {
+        let (evidence, report_data) = hardware_evidence();
+        let mut config = crate::nvidia_config::NvidiaVerifierConfig::default()
+            .resolve()
+            .unwrap();
+        let verifier = match config.mode {
+            crate::nvidia_config::NvidiaVerificationMode::Rim => {
+                config.nras_url = "https://127.0.0.1:1/unused".into();
+                config.nras_jwks_url = "https://127.0.0.1:1/unused-jwks".into();
+                NvidiaVerifier::Rim(config)
+            }
+            crate::nvidia_config::NvidiaVerificationMode::Nras => {
+                NvidiaVerifier::Nras(NrasVerifier::new(&config).await.unwrap())
+            }
+        };
+        let nonce = crate::tdx::gpu::gpu_nonce(&report_data);
+        let gpus = evidence["gpu_evidence"]["evidence_list"]
+            .as_array()
+            .unwrap();
+        assert!(!gpus.is_empty());
+        for gpu in gpus {
+            let arch = gpu["arch"].as_str().unwrap();
+            let report = gpu["attestation_report"].as_str().unwrap();
+            let certificate = gpu["certificate"].as_str().unwrap();
+            let claims = verifier
+                .verify(arch, report, certificate, &nonce)
+                .await
+                .unwrap();
+            assert_eq!(claims["x-nvidia-gpu-driver-version"], gpu["driver_version"]);
+            let mut wrong_nonce = nonce;
+            wrong_nonce[0] ^= 1;
+            assert!(verifier
+                .verify(arch, report, certificate, &wrong_nonce)
+                .await
+                .is_err());
+            let mut tampered = STANDARD.decode(report).unwrap();
+            *tampered.last_mut().unwrap() ^= 1;
+            assert!(verifier
+                .verify(arch, &STANDARD.encode(tampered), certificate, &nonce)
+                .await
+                .is_err());
+            let wrong_certificate = STANDARD.encode(include_bytes!(
+                "../test_data/nvidia/blackwell_coco_certs.txt"
+            ));
+            assert!(verifier
+                .verify(arch, report, &wrong_certificate, &nonce)
+                .await
+                .is_err());
+            println!("GPU hardware verification passed: mode={}, arch={}, driver={}; wrong nonce, signature and certificate rejected",
+                claims["verifier"], arch, claims["x-nvidia-gpu-driver-version"]);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    #[ignore = "Requires fresh combined TDX/GPU evidence, PCCS and NVIDIA services"]
+    async fn live_hardware_tdx_gpu_binding() {
+        use crate::{InitDataHash, ReportData, Verifier};
+        let (evidence, report_data) = hardware_evidence();
+        let verifier = crate::tdx::Tdx::default();
+        let expected_report_data = ReportData::Value(&report_data);
+        let init_data_hash = InitDataHash::NotProvided;
+        let verify = |evidence| verifier.evaluate(evidence, &expected_report_data, &init_data_hash);
+        let (claims, _) = verify(evidence.clone()).await.unwrap();
+        let count = evidence["gpu_evidence"]["evidence_list"]
+            .as_array()
+            .unwrap()
+            .len();
+        assert!(count > 0);
+        assert_eq!(claims["nvidia_gpu_count"], count);
+        let mut wrong_data = report_data.clone();
+        wrong_data[0] ^= 1;
+        assert!(verifier
+            .evaluate(
+                evidence.clone(),
+                &ReportData::Value(&wrong_data),
+                &InitDataHash::NotProvided
+            )
+            .await
+            .is_err());
+        let mut removed = evidence.clone();
+        removed.as_object_mut().unwrap().remove("gpu_evidence");
+        assert!(verify(removed).await.is_err());
+        let mut changed = evidence.clone();
+        let original = changed["gpu_evidence"]["evidence_list"][0]["attestation_report"]
+            .as_str()
+            .unwrap();
+        let mut bytes = STANDARD.decode(original).unwrap();
+        *bytes.last_mut().unwrap() ^= 1;
+        changed["gpu_evidence"]["evidence_list"][0]["attestation_report"] =
+            json!(STANDARD.encode(bytes));
+        assert!(verify(changed).await.is_err());
+        println!("TDX + {count} GPU(s) verification passed; changed challenge, removed GPU evidence and changed GPU report rejected");
+    }
 }

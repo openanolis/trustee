@@ -147,6 +147,60 @@ cargo +1.88.0 test -p verifier --no-default-features --features tdx-dcap-rust \
 On 2026-11-17, Blackwell report verification passed in both modes; wrong nonce,
 changed signature and a substituted certificate were rejected. The old Hopper
 report was rejected because its Driver RIM signing certificate expired on
-2026-06-01. This validates hardware-report replay and live verifier services;
-fresh device collection and a combined TDX+GPU hardware run remain separate
-validation steps.
+2026-06-01. These fixed-challenge tests validate hardware-report replay and
+live verifier services; fresh collection is covered separately below.
+
+For a fresh hardware run, build the paired guest-components `evidence_getter`
+with `tdx-attester,bin` (Rust) or `-tags gpu` (Go). On the TDX/GPU guest,
+generate a random 64-byte challenge and collect evidence:
+
+```sh
+head -c 64 /dev/urandom > report-data.bin
+./evidence_getter file report-data.bin > evidence.json
+```
+
+Transfer these two files to the verifier over an authenticated channel; keep
+device-specific evidence outside the source tree. Then run each mode explicitly:
+
+```sh
+export TRUSTEE_NVIDIA_HARDWARE_EVIDENCE=/absolute/path/evidence.json
+export TRUSTEE_NVIDIA_HARDWARE_REPORT_DATA=/absolute/path/report-data.bin
+for mode in rim nras; do
+  TRUSTEE_NVIDIA_VERIFIER_MODE=$mode cargo +1.88.0 test -p verifier \
+    --no-default-features --features tdx-dcap-rust --lib \
+    nvidia::tests::live_hardware -- --ignored --nocapture --test-threads=1
+done
+```
+
+The GPU test verifies the supplied report and rejects a wrong nonce, changed
+signature and substituted certificate. RIM mode uses unreachable NRAS URLs.
+The combined test additionally checks the TDX signature, event log, CPU/GPU
+binding, and rejection of a changed challenge or removed GPU evidence. It
+requires a working quote-generation service and PCCS connectivity.
+
+## H20 hardware validation (2026-11-17)
+
+Fresh evidence was collected on an Alibaba Cloud `ecs.gn8v-tee.4xlarge` in
+`cn-beijing-l`: one NVIDIA H20, GPU CC ON, driver `595.71.05`, VBIOS
+`96.00.CF.00.05`, and ALinux kernel `5.10.134-19.8.al8.x86_64`. The guest used
+an 8 GiB SWIOTLB and NVIDIA persistence daemon as described in the
+[provider instructions](https://help.aliyun.com/en/ecs/user-guide/build-a-heterogeneous-confidential-computing-environment).
+
+| Collector | Local RIM/OCSP | NRAS | Full TDX/GPU binding |
+| --- | --- | --- | --- |
+| Rust, paired guest-components PR | Passed | Passed | Passed in both modes |
+| Go, built with `-tags gpu` | Passed | Passed | Passed in both modes |
+
+Each collector returned a 5006-byte TDX quote, a 4129-byte GPU report and a
+4826-byte attestation certificate chain for a random 64-byte challenge. The
+GPU tests rejected a wrong nonce, modified signature and substituted chain.
+The combined verifier rejected a changed challenge, removed GPU evidence and
+modified GPU report. Local tests used unreachable NRAS URLs.
+
+Hardware testing also reproduced NVML returning zero devices after GPU
+initialization failed. The paired collectors now reject this PCI/NVML
+inventory mismatch. Rust additionally selects the GPU attestation chain
+instead of the empty CEC chain and slices both NVML buffers by their reported
+lengths. Both fixes were validated on the same H20 before releasing the
+temporary instance. This run covers fresh collection and combined evidence
+verification; it does not exercise KBS secret delivery.
