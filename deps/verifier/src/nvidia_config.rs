@@ -5,6 +5,7 @@ use std::sync::RwLock;
 
 static LEGACY_RIM_URL: RwLock<Option<String>> = RwLock::new(None);
 
+#[cfg(feature = "tdx-verifier")]
 pub(crate) fn set_legacy_rim_url(url: Option<String>) {
     *LEGACY_RIM_URL.write().unwrap() = url;
 }
