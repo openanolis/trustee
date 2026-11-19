@@ -4,7 +4,7 @@
 
 ## 准备
 
-1. 按[部署说明](../README.md)准备专用验收实例。给 `prepare.sh` 传入 `--external-attestation` 并将管理员公钥参数设为 `-`。用生成的上下文构建 `trustee-tdx` 后，运行 `shelter run -d --target tdx-interop --name trustee-e2e trustee-tdx`。该配置只包含 `tdx-interop`。实例首次启动时生成独立的验收管理员私钥，保存在 `/var/lib/trustee-shelter/identity/admin.key`。该模式由客户端/AS 验证 TDX，Shelter 的启动时证明是另一项检查。保留部署输出中的 `i-...`。
+1. 按[部署说明](../README.md)准备专用验收上下文。给 `prepare.sh` 传入 `--external-attestation` 并将管理员公钥参数设为 `-`。目标为 `tdx-interop`。实例首次启动时在 `/var/lib/trustee-shelter/identity/admin.key` 生成临时管理私钥。该模式由客户端和 AS 完成取密时的证明。Shelter 的服务端启动证明是另一项检查。
 2. 准备支持 Intel TDX 的 `trustee-attester`。它来自 [openanolis/guest-components v1.8.0](https://github.com/openanolis/guest-components/tree/v1.8.0/attestation-agent/kbs_protocol)，不在 Trustee 服务端 RPM 中。在与来宾 ABI 兼容、已安装 Rust 1.88 和 Intel DCAP TDX 开发库的 x86_64 构建机上执行以下命令，仅将生成的可执行文件及其缺少的运行库放入来宾。运行 `ldd` 确认依赖齐全。
 
    ```sh
@@ -15,7 +15,21 @@
    ldd target/release/trustee-attester
    ```
 
-3. 在来宾内安装 Python 3.9+、`certutil`（ALinux 软件包 `nss-tools`）、Chromium 及其运行库，并将 `trustee-attester` 放到 `PATH`。配方根文件系统为 8 GiB，Rust 编译和浏览器缓存可使用单独的临时盘。以下命令中的 `/mnt/test` 是已挂载且可执行的测试盘。在出网受限的实例上可预先准备对应架构的 wheel、浏览器及运行库。
+3. 私网验收可通过云助手运行机内命令。下载官方 Linux RPM，把以下文件放入**专用验收上下文**，再构建并启动。云助手使获授权的 ECS 运维身份能在来宾中执行命令。该软件包只加入验收镜像。[阿里云安装说明](https://help.aliyun.com/zh/ecs/user-guide/install-the-cloud-assistant-agent)
+
+   ```sh
+   # TDX_CLIENT 指向上一步的可执行文件
+   test -f "$ctx/guest/interop-local-admin" || exit 1
+   ASSIST_RPM=$(mktemp)
+   curl -fL https://aliyun-client-assist-cn-beijing.oss-cn-beijing.aliyuncs.com/linux/aliyun_assist_2.2.4.1097.rpm -o "$ASSIST_RPM" || exit 1
+   echo "174a9cd433f366fba8172d79610b77b13d41e643770d86e4a165815bf831bcd4  $ASSIST_RPM" | sha256sum -c - || exit 1
+   install -m 0644 "$ASSIST_RPM" "$ctx/guest/rpms/aliyun_assist.rpm"
+   install -m 0755 "$TDX_CLIENT" "$ctx/guest/trustee-attester"
+   shelter build -t trustee-e2e "$ctx"
+   shelter run -d --target tdx-interop --name trustee-e2e-01 trustee-e2e
+   ```
+
+4. 在部署输出中记下 ECS 实例 ID。通过云助手将 `shelter/tests/` 和 `shelter/guest/policy.rego` 送入来宾，保留目录结构。在来宾内安装 Python 3.9+、`certutil`（ALinux 软件包 `nss-tools`）、Chromium 及其运行库。配方根文件系统为 8 GiB，Rust 编译和浏览器缓存可使用单独的临时盘。以下命令中的 `/mnt/test` 是已挂载且可执行的测试盘。在出网受限的实例上可预先准备对应架构的 wheel、浏览器及运行库。
 
    ```sh
    python3.11 -m venv /mnt/test/venv
@@ -29,6 +43,7 @@
 用有权读取实例本地测试私钥的账号，在来宾内的 Trustee 源码目录运行。测试需要 `shelter/tests` 和相邻的 `shelter/guest/policy.rego`。有系统 Chromium 时可以加 `--chromium /path/to/chromium`。
 
 ```sh
+export PATH="/usr/share/trustee-shelter:$PATH"
 /mnt/test/venv/bin/python shelter/tests/acceptance.py \
   --admin-key /var/lib/trustee-shelter/identity/admin.key \
   --instance-id "$ECS_INSTANCE_ID"
@@ -43,7 +58,7 @@
 | 检查 | 通过条件 |
 | --- | --- |
 | 服务与前端 | systemd 服务组和六个组件均 active，浏览器登录，健康页的四项服务均正常 |
-| 策略和参考值 | 新建、回读、修改、删除独立 AS 策略；KBS 全局策略保存、回读；RVPS 新建、查询、删除独立测试参考值 |
+| 策略和参考值 | 新建、回读、修改、删除独立 AS 策略，保存并回读 KBS 资源策略，对同一 RVPS 参考值先后登记两个摘要、逐次查询并删除测试项 |
 | 取密与审计 | 同一个随机资源先经真实证明后收到 403；安装只授权该资源的临时策略后重新证明，返回 200；解密后 SHA-256 与上传的 48 字节随机资源完全一致，两次 GET 分别关联本次成功的 TDX 证明 |
 | 资源、实例和退出 | 页面查询、文本/二进制上传及删除；找到指定 ECS 的活跃心跳，搜索、重置、刷新；退出后清除会话 |
 
