@@ -6,6 +6,11 @@ rm -rf "$src/rpms"
 test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' trustee)" = "1.10.2-1.al8"
 test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' trustee-frontend)" = "1.10.2-1.al8"
 test -s /usr/share/nginx/html/trustee/index.html
+# The x86_64 release uses Intel DCAP FFI and reads the distribution QCNL file.
+qcnl=/etc/sgx_default_qcnl.conf
+grep -q '^PCCS_URL=' "$qcnl"
+grep -Fqx 'USE_SECURE_CERT=TRUE' "$qcnl"
+sed -i "s|^PCCS_URL=.*|PCCS_URL=$(cat "$src/pccs-url")|" "$qcnl"
 # The distribution RPM creates an administrative keypair when installed.
 # The exported image contains only the operator's public key.
 rm -f /etc/trustee/private.key /etc/trustee/public.pub

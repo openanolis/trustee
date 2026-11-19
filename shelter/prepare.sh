@@ -23,6 +23,7 @@ parser.add_argument("--external-attestation", action="store_true",
                     help="use the isolated TDX interoperability target without Shelter launch appraisal")
 parser.add_argument("--rpm-dir", type=Path, required=True, help="directory containing the two official v1.10.2 AL3 RPMs")
 parser.add_argument("--region")
+parser.add_argument("--pccs-url", help="HTTPS PCCS origin or full SGX certification v4 URL (default: regional Alibaba Cloud VPC PCCS)")
 parser.add_argument("--zone", dest="zone_id")
 parser.add_argument("--instance-type")
 parser.add_argument("--vpc-id")
@@ -62,6 +63,14 @@ provider = target["provider_options"]
 for key in ("region", "zone_id", "instance_type", "vpc_id", "vswitch_id"):
     if getattr(args, key):
         provider[key] = getattr(args, key)
+pccs = args.pccs_url or f"https://sgx-dcap-server-vpc.{provider['region']}.aliyuncs.com"
+origin = r"https://(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(?::[0-9]+)?"
+certification = r"(?:(?:/[A-Za-z0-9._~-]+)*/sgx/certification/v4)?/?"
+if not re.fullmatch(origin + certification, pccs):
+    parser.error("--pccs-url must be an HTTPS origin or a URL ending in /sgx/certification/v4/")
+pccs = pccs.rstrip("/")
+if not pccs.endswith("/sgx/certification/v4"):
+    pccs += "/sgx/certification/v4"
 if args.external_attestation:
     config["default_target"] = "tdx-interop"
     config["targets"] = {"tdx-interop": target}
@@ -79,6 +88,7 @@ with tempfile.TemporaryDirectory(dir=context.parent) as tmp:
     guest = output / "guest"
     shutil.copytree(source / "guest", guest)
     shutil.copy2(source / "configure-image.sh", output)
+    (guest / "pccs-url").write_text(pccs + "/\n")
     if args.admin_public_key == "-":
         (guest / "interop-local-admin").touch()
     else:
