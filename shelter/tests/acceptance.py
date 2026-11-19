@@ -90,14 +90,15 @@ def exercise_policies(page, name):
 
 def exercise_references(page, name):
     visit(page, "参考值服务")
-    page.get_by_role("tab", name="注册参考值").click()
-    reference = hashlib.sha256(name.encode()).hexdigest()
-    page.get_by_placeholder(re.compile("test-binary-1")).fill(json.dumps({name: [reference]}))
-    click_api(page, button(page, "注册参考值"), "POST", "rvps/register")
-    page.get_by_role("tab", name="查询参考值").click()
-    click_api(page, button(page, "刷新参考值"), "GET", "rvps/query")
     row = page.get_by_role("row").filter(has_text=name)
-    expect(row).to_contain_text(reference)
+    for version in ("initial", "updated"):
+        reference = hashlib.sha256((name + version).encode()).hexdigest()
+        page.get_by_role("tab", name="注册参考值").click()
+        page.get_by_placeholder(re.compile("test-binary-1")).fill(json.dumps({name: [reference]}))
+        click_api(page, button(page, "注册参考值"), "POST", "rvps/register")
+        page.get_by_role("tab", name="查询参考值").click()
+        click_api(page, button(page, "刷新参考值"), "GET", "rvps/query")
+        expect(row).to_contain_text(reference)
     delete_row(page, row, "确定", f"rvps/delete/{name}")
 
 
@@ -329,7 +330,7 @@ def exercise_browser(options):
                 exercise_policies(page, name)
                 print("PASS AS policy CRUD and KBS resource policy round-trip", flush=True)
                 exercise_references(page, name)
-                print("PASS RVPS registration, query and deletion", flush=True)
+                print("PASS RVPS registration, update, query and deletion", flush=True)
                 resource_filter(page, name)
                 put_resource(page, name, b"initial", False)
                 payload = secrets.token_bytes(48)
