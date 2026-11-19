@@ -51,7 +51,33 @@ export PATH="/usr/share/trustee-shelter:$PATH"
 
 浏览器默认连接 `https://127.0.0.1:8082`，也支持 `--origin https://trustee.internal:8082`。脚本将该域名解析到回环地址，用实例 CA 建立临时 Chromium 信任库并校验证书。管理员私钥由页面在此浏览器中签名，管理员 JWT 只发往回环服务。原生客户端另建 RCAR 会话，使用同一个 CA 验证服务器。测试结束时清理浏览器配置。
 
-默认 TDX 客户端是同一来宾内的独立进程。若要验收第二台 TDX 客户端，用 `--client /path/to/runner` 指定现有受控执行器。执行器接收唯一的资源路径，在客户端运行 `tdx-client.sh "$1"`，只将其标准输出及退出码返回。第二台客户端需信任服务器的公开 CA，并通过 `TRUSTEE_URL=https://trustee.internal:8082`、`TRUSTEE_CA_FILE=/path/to/ca.crt` 指向能通过 TLS 校验的服务端。执行器应原样保留拒绝取密时的非零退出码。
+默认 TDX 客户端是同一来宾内的独立进程。要验证跨机的网络访问、证书有效期和远程取密，可按下节使用两台 ECS。
+
+## 两台 ECS 通过私网验收
+
+1. **服务端**按上文部署专用 Trustee 验收实例。保留其 ID、私网 IPv4、管理私钥的来宾路径，以及已安装 Playwright 的 Python、Chromium 和 `shelter/tests` 的绝对路径。
+2. **客户端**另选一台 TDX ECS，把同版本的 `shelter/tests/tdx-client.sh` 和原生 `trustee-attester` 装入来宾并赋予执行权限。两机位于同地域且 VPC 可互通，服务端的安全组和 nginx 客户端白名单允许该客户端私网地址访问 TCP 8082。确认两机的 UTC 时间已同步，服务端 nginx 正常写入 combined 格式的访问日志。
+3. **部署机**需要 Python 3.8+、OpenSSL 1.1.1+ 和已认证的 `aliyun` CLI，能读取服务端串口，在两台实例上调用云助手 `RunCommand`、`DescribeInvocationResults`。两机的云助手应以 root 执行验收（需要读取服务端的机内验收密钥、在客户端创建临时挂载命名空间）。在部署机设置以下变量并运行：
+
+   ```sh
+   # REGION、SERVER_ID、SERVER_PRIVATE_IP、CLIENT_ID 填本次的部署输出。
+   # 下列是来宾内的示例安装路径，可替换成自己的。
+   SERVER_TESTS=/opt/trustee/shelter/tests
+   CLIENT_TESTS=/opt/trustee/shelter/tests
+   SERVER_PYTHON=/mnt/test/venv/bin/python
+   SERVER_CHROMIUM=/usr/bin/chromium-browser
+   CLIENT_ATTESTER=/usr/local/bin/trustee-attester
+
+   python3 shelter/fetch-ca.py "$REGION" "$SERVER_ID" > trustee-ca.pem &&
+   python3 shelter/tests/two-ecs.py \
+     --region "$REGION" --server "$SERVER_ID" --server-ip "$SERVER_PRIVATE_IP" \
+     --client "$CLIENT_ID" --ca trustee-ca.pem \
+     --server-tests "$SERVER_TESTS" --client-tests "$CLIENT_TESTS" \
+     --server-python "$SERVER_PYTHON" --chromium "$SERVER_CHROMIUM" \
+     --client-attester "$CLIENT_ATTESTER"
+   ```
+
+浏览器和管理员私钥都在服务端。独立客户端收到该实例的公开 CA，把 `trustee.internal` 临时解析至服务端私网地址，通过 HTTPS 直接连接。部署机只转交随机资源路径、拒绝状态和成功时的 SHA-256。完整通过要求同一资源先收到 403、再收到 200，服务端的两条 GET 各关联一次成功 TDX 证明；浏览器核对解密摘要，nginx 入口日志还需确认两次请求均来自该客户端的私网 IP。服务端密钥、CA 或日志路径有变时可分别传 `--admin-key`、`--server-ca`、`--access-log`。
 
 ## 判定
 
