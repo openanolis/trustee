@@ -221,7 +221,8 @@ def tdx_release(page, command, name, payload):
     audit_session(page, name, 403)
     print("PASS verified TDX session denied by the baseline KBS policy", flush=True)
     template = Path(__file__).with_name("tdx-release.rego").read_text()
-    temporary = template.replace("TEST_RESOURCE", f"shelter-e2e/secret/{name}")
+    # api_server passes its plugin endpoint to the policy engine, including "resource/".
+    temporary = template.replace("TEST_RESOURCE", f"resource/shelter-e2e/secret/{name}")
     try:
         replace_resource_policy(page, baseline, temporary)
         fetch_secret(command, name, payload)
