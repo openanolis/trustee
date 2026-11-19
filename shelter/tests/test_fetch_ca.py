@@ -1,10 +1,14 @@
+import base64
+import json
 import runpy
 import subprocess
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
-extract = runpy.run_path(str(Path(__file__).resolve().parents[1] / "fetch-ca.py"))["extract"]
+module = runpy.run_path(str(Path(__file__).resolve().parents[1] / "fetch-ca.py"))
+extract = module["extract"]
 
 
 def new_certificate():
@@ -33,6 +37,21 @@ class ConsoleCertificateTest(unittest.TestCase):
             extract(pem.decode().split("-----END")[0])
         with self.assertRaisesRegex(ValueError, "multiple distinct"):
             extract((pem + new_certificate()).decode())
+
+    def test_retry_only_when_no_complete_certificate(self):
+        pem = new_certificate()
+
+        def response(contents):
+            return json.dumps({"ConsoleOutput": base64.b64encode(contents).decode()}).encode()
+
+        with patch("subprocess.check_output", side_effect=[response(b""), response(pem)]) as cli:
+            self.assertEqual(module["fetch"]("region", "instance"), pem)
+            self.assertEqual(cli.call_args[0][0][-2:], ["--RemoveSymbols", "true"])
+        ambiguous = response(pem + new_certificate())
+        with patch("subprocess.check_output", return_value=ambiguous) as cli:
+            with self.assertRaisesRegex(ValueError, "multiple distinct"):
+                module["fetch"]("region", "instance")
+            self.assertEqual(cli.call_count, 1)
 
 
 if __name__ == "__main__":

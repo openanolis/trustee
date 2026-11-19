@@ -10,6 +10,10 @@ import sys
 import tempfile
 
 
+class NoCertificate(ValueError):
+    pass
+
+
 def extract(console):
     begin = "-----BEGIN CERTIFICATE-----"
     end = "-----END CERTIFICATE-----"
@@ -31,7 +35,7 @@ def extract(console):
         elif source in pending and re.fullmatch(r"[A-Za-z0-9+/]{1,64}={0,2}", message):
             pending[source].append(message)
     if not certs:
-        raise ValueError("the ECS boot console has no complete CA yet. Retry after the instance starts")
+        raise NoCertificate("the ECS boot console has no complete CA yet. Retry after the instance starts")
     if len(certs) > 1:
         raise ValueError("the ECS console contains multiple distinct certificates")
     pem = certs.pop()
@@ -53,17 +57,28 @@ def extract(console):
     return pem
 
 
+def fetch(region, instance):
+    command = ["aliyun", "ecs", "GetInstanceConsoleOutput", "--RegionId", region,
+               "--InstanceId", instance]
+
+    def console(args):
+        result = subprocess.check_output(args)
+        encoded = json.loads(result.decode("utf-8"))["ConsoleOutput"]
+        return base64.b64decode(encoded).decode("utf-8", "replace")
+
+    try:
+        return extract(console(command))
+    except NoCertificate:
+        # Depending on the boot, ECS may populate only one of these representations.
+        return extract(console(command + ["--RemoveSymbols", "true"]))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("region")
     parser.add_argument("instance_id")
     args = parser.parse_args()
     try:
-        result = subprocess.check_output([
-            "aliyun", "ecs", "GetInstanceConsoleOutput", "--RegionId", args.region,
-            "--InstanceId", args.instance_id,
-        ])
-        encoded = json.loads(result.decode("utf-8"))["ConsoleOutput"]
-        sys.stdout.buffer.write(extract(base64.b64decode(encoded).decode("utf-8", "replace")))
+        sys.stdout.buffer.write(fetch(args.region, args.instance_id))
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         sys.exit("Could not read the Trustee CA from the ECS boot console: " + str(error))
