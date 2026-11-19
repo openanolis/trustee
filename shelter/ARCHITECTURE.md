@@ -1,8 +1,8 @@
 # Trustee on TDX ECS
 
-![Shelter deploys a Trustee TDX ECS serving a browser and a TDX client](docs/architecture.png)
+![Trustee on a private TDX ECS with browser and client access through Nginx and a separate evidence endpoint for Shelter](docs/architecture.png)
 
-图中实线表示逻辑调用。浏览器和 TDX 客户端的网络入口均为实例的 Nginx HTTPS 端口。Gateway 及其后端经实例内网栈通信。
+Trustee ECS 只分配 VPC 私网 IP。浏览器和 TDX 客户端都通过 HTTPS 8082 连接 Nginx，按来源 CIDR 分别放行。Gateway、KBS、AS 和 RVPS 通过来宾内的回环地址通信。Shelter 部署机通过独立的 TCP 8006 端口获取服务端启动证明证据。
 
 | 位置 | 职责 |
 | --- | --- |
