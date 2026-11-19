@@ -4,7 +4,7 @@
 
 ### 1. 准备部署机
 
-- 安装带 `terraform-alicloud` 后端的 Shelter V2、配套运行时资产和 Terraform。本示例对照 Shelter `6111b1a`。在 Shelter 源码目录运行 `sudo make install-deps`、`make`、`sudo make install` 和 `make verify-system-dependencies`。以下命令还用到 Python 3、PyYAML、OpenSSL 和 GitHub CLI。
+- 安装带 `terraform-alicloud` 后端的 Shelter V2、配套运行时资产和 Terraform。使用 Shelter `6111b1a` 时，先在其源码目录执行 `git apply /绝对路径/trustee/shelter/compat/private-ecs-endpoint.patch`，使仅分配私网 IP 的实例能使用私网地址做启动证明。已包含这项修复的版本可直接编译。依次执行 `sudo make install-deps`、`make`、`sudo make install` 和 `make verify-system-dependencies`。以下命令还用到 Python 3、PyYAML、OpenSSL 和 GitHub CLI。
 - 为运行 Shelter 的账号配置其阿里云 provider 身份，并选好可购买 TDX 规格的地域、可用区和可路由的 VPC/vSwitch。部署端需访问实例 TCP 8006，管理浏览器与取密客户端需访问 TCP 8082。给出各自的实际源 CIDR，云凭据仅配置在部署端。
 - 在策略负责人审核的 verifier 工作目录内准备 `token/ear/policies/opa/default.tdx-appraisal.json`，并设置 `ATTESTATION_CHALLENGE_CLIENT_WORK_DIR`。该策略约束平台启动度量、TCB 状态和调试属性。默认生产部署需要它。
 
@@ -45,9 +45,18 @@ shelter attestation status trustee-01
 2. 打开 `https://trustee.internal:8082`，选择管理员的 Ed25519 私钥文件登录。进入“系统健康”确认 Gateway、AS、KBS 和 RVPS 全部正常。离开管理浏览器时点击“登出”，清除前端保存在浏览器中的登录信息。
 3. 初始 KBS 策略拒绝取密。在“参考值服务”登记经审核的客户端度量，在“策略管理”配置 AS 证明策略和允许目标客户端读取指定路径的 KBS 资源策略，在“资源管理”录入资源。记录三段路径 `仓库/类型/标签`。TDX 客户端使用 HTTPS KBS 地址 `https://trustee.internal:8082`。在“审计日志”核对本次证明与读取记录。
 
+例如，使用带 TDX 支持的 `trustee-attester` 在客户端读取已授权的资源。该命令将获取的内容保存为本地文件。
+
+```bash
+set -o pipefail
+umask 077
+trustee-attester --url https://trustee.internal:8082 --cert-file trustee-ca.pem \
+  get-resource --path "$REPOSITORY/$TYPE/$TAG" | base64 --decode > resource.bin
+```
+
 ### 4. 验收与回收
 
-真实验收脚本见 [tests](tests/)。请在专用实例执行，脚本会新建临时资源、策略与参考值，检查硬件客户端解密得到的内容，并操作管理页面。用于互操作验收的 `--external-attestation` 仍指定 ECS TDX 模式，但其结果不包含 Shelter 对服务端 TDVM 的独立证明；生产环境使用上面的默认配置。
+真实验收脚本见[验收指南](tests/README.md)。请在专用实例执行，脚本会新建临时资源、策略与参考值，检查硬件客户端解密得到的内容，并操作管理页面。用于互操作验收的 `--external-attestation` 仍指定 ECS TDX 模式，其结果不包含 Shelter 对服务端 TDVM 的独立证明。生产环境使用上面的默认配置。
 
 ```bash
 shelter stop trustee-01
