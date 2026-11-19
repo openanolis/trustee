@@ -1,0 +1,55 @@
+version: 2
+name: trustee-tdx
+default_target: production
+artifact:
+  distribution: {id: alinux, release: "3"}
+  image:
+    kind: disk
+    init: systemd
+    root_size: 8GiB
+  capabilities: {network: true}
+  packages:
+    # Trustee and frontend come from the SHA256-pinned RPMs staged by prepare.sh.
+    runtime: [openssl, iproute, rpm, nginx, sqlite-libs, tzdata, libtdx-verify, tpm2-tss]
+  files:
+    - source: guest
+      destination: /usr/share/trustee-shelter
+      copy_contents: true
+  scripts:
+    - source: configure-image.sh
+      stage: post-install
+  security:
+    profile: baseline
+    implementation:
+      trustiflux:
+        aa:
+          token_configs:
+            coco_as: {url: "http://127.0.0.1:8081/api/attestation-service"}
+            kbs: {url: "http://127.0.0.1:8081/api"}
+          aa_instance:
+            instance_type: aliyun_ecs
+            heartbeat:
+              enabled: true
+              trustee_url: http://127.0.0.1:8081/api
+        api_server:
+          bind: "0.0.0.0:8006"
+          enable_aa: true
+          enable_cdh: false
+          allow_remote_get_evidence: true
+          allow_remote_resource_injection: false
+targets:
+  production:
+    provider: terraform-alicloud
+    trust: confidential
+    attestation: required
+    provider_options:
+      region: cn-beijing
+      zone_id: cn-beijing-l
+      instance_type: ecs.g8i.xlarge
+      disk_size: 40
+      security_group_ports: []
+      security_group:
+        rules:
+          - {name: administrator, port: "8082/8082", cidr: "192.0.2.1/32"}
+          - {name: resource_client, port: "8082/8082", cidr: "198.51.100.1/32"}
+          - {name: evidence, port: "8006/8006", cidr: "203.0.113.1/32"}

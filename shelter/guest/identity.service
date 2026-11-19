@@ -1,0 +1,12 @@
+[Unit]
+Description=Initialize instance-local Trustee signing and TLS keys
+Before=as.service as-restful.service kbs.service nginx.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StateDirectory=trustee-shelter
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/bin/bash /usr/share/trustee-shelter/identity.sh
+StandardOutput=journal+console

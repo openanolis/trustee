@@ -1,0 +1,26 @@
+[http_server]
+sockets = ["127.0.0.1:8080"]
+insecure_http = true
+
+[attestation_token]
+insecure_key = false
+trusted_certs_paths = ["/var/lib/trustee-shelter/identity/ca.crt"]
+
+[attestation_service]
+type = "coco_as_grpc"
+as_addr = "http://127.0.0.1:50004"
+
+[admin]
+auth_public_key = "/var/lib/trustee-shelter/identity/admin.pub"
+
+[policy_engine]
+policy_path = "/opt/trustee/kbs/policy.rego"
+
+[[plugins]]
+name = "resource"
+type = "LocalFs"
+dir_path = "/opt/trustee/kbs/repository"
+
+[[plugins]]
+name = "tpm-pca"
+work_dir = "/opt/trustee/kbs/tpm-pca"
