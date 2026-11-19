@@ -1,0 +1,8 @@
+{
+  "tag": "v1.10.2",
+  "rpm_version_release": "1.10.2-1.al8",
+  "sha256": {
+    "trustee": "4bc263009d847f179ae27dc68b8070de119b42d439bad7ec42fd19591539761c",
+    "trustee-frontend": "c3afd6849b8312db156835287a2c34ce160344b22a9461be23a2cbd7578f92ba"
+  }
+}

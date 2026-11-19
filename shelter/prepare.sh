@@ -5,6 +5,7 @@ import argparse
 import base64
 import hashlib
 import ipaddress
+import json
 import re
 import shutil
 import sys
@@ -21,7 +22,9 @@ for name in ("admin_cidr", "client_cidr", "deployer_cidr"):
     parser.add_argument(name, type=ipaddress.IPv4Network)
 parser.add_argument("--external-attestation", action="store_true",
                     help="use the isolated TDX interoperability target without Shelter launch appraisal")
-parser.add_argument("--rpm-dir", type=Path, required=True, help="directory containing the two official v1.10.2 AL3 RPMs")
+parser.add_argument("--rpm-dir", type=Path, required=True, help="directory containing the locked AL3 x86_64 RPMs")
+parser.add_argument("--release-lock", type=Path, default=source / "trustee-release.json",
+                    help="Trustee release tag, RPM version-release and SHA-256 digests")
 parser.add_argument("--region")
 parser.add_argument("--pccs-url", help="HTTPS PCCS origin or full SGX certification v4 URL (default: regional Alibaba Cloud VPC PCCS)")
 parser.add_argument("--zone", dest="zone_id")
@@ -42,6 +45,23 @@ if context == source or source in context.parents:
     parser.error("use a build context outside the recipe source directory")
 if context.exists() and (not context.is_dir() or any(context.iterdir())):
     parser.error("build context already exists and is not empty")
+
+packages = ("trustee", "trustee-frontend")
+try:
+    release = json.loads(args.release_lock.read_text())
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", release["tag"]):
+        raise ValueError("invalid release tag")
+    version_release = release["rpm_version_release"]
+    if not re.fullmatch(r"[0-9][A-Za-z0-9._+~^]*-[A-Za-z0-9._+~^]+", version_release):
+        raise ValueError("invalid RPM version-release")
+    checksums = release["sha256"]
+    if set(checksums) != set(packages) or any(
+        not re.fullmatch(r"[0-9a-f]{64}", checksums[package]) for package in packages
+    ):
+        raise ValueError("expected one SHA-256 for each of trustee and trustee-frontend")
+except (OSError, KeyError, TypeError, ValueError) as err:
+    parser.error(f"invalid release lock {args.release_lock}: {err}")
+rpm_version_arch = f"{version_release}.x86_64"
 
 def public_key():
     pem = Path(args.admin_public_key).read_bytes().strip()
@@ -97,14 +117,16 @@ with tempfile.TemporaryDirectory(dir=context.parent) as tmp:
     write_acl(guest / "trustee-client.acl", args.client_cidr)
     rpms = guest / "rpms"
     rpms.mkdir()
-    for package, checksum in {
-        "trustee": "4bc263009d847f179ae27dc68b8070de119b42d439bad7ec42fd19591539761c",
-        "trustee-frontend": "c3afd6849b8312db156835287a2c34ce160344b22a9461be23a2cbd7578f92ba",
-    }.items():
-        name = f"{package}-1.10.2-1.al8.x86_64.rpm"
-        path = Path(shutil.copyfile(args.rpm_dir / name, rpms / name))
-        if hashlib.sha256(path.read_bytes()).hexdigest() != checksum:
+    for package in packages:
+        name = f"{package}-{rpm_version_arch}.rpm"
+        path = rpms / name
+        try:
+            shutil.copyfile(args.rpm_dir / name, path)
+        except OSError as err:
+            parser.error(f"cannot stage locked RPM {name}: {err}")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != checksums[package]:
             parser.error(f"unexpected SHA256 for {name}")
+    (guest / "rpm-version-arch").write_text(rpm_version_arch + "\n")
     (output / "shelter.yml").write_text(yaml.safe_dump(config, default_flow_style=False))
     output.rename(context)
 print(f"{context / 'shelter.yml'} (target {config['default_target']})")

@@ -1,10 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 src=/usr/share/trustee-shelter
+read -r expected_rpm < "$src/rpm-version-arch"
 rpm -Uvh "$src"/rpms/*.rpm
 rm -rf "$src/rpms"
-test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' trustee)" = "1.10.2-1.al8"
-test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' trustee-frontend)" = "1.10.2-1.al8"
+for package in trustee trustee-frontend; do
+    installed_rpm=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' "$package")
+    if [ "$installed_rpm" != "$expected_rpm" ]; then
+        printf 'Unexpected installed RPM for %s: expected %s, got %s\n' "$package" "$expected_rpm" "$installed_rpm" >&2
+        exit 1
+    fi
+done
 test -s /usr/share/nginx/html/trustee/index.html
 # The x86_64 release uses Intel DCAP FFI and reads the distribution QCNL file.
 qcnl=/etc/sgx_default_qcnl.conf
@@ -15,7 +21,14 @@ sed -i "s|^PCCS_URL=.*|PCCS_URL=$(cat "$src/pccs-url")|" "$qcnl"
 # The exported image contains only the operator's public key.
 rm -f /etc/trustee/private.key /etc/trustee/public.pub
 install -m 0644 "$src/kbs-config.toml" "$src/as-config.json" /etc/trustee/
-sed -i -e 's/host: "0.0.0.0"/host: "127.0.0.1"/' -e 's/level: "debug"/level: "info"/' /etc/trustee/gateway.yml
+gateway=/etc/trustee/gateway.yml
+sed -i -e '/^server:/,/^[^[:blank:]#]/s/host: "0\.0\.0\.0"/host: "127.0.0.1"/' \
+    -e '/^logging:/,/^[^[:blank:]#]/s/level: "debug"/level: "info"/' "$gateway"
+if ! sed -n '/^server:/,/^[^[:blank:]#]/p' "$gateway" | grep -Ex '[[:blank:]]+host: "127\.0\.0\.1"[[:blank:]]*' >/dev/null ||
+   ! sed -n '/^logging:/,/^[^[:blank:]#]/p' "$gateway" | grep -Ex '[[:blank:]]+level: "info"[[:blank:]]*' >/dev/null; then
+    echo "Unsupported Gateway configuration: expected a loopback listener and info logging" >&2
+    exit 1
+fi
 install -D -m 0600 "$src/policy.rego" /opt/trustee/kbs/policy.rego
 install -m 0644 "$src/nginx.conf" /etc/nginx/nginx.conf
 install -m 0644 "$src/frontend.conf" /etc/nginx/conf.d/trustee-frontend.conf
