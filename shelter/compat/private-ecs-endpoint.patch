@@ -1,0 +1,49 @@
+diff --git a/src/deploy/outputs.rs b/src/deploy/outputs.rs
+index e878eea..b69603e 100644
+--- a/src/deploy/outputs.rs
++++ b/src/deploy/outputs.rs
+@@ -246,5 +246,5 @@ pub(crate) fn single_instance(
+             set_name_from_suffix(&mut instance.name, key, "_instance_id");
+         } else if key == "public_ip" || key.ends_with("_public_ip") {
+-            instance.public_ip = output.as_str().map(str::to_string);
++            instance.public_ip = public_address(output).map(str::to_string);
+             set_name_from_suffix(&mut instance.name, key, "_public_ip");
+         } else if key == "private_ip" || key.ends_with("_private_ip") {
+@@ -278,12 +278,16 @@ pub(crate) fn preferred_public_ip(outputs: &HashMap<String, TerraformOutput>) ->
+                 .map(|(_, output)| output)
+         })
+-        .and_then(TerraformOutput::as_str)
++        .and_then(public_address)
+         .map(str::to_string)
+ }
+
++fn public_address(output: &TerraformOutput) -> Option<&str> {
++    output.as_str().filter(|address| !address.is_empty())
++}
++
+ pub(crate) fn top_level_ip(outputs: &HashMap<String, TerraformOutput>) -> Option<&str> {
+     outputs
+         .get("public_ip")
+-        .and_then(TerraformOutput::as_str)
++        .and_then(public_address)
+         .or_else(|| outputs.get("private_ip").and_then(TerraformOutput::as_str))
+ }
+@@ -375,4 +379,18 @@ mod tests {
+     }
+
++    #[test]
++    fn private_only_ecs_uses_the_private_attestation_endpoint() {
++        let mut outputs =
++            HashMap::from([("private_ip".into(), output(serde_json::json!("10.0.0.7")))]);
++        for public in [serde_json::Value::Null, serde_json::json!("")] {
++            outputs.insert("public_ip".into(), output(public));
++            assert_eq!(preferred_public_ip(&outputs), None);
++            assert_eq!(top_level_ip(&outputs), Some("10.0.0.7"));
++            let instance = single_instance(&outputs).unwrap();
++            assert_eq!(instance.public_ip, None);
++            assert_eq!(instance.preferred_ip(), Some("10.0.0.7"));
++        }
++    }
++
+     #[test]
+     fn canonical_single_instance_uses_the_shelter_name() {
