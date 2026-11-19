@@ -12,21 +12,27 @@ import sys
 def extract(console):
     begin = "-----BEGIN CERTIFICATE-----"
     end = "-----END CERTIFICATE-----"
-    lines = None
+    pending = {}
     certs = set()
+    console = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", console)
     for line in console.splitlines():
-        if line.rstrip().endswith(begin):
-            lines = [begin]
-        elif lines and line.rstrip().endswith(end):
-            certs.add("\n".join(lines + [end, ""]).encode("ascii"))
-            lines = None
-        elif lines:
-            # Console lines can include a kernel timestamp and a journal prefix.
-            tail = line.rsplit(None, 1)[-1:]
-            if tail and re.fullmatch(r"[A-Za-z0-9+/]{1,64}={0,2}", tail[0]):
-                lines.append(tail[0])
-    if len(certs) != 1:
-        raise ValueError("expected one distinct instance CA in the ECS console")
+        # journald can interleave other processes between lines of the same PEM.
+        record = re.search(r"(?:^|\s)([\w./@+-]+\[\d+\]):\s*(.*)$", line.strip())
+        if record:
+            source, message = record.groups()
+        else:
+            source = ""
+            message = re.sub(r"^\[\s*\d+(?:\.\d+)?\]\s*", "", line.strip())
+        if message == begin:
+            pending[source] = [begin]
+        elif source in pending and message == end:
+            certs.add("\n".join(pending.pop(source) + [end, ""]).encode("ascii"))
+        elif source in pending and re.fullmatch(r"[A-Za-z0-9+/]{1,64}={0,2}", message):
+            pending[source].append(message)
+    if not certs:
+        raise ValueError("the ECS boot console has no complete CA yet. Retry after the instance starts")
+    if len(certs) > 1:
+        raise ValueError("the ECS console contains multiple distinct certificates")
     pem = certs.pop()
     result = subprocess.run(
         ["openssl", "x509", "-noout", "-subject", "-nameopt", "RFC2253"],
@@ -45,7 +51,7 @@ if __name__ == "__main__":
     try:
         result = subprocess.check_output([
             "aliyun", "ecs", "GetInstanceConsoleOutput", "--RegionId", args.region,
-            "--InstanceId", args.instance_id, "--RemoveSymbols", "true",
+            "--InstanceId", args.instance_id,
         ])
         encoded = json.loads(result.decode("utf-8"))["ConsoleOutput"]
         sys.stdout.buffer.write(extract(base64.b64decode(encoded).decode("utf-8", "replace")))
