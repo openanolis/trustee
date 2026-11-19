@@ -1,5 +1,8 @@
 [Unit]
 Description=Initialize instance-local Trustee signing and TLS keys
+Requires=chronyd.service
+Wants=network-online.target
+After=network-online.target chronyd.service
 Before=as.service as-restful.service kbs.service nginx.service
 
 [Service]
@@ -8,5 +11,9 @@ RemainAfterExit=yes
 StateDirectory=trustee-shelter
 StateDirectoryMode=0700
 UMask=0077
+# A guest RTC offset would invalidate TLS and EAR timestamps across machines.
+# Require a synchronized source and less than 100 ms remaining correction.
+TimeoutStartSec=150
+ExecStartPre=/usr/bin/chronyc -n waitsync 60 0.1 0 2
 ExecStart=/bin/bash /usr/share/trustee-shelter/identity.sh
 StandardOutput=journal+console

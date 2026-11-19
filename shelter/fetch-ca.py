@@ -7,6 +7,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 
 
 def extract(console):
@@ -40,6 +41,15 @@ def extract(console):
     )
     if result.stdout.strip() != b"subject=CN=Trustee TDVM instance root":
         raise ValueError("unexpected certificate subject")
+    with tempfile.NamedTemporaryFile() as ca:
+        ca.write(pem)
+        ca.flush()
+        verification = subprocess.run(
+            ["openssl", "verify", "-check_ss_sig", "-CAfile", ca.name, ca.name],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+    if verification.returncode:
+        raise ValueError("instance CA failed signature or validity checks. Verify the ECS and local clocks")
     return pem
 
 

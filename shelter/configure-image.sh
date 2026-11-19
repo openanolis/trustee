@@ -21,6 +21,7 @@ install -m 0644 "$src/nginx.conf" /etc/nginx/nginx.conf
 install -m 0644 "$src/frontend.conf" /etc/nginx/conf.d/trustee-frontend.conf
 install -m 0644 "$src"/trustee-*.acl /etc/nginx/
 install -m 0644 "$src/identity.service" /etc/systemd/system/trustee-identity.service
+install -m 0644 "$src/chrony.conf" /etc/chrony.conf
 for unit in as as-restful kbs nginx trustee-frontend; do
     dropin=/etc/systemd/system/$unit.service.d
     install -d "$dropin"
@@ -33,4 +34,4 @@ for bin_port in 'as grpc-as 50004' 'as-restful restful-as 50005'; do
         "ExecStart=/usr/bin/$bin --socket 127.0.0.1:$port --config-file /etc/trustee/as-config.json" \
         > "/etc/systemd/system/$unit.service.d/loopback.conf"
 done
-systemctl enable trustee.service trustee-frontend.service
+systemctl enable chronyd.service trustee.service trustee-frontend.service

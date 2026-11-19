@@ -276,6 +276,10 @@ def check_units():
         check(subprocess.run(["systemctl", "is-active", "--quiet", unit]).returncode == 0,
               f"{unit}.service is inactive")
     print("PASS systemd service group and all six units", flush=True)
+    synchronized = subprocess.run(["chronyc", "-n", "waitsync", "1", "0.1"],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    check(synchronized.returncode == 0, "guest clock has not synchronized with VPC NTP")
+    print("PASS synchronized clock for TLS certificates and attestation tokens", flush=True)
 
 
 def exercise_browser(options):
