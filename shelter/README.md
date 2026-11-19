@@ -43,7 +43,7 @@ shelter attestation status trustee-01
 
 1. 将 `trustee.internal` 解析到实例可达的地址。在已登录阿里云 CLI 的部署机执行 `python3 shelter/fetch-ca.py "$REGION" "$INSTANCE_ID" > trustee-ca.pem`。它从该 ECS 启动串口提取实例 CA 公共证书。确认实例身份后，在管理浏览器和 TDX 客户端中信任该 CA。[ECS 串口输出 API](https://help.aliyun.com/zh/ecs/developer-reference/api-ecs-2014-05-26-getinstanceconsoleoutput/)
 2. 打开 `https://trustee.internal:8082`，选择管理员的 Ed25519 私钥文件登录。进入“系统健康”确认 Gateway、AS、KBS 和 RVPS 全部正常。离开管理浏览器时点击“登出”，清除前端保存在浏览器中的登录信息。
-3. 初始 KBS 策略拒绝取密。在“参考值服务”登记经审核的客户端度量，在“策略管理”配置 AS 证明策略和允许目标客户端读取指定路径的 KBS 资源策略，在“资源管理”录入资源。记录三段路径 `仓库/类型/标签`。TDX 客户端使用 HTTPS KBS 地址 `https://trustee.internal:8082`。在“审计日志”核对本次证明与读取记录。
+3. 初始 KBS 策略拒绝取密。在“参考值服务”登记经审核的客户端度量，在“策略管理”配置 AS 证明策略和 KBS 资源策略，再到“资源管理”录入资源。客户端传三段路径 `仓库/类型/标签`。v1.10.2 的 KBS 策略匹配 `data["resource-path"]` 时要包含插件前缀，例如 `resource/仓库/类型/标签`。在“审计日志”核对本次证明与读取记录。
 
 例如，使用带 TDX 支持的 `trustee-attester` 在客户端读取已授权的资源。该命令将获取的内容保存为本地文件。
 
