@@ -69,3 +69,5 @@ shelter start trustee-01   # 保留同一实例和系统盘
 shelter stop trustee-01
 shelter rm trustee-01
 ```
+
+删除前记下 `shelter inspect` 中的部署 ID。ECS 导入自定义镜像生成的快照可能在实例和镜像删除后继续计费。在 ECS 快照列表中按本次部署的镜像名查找 `SnapshotForImage-…`，核对所属部署、快照 ID 及 `Usage=none` 后，再释放本次部署遗留的快照。
