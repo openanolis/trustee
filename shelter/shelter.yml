@@ -10,7 +10,7 @@ artifact:
   capabilities: {network: true}
   packages:
     # Trustee and frontend come from the SHA256-pinned RPMs staged by prepare.sh.
-    runtime: [openssl, iproute, rpm, nginx, sqlite-libs, tzdata, libtdx-verify, tpm2-tss]
+    runtime: [openssl, iproute, rpm, nginx, sqlite-libs, tzdata, chrony, libtdx-verify, tpm2-tss]
   files:
     - source: guest
       destination: /usr/share/trustee-shelter

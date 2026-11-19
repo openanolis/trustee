@@ -9,6 +9,7 @@
 - 安装带 `terraform-alicloud` 后端的 Shelter V2、配套运行时资产和 Terraform。使用 Shelter `6111b1a` 时，先在其源码目录执行 `git apply /绝对路径/trustee/shelter/compat/private-ecs-endpoint.patch`，使仅分配私网 IP 的实例能使用私网地址做启动证明。已包含这项修复的版本可直接编译。依次执行 `sudo make install-deps`、`make`、`sudo make install` 和 `make verify-system-dependencies`。以下命令还用到 Python 3、PyYAML、OpenSSL 和 GitHub CLI。
 - 为运行 Shelter 的账号配置其阿里云 provider 身份，并选好可购买 TDX 规格的地域、可用区和可路由的 VPC/vSwitch。部署端需访问实例 TCP 8006，管理浏览器与取密客户端需访问 TCP 8082。给出各自的实际源 CIDR，云凭据仅配置在部署端。
 - AS 通过所选地域的 VPC PCCS 获取 Intel DCAP 验证材料。默认使用 `https://sgx-dcap-server-vpc.<region>.aliyuncs.com/sgx/certification/v4/`，北京端点已在 ECS 验证。若使用自有 PCCS，可在准备上下文时传入 `--pccs-url https://pccs.example.internal:8081`，确保实例信任其 HTTPS 证书。
+- 来宾需能解析并访问阿里云 VPC NTP（UDP 123）。首次启动等待时钟同步再签发实例证书，跨机客户端依赖正确的 UTC 时间验证证书和令牌。[阿里云 ECS 时间同步](https://help.aliyun.com/zh/ecs/user-guide/alibaba-cloud-ntp-server)
 - 在策略负责人审核的 verifier 工作目录内准备 `token/ear/policies/opa/default.tdx-appraisal.json`，并设置 `ATTESTATION_CHALLENGE_CLIENT_WORK_DIR`。该策略约束平台启动度量、TCB 状态和调试属性。默认生产部署需要它。
 
 在 Trustee 仓库根目录执行以下命令。管理员保管 Ed25519 私钥，构建机只需公钥。先设置 `REGION`、`ZONE`、`TDX_INSTANCE_TYPE`、`VPC_ID` 和 `VSWITCH_ID`。北京示例前三项依次是 `cn-beijing`、`cn-beijing-l`、`ecs.g8i.xlarge`。将下面三个示例 CIDR 依次替换为管理员、TDX 客户端、部署机的实际来源。

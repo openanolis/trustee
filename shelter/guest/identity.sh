@@ -2,6 +2,10 @@
 set -euo pipefail
 umask 077
 cd "${STATE_DIRECTORY:-/var/lib/trustee-shelter}"
+verify_certificates() {
+    openssl verify -purpose sslserver -verify_hostname trustee.internal -CAfile "$1/ca.crt" "$1/server.crt" &&
+        openssl verify -purpose sslclient -CAfile "$1/ca.crt" "$1/signer.crt"
+}
 if [[ ! -d identity ]]; then
     stage=$(mktemp -d .identity.XXXXXXXX)
     trap 'rm -rf -- "$stage"' EXIT
@@ -32,8 +36,7 @@ EOF
         openssl x509 -req -in "$stage/request.csr" -CA "$stage/ca.crt" -CAkey "$stage/ca.key" \
             -CAcreateserial -days 365 -sha256 -extfile "$stage/extensions" -out "$stage/$purpose.crt"
     done
-    openssl verify -purpose sslclient -CAfile "$stage/ca.crt" "$stage/signer.crt"
-    openssl verify -purpose sslserver -verify_hostname trustee.internal -CAfile "$stage/ca.crt" "$stage/server.crt"
+    verify_certificates "$stage"
     rm "$stage/ca.key" "$stage/ca.cnf" "$stage/extensions" "$stage/request.csr" "$stage/ca.srl"
     if [[ -f /usr/share/trustee-shelter/interop-local-admin ]]; then
         openssl genpkey -algorithm ED25519 -out "$stage/admin.key"
@@ -42,6 +45,9 @@ EOF
         cp /usr/share/trustee-shelter/admin.pub "$stage/admin.pub"
     fi
     mv -T "$stage" identity
+elif ! verify_certificates identity; then
+    echo "Stored Trustee certificates failed verification with the synchronized clock; restore or renew the instance identity." >&2
+    exit 1
 fi
 # Only the public trust anchor goes to the guest serial console.
 cat identity/ca.crt
