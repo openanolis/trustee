@@ -47,6 +47,7 @@ targets:
       zone_id: cn-beijing-l
       instance_type: ecs.g8i.xlarge
       disk_size: 40
+      internet_max_bandwidth_out: 0
       security_group_ports: []
       security_group:
         rules:
