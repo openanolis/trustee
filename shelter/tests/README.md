@@ -57,7 +57,7 @@ export PATH="/usr/share/trustee-shelter:$PATH"
 
 1. **服务端**按上文部署专用 Trustee 验收实例。保留其 ID、私网 IPv4、管理私钥的来宾路径，以及已安装 Playwright 的 Python、Chromium 和 `shelter/tests` 的绝对路径。
 2. **客户端**另选一台 TDX ECS，把同版本的 `shelter/tests/tdx-client.sh` 和原生 `trustee-attester` 装入来宾并赋予执行权限。两机位于同地域且 VPC 可互通，服务端的安全组和 nginx 客户端白名单允许该客户端私网地址访问 TCP 8082。确认两机的 UTC 时间已同步，服务端 nginx 正常写入 combined 格式的访问日志。
-3. **部署机**需要 Python 3.8+、OpenSSL 1.1.1+ 和已认证的 `aliyun` CLI，能读取服务端串口，在两台实例上调用云助手 `RunCommand`、`DescribeInvocationResults`。两机的云助手应以 root 执行验收（需要读取服务端的机内验收密钥、在客户端创建临时挂载命名空间）。在部署机设置以下变量并运行：
+3. **部署机**需要 Python 3.6+、OpenSSL 1.1.1+ 和已认证的 `aliyun` CLI，能读取服务端串口，在两台实例上调用云助手 `RunCommand`、`DescribeInvocationResults`。两机的云助手应以 root 执行验收，以便读取服务端的机内测试密钥，并在客户端创建临时挂载命名空间。在部署机设置以下变量并运行。
 
    ```sh
    # REGION、SERVER_ID、SERVER_PRIVATE_IP、CLIENT_ID 填本次的部署输出。
@@ -83,7 +83,7 @@ export PATH="/usr/share/trustee-shelter:$PATH"
 
 | 检查 | 通过条件 |
 | --- | --- |
-| 服务与前端 | systemd 服务组和六个组件均 active，浏览器登录，健康页的四项服务均正常 |
+| 服务与前端 | systemd 服务组和六个组件均 active，chrony 时钟已同步，浏览器登录后健康页的四项服务均正常 |
 | 策略和参考值 | 新建、回读、修改、删除独立 AS 策略，保存并回读 KBS 资源策略，对同一 RVPS 参考值先后登记两个摘要、逐次查询并删除测试项 |
 | 取密与审计 | 同一个随机资源先经真实证明后收到 403；安装只授权该资源的临时策略后重新证明，返回 200；解密后 SHA-256 与上传的 48 字节随机资源完全一致，两次 GET 分别关联本次成功的 TDX 证明 |
 | 资源、实例和退出 | 页面查询、文本/二进制上传及删除；找到指定 ECS 的活跃心跳，搜索、重置、刷新；退出后清除会话 |
