@@ -20,13 +20,17 @@ keys=$(mktemp -d "$HOME/trustee-admin.XXXXXXXX")
 openssl genpkey -algorithm ED25519 -out "$keys/admin.key"
 openssl pkey -in "$keys/admin.key" -pubout -out "$keys/admin.pub"
 rpms=$(mktemp -d)
-gh release download v1.10.2 -R openanolis/trustee -D "$rpms" \
-  -p 'trustee-1.10.2-1.al8.x86_64.rpm' \
-  -p 'trustee-frontend-1.10.2-1.al8.x86_64.rpm'
+release_lock=shelter/trustee-release.json
+read -r trustee_tag rpm_version_release < <(
+  python3 -c 'import json, sys; lock = json.load(open(sys.argv[1])); print(lock["tag"], lock["rpm_version_release"])' "$release_lock"
+)
+gh release download "$trustee_tag" -R openanolis/trustee -D "$rpms" \
+  -p "trustee-${rpm_version_release}.x86_64.rpm" \
+  -p "trustee-frontend-${rpm_version_release}.x86_64.rpm"
 ctx="$HOME/trustee-build"
 bash shelter/prepare.sh "$ctx" "$keys/admin.pub" \
   192.0.2.1/32 198.51.100.1/32 203.0.113.1/32 \
-  --rpm-dir "$rpms" --region "$REGION" --zone "$ZONE" \
+  --rpm-dir "$rpms" --release-lock "$release_lock" --region "$REGION" --zone "$ZONE" \
   --instance-type "$TDX_INSTANCE_TYPE" --vpc-id "$VPC_ID" --vswitch-id "$VSWITCH_ID"
 ```
 
@@ -41,13 +45,19 @@ shelter inspect trustee-01
 shelter attestation status trustee-01
 ```
 
-创建第二台相同配置的实例时，可复用本地镜像并换一个实例名称，云端仍可能需要导入镜像。再次使用同一台实例，直接执行 `shelter start trustee-01`。变更镜像内的管理公钥或来源限制后要重新构建。镜像使用正式发布的后端和前端 RPM。[Trustee v1.10.2](https://github.com/openanolis/trustee/releases/tag/v1.10.2)
+创建第二台相同配置的实例时，可复用本地镜像并换一个实例名称，云端仍可能需要导入镜像。再次使用同一台实例，直接执行 `shelter start trustee-01`。变更镜像内的管理公钥或来源限制后要重新构建。
+
+### 升级 Trustee
+
+默认[发布锁定清单](trustee-release.json)记录双 ECS 实测用的发行版。要尝试新版本，复制这份清单，填写发布 tag、两个 ALinux 3 x86_64 RPM 共用的 `VERSION-RELEASE`，以及各自的 SHA-256。摘要应来自可信的发布记录或已验证的发布资产。将上面的 `release_lock` 指向新清单，重新下载对应 RPM，使用新的构建上下文和镜像 tag。准备阶段校验两个 RPM 的摘要，装进镜像后再次校验包的版本、发行号和架构。
+
+先用新镜像启动验收实例，复测服务健康、管理页面和 TDX 证明取密。通过真实双 ECS 验收后，再更新默认清单。升级已有部署时，先备份状态并验证迁移和回滚路径。使用 `production` 时还应核对新镜像的启动度量和 appraisal 策略。
 
 ### 3. 登录、配置与取密
 
 1. 将 `trustee.internal` 解析到实例可达的地址。在已登录阿里云 CLI 的部署机执行 `python3 shelter/fetch-ca.py "$REGION" "$INSTANCE_ID" > trustee-ca.pem`。它从该 ECS 启动串口提取实例 CA 公共证书。确认实例身份后，在管理浏览器和 TDX 客户端中信任该 CA。[ECS 串口输出 API](https://help.aliyun.com/zh/ecs/developer-reference/api-ecs-2014-05-26-getinstanceconsoleoutput/)
 2. 打开 `https://trustee.internal:8082`，选择管理员的 Ed25519 私钥文件登录。进入“系统健康”确认 Gateway、AS、KBS 和 RVPS 全部正常。离开管理浏览器时点击“登出”，清除前端保存在浏览器中的登录信息。
-3. 初始 KBS 策略拒绝取密。在“参考值服务”登记经审核的客户端度量，在“策略管理”配置 AS 证明策略和 KBS 资源策略，再到“资源管理”录入资源。客户端传三段路径 `仓库/类型/标签`。v1.10.2 的 KBS 策略匹配 `data["resource-path"]` 时要包含插件前缀，例如 `resource/仓库/类型/标签`。在“审计日志”核对本次证明与读取记录。
+3. 初始 KBS 策略拒绝取密。在“参考值服务”登记经审核的客户端度量，在“策略管理”配置 AS 证明策略和 KBS 资源策略，再到“资源管理”录入资源。客户端传三段路径 `仓库/类型/标签`。已验收的 v1.10.2 在 KBS 策略的 `data["resource-path"]` 中包含插件前缀，例如 `resource/仓库/类型/标签`。在“审计日志”核对本次证明与读取记录。
 
 例如，使用带 TDX 支持的 `trustee-attester` 在客户端读取已授权的资源。该命令将获取的内容保存为本地文件。
 
