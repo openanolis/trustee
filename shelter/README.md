@@ -2,6 +2,8 @@
 
 在一台 ALinux 3/4 部署机上构建镜像并调用阿里云 API。阿里云创建的 **TDX ECS 就是运行 Trustee 的 TDVM**。使用此路径，部署机可以是普通 ECS。镜像包含 KBS、AS、RVPS、Gateway 和 Web 管理前端。[架构与信任边界](ARCHITECTURE.md)
 
+**首次试用且暂无平台批准度量**，可直接按[互操作验收指南](tests/README.md)启动 `tdx-interop`，使用真实 TDX 客户端取密并检查管理页面。下面的 `production` 路径还会验证 Trustee 服务端的启动环境。
+
 ### 1. 准备部署机
 
 - 安装带 `terraform-alicloud` 后端的 Shelter V2、配套运行时资产和 Terraform。使用 Shelter `6111b1a` 时，先在其源码目录执行 `git apply /绝对路径/trustee/shelter/compat/private-ecs-endpoint.patch`，使仅分配私网 IP 的实例能使用私网地址做启动证明。已包含这项修复的版本可直接编译。依次执行 `sudo make install-deps`、`make`、`sudo make install` 和 `make verify-system-dependencies`。以下命令还用到 Python 3、PyYAML、OpenSSL 和 GitHub CLI。
@@ -38,7 +40,7 @@ shelter inspect trustee-01
 shelter attestation status trustee-01
 ```
 
-镜像可重复使用。创建第二台相同配置的实例时，复用镜像并换一个实例名称。变更镜像内的管理公钥或来源限制后要重新构建。镜像使用正式发布的后端和前端 RPM。[Trustee v1.10.2](https://github.com/openanolis/trustee/releases/tag/v1.10.2)
+创建第二台相同配置的实例时，可复用本地镜像并换一个实例名称，云端仍可能需要导入镜像。再次使用同一台实例，直接执行 `shelter start trustee-01`。变更镜像内的管理公钥或来源限制后要重新构建。镜像使用正式发布的后端和前端 RPM。[Trustee v1.10.2](https://github.com/openanolis/trustee/releases/tag/v1.10.2)
 
 ### 3. 登录、配置与取密
 
