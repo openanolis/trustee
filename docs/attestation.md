@@ -110,8 +110,11 @@ AA 运行时事件的原始数据也必须与已回放的 SHA-256 digest 一致�
 可能独立于已度量的镜像摘要。verifier 只从与已度量摘要一致的文本发布
 文本派生的测量 claims 和 `kernel_cmdline`，因此依赖现有 EFI 组件
 claims 的策略要先迁移到已验证的 `pcrs.SHA256.*` 或
-`boot_event_digests.<PCR>`。需要 SHA-1 claims 或使用 SHA-1 旧式 BIOS
-日志的平台继续采用默认模式。
+`boot_event_digests.<PCR>`。随仓库提供的 EAR、OIDC 和 Helm 默认 TPM
+策略依赖旧的组件 claims，启用前要替换或迁移这些规则。策略应显式要求
+其依赖的 PCR 或摘要序列存在并匹配参考值，因为服务只回放证据中提交的
+日志。需要 SHA-1 claims 或使用 SHA-1 旧式 BIOS 日志的平台继续采用
+默认模式。
 
 确认 verifier、参考值和策略就绪后，在支持该模式的 AA 上设置
 `AA_TPM_SHA256_ONLY=true`。回退时先恢复 AA 的默认设置，再关闭 verifier
