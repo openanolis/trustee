@@ -17,13 +17,30 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::env::VarError;
+use std::sync::LazyLock;
+use tss_esapi::interface_types::algorithm::HashingAlgorithm;
 use tss_esapi::structures::{Attest, AttestInfo};
 use tss_esapi::traits::UnMarshall;
 
 use crate::tpm_registrar;
 
 const TPM_REPORT_DATA_SIZE: usize = 32;
+const TPM_QUOTE_PCR_COUNT: usize = 24;
+const ALLOW_SHA256_ONLY_ENV: &str = "TRUSTEE_TPM_ALLOW_SHA256_ONLY";
+static ALLOW_SHA256_ONLY: LazyLock<Result<bool, &'static str>> =
+    LazyLock::new(|| parse_sha256_only_setting(std::env::var(ALLOW_SHA256_ONLY_ENV)));
+
+fn parse_sha256_only_setting(value: Result<String, VarError>) -> Result<bool, &'static str> {
+    use std::result::Result::Ok;
+
+    match value.as_deref() {
+        Err(VarError::NotPresent) | Ok("false") => Ok(false),
+        Ok("true") => Ok(true),
+        _ => Err("TRUSTEE_TPM_ALLOW_SHA256_ONLY must be true or false"),
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TpmEvidence {
@@ -65,6 +82,7 @@ impl Verifier for TpmVerifier {
         expected_report_data: &ReportData,
         _expected_init_data_hash: &InitDataHash,
     ) -> Result<(TeeEvidenceParsedClaim, TeeClass)> {
+        let allow_sha256_only = (*ALLOW_SHA256_ONLY).map_err(|message| anyhow!(message))?;
         let tpm_evidence = serde_json::from_value::<TpmEvidence>(evidence)
             .context("Deserialize TPM Evidence failed.")?;
 
@@ -148,21 +166,43 @@ impl Verifier for TpmVerifier {
             }
         }
 
-        // Verify Quote and PCRs
-        for (algorithm, quote) in &tpm_evidence.quote {
-            quote.verify_signature(tpm_evidence.ak_pubkey.clone().as_bytes())?;
-            quote.check_pcrs(algorithm)?;
-            if let ReportData::Value(expected_report_data) = expected_report_data {
-                quote.check_report_data(expected_report_data)?;
-            }
-        }
-
-        verify_eventlog_integrity(&tpm_evidence)?;
-
-        // Parse Evidence
-        let claims = parse_tpm_evidence(tpm_evidence)?;
+        let claims = verify_tpm_quotes(tpm_evidence, expected_report_data, allow_sha256_only)?;
         Ok((claims, "cpu".to_string()))
     }
+}
+
+fn verify_tpm_quotes(
+    evidence: TpmEvidence,
+    expected_report_data: &ReportData,
+    allow_sha256_only: bool,
+) -> Result<TeeEvidenceParsedClaim> {
+    let sha256_only = allow_sha256_only && !evidence.quote.contains_key(PcrBank::Sha1.quote_key());
+    if allow_sha256_only {
+        if !evidence.quote.contains_key(PcrBank::Sha256.quote_key()) {
+            bail!("TPM SHA256-only support requires a SHA256 quote");
+        }
+        if evidence
+            .quote
+            .keys()
+            .any(|bank| bank != PcrBank::Sha1.quote_key() && bank != PcrBank::Sha256.quote_key())
+        {
+            bail!("Unsupported PCR bank in TPM evidence");
+        }
+    }
+
+    for (algorithm, quote) in &evidence.quote {
+        quote.verify_signature(evidence.ak_pubkey.as_bytes())?;
+        if allow_sha256_only && algorithm == PcrBank::Sha256.quote_key() {
+            quote.check_sha256_selection()?;
+        }
+        quote.check_pcrs(algorithm)?;
+        if let ReportData::Value(expected_report_data) = expected_report_data {
+            quote.check_report_data(expected_report_data)?;
+        }
+    }
+
+    verify_eventlog_integrity(&evidence, sha256_only)?;
+    parse_tpm_evidence(evidence, sha256_only)
 }
 
 #[derive(Clone, Copy)]
@@ -235,24 +275,34 @@ fn extend_replayed_pcr(
     Ok(())
 }
 
-fn replay_tcg_eventlog(eventlog: &Eventlog, bank: PcrBank, pcrs: &mut ReplayedPcrs) -> Result<()> {
+fn replay_tcg_eventlog(
+    eventlog: &Eventlog,
+    bank: PcrBank,
+    pcrs: &mut ReplayedPcrs,
+    require_digest: bool,
+) -> Result<()> {
     for event in &eventlog.log {
         // Informational events are logged but are not extended into a PCR.
         if event.event_type == "EV_NO_ACTION" {
             continue;
         }
 
-        if let Some(digest) = event
+        let mut digests = event
             .digests
             .iter()
-            .find(|digest| digest.algorithm == bank.eventlog_name())
-        {
+            .filter(|digest| digest.algorithm == bank.eventlog_name());
+        if let Some(digest) = digests.next() {
+            if require_digest && digests.next().is_some() {
+                bail!("Multiple SHA256 digests in one TPM boot event");
+            }
             extend_replayed_pcr(
                 pcrs,
                 event.target_measurement_registry,
                 bank,
                 &digest.digest,
             )?;
+        } else if require_digest {
+            bail!("Missing SHA256 digest in TPM boot event");
         }
     }
     Ok(())
@@ -273,6 +323,7 @@ fn replay_cc_eventlog(
     bank: PcrBank,
     pcrs: &mut ReplayedPcrs,
     honor_startup_locality: bool,
+    require_digest: bool,
 ) -> Result<()> {
     const STARTUP_LOCALITY_SIGNATURE: &[u8] = b"StartupLocality\0";
 
@@ -297,12 +348,17 @@ fn replay_cc_eventlog(
             continue;
         }
 
-        if let Some(digest) = event
+        let mut digests = event
             .digests
             .iter()
-            .find(|digest| digest.alg == tcg_algorithm_for_bank(bank))
-        {
+            .filter(|digest| digest.alg == tcg_algorithm_for_bank(bank));
+        if let Some(digest) = digests.next() {
+            if require_digest && digests.next().is_some() {
+                bail!("Multiple SHA256 digests in one TPM event");
+            }
             extend_replayed_pcr(pcrs, event.index, bank, &digest.digest)?;
+        } else if require_digest {
+            bail!("Missing SHA256 digest in TPM event");
         }
     }
     Ok(())
@@ -345,7 +401,7 @@ fn check_replayed_pcrs(
 /// Verify that every PCR represented by the supplied boot/AA event logs
 /// replays to the value protected by the TPM Quote. An event log that cannot be
 /// parsed is rejected instead of being treated as an informational claim.
-fn verify_eventlog_integrity(evidence: &TpmEvidence) -> Result<()> {
+fn verify_eventlog_integrity(evidence: &TpmEvidence, sha256_only: bool) -> Result<()> {
     let engine = base64::engine::general_purpose::STANDARD;
     let mut sha1_pcrs = ReplayedPcrs::new();
     let mut sha256_pcrs = ReplayedPcrs::new();
@@ -353,12 +409,25 @@ fn verify_eventlog_integrity(evidence: &TpmEvidence) -> Result<()> {
     if let Some(encoded) = &evidence.eventlog {
         let raw = engine.decode(encoded).context("Decode TPM boot eventlog")?;
         if let std::result::Result::Ok(eventlog) = CcEventLog::try_from(raw.clone()) {
-            replay_cc_eventlog(&eventlog, PcrBank::Sha1, &mut sha1_pcrs, true)?;
-            replay_cc_eventlog(&eventlog, PcrBank::Sha256, &mut sha256_pcrs, true)?;
+            if !sha256_only {
+                replay_cc_eventlog(&eventlog, PcrBank::Sha1, &mut sha1_pcrs, true, false)?;
+            }
+            replay_cc_eventlog(
+                &eventlog,
+                PcrBank::Sha256,
+                &mut sha256_pcrs,
+                true,
+                sha256_only,
+            )?;
         } else if let std::result::Result::Ok(eventlog) = Eventlog::try_from(raw.clone()) {
-            replay_tcg_eventlog(&eventlog, PcrBank::Sha1, &mut sha1_pcrs)?;
-            replay_tcg_eventlog(&eventlog, PcrBank::Sha256, &mut sha256_pcrs)?;
+            if !sha256_only {
+                replay_tcg_eventlog(&eventlog, PcrBank::Sha1, &mut sha1_pcrs, false)?;
+            }
+            replay_tcg_eventlog(&eventlog, PcrBank::Sha256, &mut sha256_pcrs, sha256_only)?;
         } else if let std::result::Result::Ok(eventlog) = BiosEventlog::try_from(raw) {
+            if sha256_only {
+                bail!("SHA256-only TPM evidence cannot authenticate a legacy BIOS event log");
+            }
             replay_bios_eventlog(&eventlog, &mut sha1_pcrs)?;
         } else {
             bail!("Failed to parse TPM boot eventlog for integrity verification");
@@ -368,7 +437,13 @@ fn verify_eventlog_integrity(evidence: &TpmEvidence) -> Result<()> {
     if let Some(encoded) = &evidence.aa_eventlog {
         let raw = engine.decode(encoded).context("Decode AA eventlog")?;
         let eventlog = CcEventLog::try_from(raw).context("Parse AA eventlog")?;
-        replay_cc_eventlog(&eventlog, PcrBank::Sha256, &mut sha256_pcrs, false)?;
+        replay_cc_eventlog(
+            &eventlog,
+            PcrBank::Sha256,
+            &mut sha256_pcrs,
+            false,
+            sha256_only,
+        )?;
     }
 
     if !sha1_pcrs.is_empty() {
@@ -425,7 +500,10 @@ impl UefiImageLoadEvent {
     }
 }
 
-fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClaim> {
+fn parse_tpm_evidence(
+    tpm_evidence: TpmEvidence,
+    sha256_only: bool,
+) -> Result<TeeEvidenceParsedClaim> {
     let mut parsed_claims = Map::new();
     let engine = base64::engine::general_purpose::STANDARD;
 
@@ -487,10 +565,14 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
     // Parse TCG Eventlogs
     if let Some(b64_eventlog) = tpm_evidence.eventlog {
         let eventlog_bytes = engine.decode(b64_eventlog)?;
+        let mut boot_event_digests = BTreeMap::<u32, Vec<String>>::new();
 
         if let Result::Ok(eventlog) = CcEventLog::try_from(eventlog_bytes.clone()) {
             log::info!("TCG2 Eventlog parsed successfully");
             for event in eventlog.log {
+                if sha256_only && event.event_type == TcgEventType::EvNoAction {
+                    continue;
+                }
                 let event_type = serde_json::to_value(event.event_type)?
                     .as_str()
                     .context("TCG event type did not serialize as a string")?
@@ -498,9 +580,21 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
                 let event_desc = engine.decode(event.event)?;
                 let event_data = match String::from_utf8(event_desc.clone()) {
                     Result::Ok(d) => d,
-                    Result::Err(_) => hex::encode(event_desc),
+                    Result::Err(_) => hex::encode(&event_desc),
                 };
                 for digest in event.digests {
+                    if sha256_only && digest.alg != TcgAlgorithm::Sha256 {
+                        continue;
+                    }
+                    if sha256_only {
+                        boot_event_digests
+                            .entry(event.index)
+                            .or_default()
+                            .push(hex::encode(&digest.digest));
+                        if Sha256::digest(&event_desc).as_slice() != digest.digest {
+                            continue;
+                        }
+                    }
                     let algorithm = serde_json::to_value(digest.alg)?
                         .as_str()
                         .context("TCG digest algorithm did not serialize as a string")?
@@ -511,6 +605,7 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
                         &event_data,
                         &algorithm,
                         &digest.digest,
+                        sha256_only,
                     )?;
                 }
             }
@@ -518,10 +613,30 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
             log::info!("TCG Eventlog parsed successfully");
             // Process TCG format event log
             for event in eventlog.log {
-                let Some(first_digest) = event.digests.first() else {
+                if sha256_only && event.event_type == "EV_NO_ACTION" {
+                    continue;
+                }
+                let digest = if sha256_only {
+                    event
+                        .digests
+                        .iter()
+                        .find(|digest| digest.algorithm == PcrBank::Sha256.eventlog_name())
+                } else {
+                    event.digests.first()
+                };
+                let Some(digest) = digest else {
                     continue;
                 };
                 let event_desc = &event.event_desc;
+                if sha256_only {
+                    boot_event_digests
+                        .entry(event.target_measurement_registry)
+                        .or_default()
+                        .push(hex::encode(&digest.digest));
+                    if Sha256::digest(event_desc).as_slice() != digest.digest {
+                        continue;
+                    }
+                }
                 let event_data = match String::from_utf8(event_desc.clone()) {
                     Result::Ok(d) => d,
                     Result::Err(_) => hex::encode(event_desc),
@@ -531,21 +646,20 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
                 // - Replace underscores with hyphens
                 // - If there is no hyphen between letters and digits, insert one
                 //   Examples: "SHA256" -> "SHA-256", "SHA_384" -> "SHA-384", "SM3_256" -> "SM3-256"
-                let algo_clean = first_digest.algorithm.trim_start_matches("TPM_ALG_");
+                let algo_clean = digest.algorithm.trim_start_matches("TPM_ALG_");
                 let mut event_digest_algorithm = algo_clean.replace('_', "-");
                 if !event_digest_algorithm.contains('-') {
                     if let Some(idx) = event_digest_algorithm.find(|c: char| c.is_ascii_digit()) {
                         event_digest_algorithm.insert(idx, '-');
                     }
                 }
-                let event_digest = &first_digest.digest;
-
                 parse_measurements_from_event(
                     &mut parsed_claims,
                     event.event_type.as_str(),
                     &event_data,
                     &event_digest_algorithm,
-                    event_digest,
+                    &digest.digest,
+                    sha256_only,
                 )?;
             }
         } else if let Result::Ok(eventlog) = BiosEventlog::try_from(eventlog_bytes.clone()) {
@@ -568,18 +682,47 @@ fn parse_tpm_evidence(tpm_evidence: TpmEvidence) -> Result<TeeEvidenceParsedClai
                     &event_data,
                     event_digest_algorithm,
                     event_digest,
+                    false,
                 )?;
             }
         } else {
             return Err(anyhow!("Failed to parse eventlog"));
+        }
+        if sha256_only {
+            parsed_claims.insert(
+                "boot_event_digests".to_string(),
+                serde_json::to_value(boot_event_digests)?,
+            );
         }
     }
 
     // Parse AA Eventlogs in TCG2 encoding
     if let Some(aael) = tpm_evidence.aa_eventlog {
         let aa_ccel_data = base64::engine::general_purpose::STANDARD.decode(aael)?;
-        let aa_ccel = CcEventLog::try_from(aa_ccel_data)?;
-        let result = serde_json::to_value(aa_ccel.clone().log)?;
+        let mut aa_ccel = CcEventLog::try_from(aa_ccel_data)?;
+        if sha256_only {
+            aa_ccel
+                .log
+                .retain(|event| event.event_type != TcgEventType::EvNoAction);
+            for event in &mut aa_ccel.log {
+                event
+                    .digests
+                    .retain(|digest| digest.alg == TcgAlgorithm::Sha256);
+                let [digest] = event.digests.as_slice() else {
+                    bail!("AA runtime event must have exactly one SHA256 digest");
+                };
+                let event_data = engine
+                    .decode(&event.event)
+                    .context("Decode AA runtime event data")?;
+                if event.event_type != TcgEventType::EvEventTag
+                    || event.details.unicode_name.as_deref() != Some("AAEL")
+                    || Sha256::digest(event_data).as_slice() != digest.digest
+                {
+                    bail!("AA runtime event data does not match its measured SHA256 digest");
+                }
+            }
+        }
+        let result = serde_json::to_value(aa_ccel.log)?;
         // Preserve the existing claim key used by Trustee policies. The
         // integrity check above has already replayed these AA runtime events.
         parsed_claims.insert("uefi_event_logs".to_string(), result);
@@ -633,8 +776,11 @@ fn parse_measurements_from_event(
     event_data: &str,
     event_digest_algorithm: &str,
     event_digest: &[u8],
+    sha256_only: bool,
 ) -> Result<()> {
-    if event_type == "EV_EFI_BOOT_SERVICES_APPLICATION" {
+    // The TPM authenticates event digests in PCR order. A firmware descriptor
+    // and its type do not prove which image produced a separately measured hash.
+    if !sha256_only && event_type == "EV_EFI_BOOT_SERVICES_APPLICATION" {
         parse_boot_services_event(
             parsed_claims,
             event_data,
@@ -719,7 +865,7 @@ impl TpmQuote {
             &quote_data
         };
 
-        if expected_report_data != &quote_data[..expected_report_data.len()] {
+        if !quote_data.starts_with(expected_report_data) {
             debug!(
                 "Expect REPORT_DATA: {}, Quote report data: {}",
                 hex::encode(expected_report_data),
@@ -728,6 +874,36 @@ impl TpmQuote {
             bail!("Expected REPORT_DATA is different from that in TPM Quote");
         }
 
+        Ok(())
+    }
+
+    fn check_sha256_selection(&self) -> Result<()> {
+        let attest = Attest::unmarshall(
+            &base64::engine::general_purpose::STANDARD.decode(&self.attest_body)?,
+        )?;
+        let AttestInfo::Quote { info } = attest.attested() else {
+            bail!("Invalid TPM quote");
+        };
+        let [selection] = info.pcr_selection().get_selections() else {
+            bail!("SHA256 quote must select a single PCR bank");
+        };
+        let selected_slots = selection
+            .selected()
+            .into_iter()
+            .fold(0, |bits, slot| bits | u32::from(slot));
+        if selection.hashing_algorithm() != HashingAlgorithm::Sha256
+            || selected_slots != (1 << TPM_QUOTE_PCR_COUNT) - 1
+        {
+            bail!("SHA256 quote must select SHA256 PCRs 0 through 23");
+        }
+        if self.pcrs.len() != TPM_QUOTE_PCR_COUNT
+            || self
+                .pcrs
+                .iter()
+                .any(|pcr| pcr.len() != PcrBank::Sha256.digest_len() * 2)
+        {
+            bail!("SHA256 quote must contain 24 SHA256 PCR values");
+        }
         Ok(())
     }
 
@@ -811,6 +987,346 @@ fn pkey_from_tpm2b_public(tpm2b_public: &[u8]) -> Result<PKey<openssl::pkey::Pub
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose::STANDARD;
+    use openssl::{pkey::Private, rsa::Rsa, sign::Signer};
+
+    const CHALLENGE: [u8; TPM_REPORT_DATA_SIZE] = [0x2a; TPM_REPORT_DATA_SIZE];
+
+    fn tcg2_log() -> Vec<u8> {
+        let mut spec_id = b"Spec ID Event03\0".to_vec();
+        spec_id.extend_from_slice(&[0, 0, 0, 0, 0, 2, 0, 2]);
+        spec_id.extend_from_slice(&2u32.to_le_bytes());
+        for bank in [PcrBank::Sha1, PcrBank::Sha256] {
+            spec_id.extend_from_slice(&(tcg_algorithm_for_bank(bank) as u16).to_le_bytes());
+            spec_id.extend_from_slice(&(bank.digest_len() as u16).to_le_bytes());
+        }
+        spec_id.push(0); // No vendor data.
+
+        let mut log = vec![0; 28];
+        log[4..8].copy_from_slice(&(TcgEventType::EvNoAction as u32).to_le_bytes());
+        log.extend_from_slice(&(spec_id.len() as u32).to_le_bytes());
+        log.extend_from_slice(&spec_id);
+        log
+    }
+
+    fn append_event(
+        log: &mut Vec<u8>,
+        index: u32,
+        event_type: TcgEventType,
+        data: &[u8],
+        digests: &[(PcrBank, Vec<u8>)],
+    ) {
+        log.extend_from_slice(&index.to_le_bytes());
+        log.extend_from_slice(&(event_type as u32).to_le_bytes());
+        log.extend_from_slice(&(digests.len() as u32).to_le_bytes());
+        for (bank, digest) in digests {
+            log.extend_from_slice(&(tcg_algorithm_for_bank(*bank) as u16).to_le_bytes());
+            log.extend_from_slice(digest);
+        }
+        log.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        log.extend_from_slice(data);
+    }
+
+    fn signed_quote(
+        ak: &PKey<Private>,
+        bank: PcrBank,
+        pcr_selection: [u8; 3],
+        pcrs: Vec<Vec<u8>>,
+    ) -> TpmQuote {
+        // Marshal a TPMS_ATTEST with a TPMS_QUOTE_INFO. In the fixture the
+        // attestation key is temporary and the supplied PCR list is signed.
+        let mut body = 0xff54_4347u32.to_be_bytes().to_vec(); // TPM_GENERATED_VALUE
+        body.extend_from_slice(&0x8018u16.to_be_bytes()); // TPM_ST_ATTEST_QUOTE
+        body.extend_from_slice(&0u16.to_be_bytes()); // Empty qualified signer.
+        body.extend_from_slice(&(CHALLENGE.len() as u16).to_be_bytes());
+        body.extend_from_slice(&CHALLENGE);
+        body.extend_from_slice(&[0; 25]); // Clock info and firmware version.
+        body.extend_from_slice(&1u32.to_be_bytes()); // One PCR bank.
+        body.extend_from_slice(&(tcg_algorithm_for_bank(bank) as u16).to_be_bytes());
+        body.push(pcr_selection.len() as u8);
+        body.extend_from_slice(&pcr_selection);
+        let digest = Sha256::digest(pcrs.concat());
+        body.extend_from_slice(&(digest.len() as u16).to_be_bytes());
+        body.extend_from_slice(&digest);
+
+        let mut signer = Signer::new(MessageDigest::sha256(), ak).unwrap();
+        signer.update(&body).unwrap();
+        TpmQuote {
+            attest_body: STANDARD.encode(body),
+            attest_sig: STANDARD.encode(signer.sign_to_vec().unwrap()),
+            pcrs: pcrs.into_iter().map(hex::encode).collect(),
+        }
+    }
+
+    fn tpm_evidence(
+        ak: &PKey<Private>,
+        quotes: impl IntoIterator<Item = (PcrBank, TpmQuote)>,
+        boot_log: Option<&[u8]>,
+        aa_log: Option<&[u8]>,
+    ) -> TpmEvidence {
+        TpmEvidence {
+            ek_pubkey: None,
+            ek_cert: None,
+            ak_pubkey: String::from_utf8(ak.public_key_to_pem().unwrap()).unwrap(),
+            keylime_agent_uuid: None,
+            quote: quotes
+                .into_iter()
+                .map(|(bank, quote)| (bank.quote_key().to_string(), quote))
+                .collect(),
+            eventlog: boot_log.map(|log| STANDARD.encode(log)),
+            aa_eventlog: aa_log.map(|log| STANDARD.encode(log)),
+        }
+    }
+
+    fn empty_pcrs(bank: PcrBank) -> Vec<Vec<u8>> {
+        vec![vec![0; bank.digest_len()]; TPM_QUOTE_PCR_COUNT]
+    }
+
+    #[test]
+    fn sha256_only_setting_is_disabled_when_unset_and_rejects_invalid_values() {
+        use std::os::unix::ffi::OsStringExt;
+        use std::result::Result::Ok;
+
+        assert_eq!(
+            parse_sha256_only_setting(Err(VarError::NotPresent)),
+            Ok(false)
+        );
+        assert_eq!(
+            parse_sha256_only_setting(Ok("false".to_string())),
+            Ok(false)
+        );
+        assert_eq!(parse_sha256_only_setting(Ok("true".to_string())), Ok(true));
+        assert!(parse_sha256_only_setting(Ok("TRUE".to_string())).is_err());
+        assert!(parse_sha256_only_setting(Err(VarError::NotUnicode(
+            std::ffi::OsString::from_vec(vec![0xff])
+        )))
+        .is_err());
+    }
+
+    #[test]
+    fn sha256_only_preserves_legacy_quote_checks_and_does_not_emit_unquoted_digests() {
+        let ak = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let mut sha1_pcrs = empty_pcrs(PcrBank::Sha1);
+        let mut sha256_pcrs = empty_pcrs(PcrBank::Sha256);
+        let data = b"Kernel boot measurement";
+        let sha1_digest = Sha1::digest(data).to_vec();
+        let sha256_digest = Sha256::digest(data).to_vec();
+        let mut boot_log = tcg2_log();
+        append_event(
+            &mut boot_log,
+            7,
+            TcgEventType::EvIpl,
+            data,
+            &[
+                (PcrBank::Sha1, sha1_digest.clone()),
+                (PcrBank::Sha256, sha256_digest.clone()),
+            ],
+        );
+        sha1_pcrs[7] = PcrBank::Sha1.extend(&sha1_pcrs[7], &sha1_digest).unwrap();
+        sha256_pcrs[7] = PcrBank::Sha256
+            .extend(&sha256_pcrs[7], &sha256_digest)
+            .unwrap();
+        let sha1 = signed_quote(&ak, PcrBank::Sha1, [0xff; 3], sha1_pcrs);
+        let sha256 = signed_quote(&ak, PcrBank::Sha256, [0xff; 3], sha256_pcrs);
+        let expected = ReportData::Value(&CHALLENGE);
+
+        let dual = tpm_evidence(
+            &ak,
+            [(PcrBank::Sha1, sha1), (PcrBank::Sha256, sha256.clone())],
+            Some(&boot_log),
+            None,
+        );
+        let legacy = verify_tpm_quotes(dual.clone(), &expected, false).unwrap();
+        assert_eq!(
+            verify_tpm_quotes(dual.clone(), &expected, true).unwrap(),
+            legacy
+        );
+        assert_eq!(legacy["measurement.kernel.SHA-1"], hex::encode(sha1_digest));
+        let mut invalid_dual = dual;
+        invalid_dual
+            .quote
+            .get_mut("SHA1")
+            .unwrap()
+            .attest_sig
+            .clear();
+        assert!(verify_tpm_quotes(invalid_dual, &expected, true).is_err());
+
+        let single = tpm_evidence(&ak, [(PcrBank::Sha256, sha256)], Some(&boot_log), None);
+        assert!(verify_tpm_quotes(single.clone(), &expected, false).is_err());
+        let claims = verify_tpm_quotes(single, &expected, true).unwrap();
+        assert_eq!(
+            claims["measurement.kernel.SHA-256"],
+            hex::encode(&sha256_digest)
+        );
+        assert_eq!(
+            claims["boot_event_digests"]["7"][0],
+            hex::encode(sha256_digest)
+        );
+        assert!(claims.get("measurement.kernel.SHA-1").is_none());
+        assert!(claims.get("pcrs.SHA1.7").is_none());
+    }
+
+    #[test]
+    fn legacy_sha1_only_requires_the_default_policy() {
+        let ak = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let mut pcrs = empty_pcrs(PcrBank::Sha1);
+        let data = b"Kernel legacy boot measurement";
+        let digest = Sha1::digest(data).to_vec();
+        let mut boot_log = tcg2_log();
+        append_event(
+            &mut boot_log,
+            7,
+            TcgEventType::EvIpl,
+            data,
+            &[(PcrBank::Sha1, digest.clone())],
+        );
+        pcrs[7] = PcrBank::Sha1.extend(&pcrs[7], &digest).unwrap();
+        let quote = signed_quote(&ak, PcrBank::Sha1, [0xff; 3], pcrs);
+        let legacy = tpm_evidence(&ak, [(PcrBank::Sha1, quote)], Some(&boot_log), None);
+        let expected = ReportData::Value(&CHALLENGE);
+        assert!(verify_tpm_quotes(legacy.clone(), &expected, false).is_ok());
+        let error = verify_tpm_quotes(legacy, &expected, true).unwrap_err();
+        assert!(error.to_string().contains("requires a SHA256 quote"));
+    }
+
+    #[test]
+    fn sha256_only_requires_the_signed_full_sha256_selection_and_pcr_values() {
+        let ak = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let expected = ReportData::Value(&CHALLENGE);
+        let pcrs = empty_pcrs(PcrBank::Sha256);
+
+        for (bank, selection) in [
+            (PcrBank::Sha1, [0xff; 3]),
+            (PcrBank::Sha256, [0xfe, 0xff, 0xff]),
+        ] {
+            let quote = signed_quote(&ak, bank, selection, pcrs.clone());
+            let evidence = tpm_evidence(&ak, [(PcrBank::Sha256, quote)], None, None);
+            let error = verify_tpm_quotes(evidence, &expected, true).unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("must select SHA256 PCRs 0 through 23"));
+        }
+
+        let mut quote = signed_quote(&ak, PcrBank::Sha256, [0xff; 3], pcrs);
+        quote.pcrs.pop();
+        let evidence = tpm_evidence(&ak, [(PcrBank::Sha256, quote)], None, None);
+        let error = verify_tpm_quotes(evidence, &expected, true).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("must contain 24 SHA256 PCR values"));
+    }
+
+    #[test]
+    fn sha256_only_checks_sha256_coverage_for_each_event_and_replays_the_digest() {
+        let ak = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let expected = ReportData::Value(&CHALLENGE);
+        let mut pcrs = empty_pcrs(PcrBank::Sha256);
+        let data = b"Kernel boot measurement";
+        let digest = Sha256::digest(data).to_vec();
+        pcrs[7] = PcrBank::Sha256.extend(&pcrs[7], &digest).unwrap();
+        let quote = signed_quote(&ak, PcrBank::Sha256, [0xff; 3], pcrs);
+
+        let mut log = tcg2_log();
+        append_event(
+            &mut log,
+            7,
+            TcgEventType::EvIpl,
+            data,
+            &[(PcrBank::Sha256, digest.clone())],
+        );
+        let unrelated = b"Initrd legacy-only event in the same PCR";
+        append_event(
+            &mut log,
+            7,
+            TcgEventType::EvIpl,
+            unrelated,
+            &[(PcrBank::Sha1, Sha1::digest(unrelated).to_vec())],
+        );
+        let evidence = tpm_evidence(&ak, [(PcrBank::Sha256, quote.clone())], Some(&log), None);
+        let error = verify_tpm_quotes(evidence, &expected, true).unwrap_err();
+        assert!(error.to_string().contains("Missing SHA256 digest"));
+
+        let mut tampered_digest = digest;
+        tampered_digest[0] ^= 1;
+        let mut log = tcg2_log();
+        append_event(
+            &mut log,
+            7,
+            TcgEventType::EvIpl,
+            data,
+            &[(PcrBank::Sha256, tampered_digest)],
+        );
+        let evidence = tpm_evidence(&ak, [(PcrBank::Sha256, quote)], Some(&log), None);
+        let error = verify_tpm_quotes(evidence, &expected, true).unwrap_err();
+        assert!(error.to_string().contains("eventlog replay mismatch"));
+    }
+
+    #[test]
+    fn sha256_only_does_not_publish_typed_claims_for_unmeasured_descriptors() {
+        let ak = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let expected = ReportData::Value(&CHALLENGE);
+        let mut pcrs = empty_pcrs(PcrBank::Sha256);
+        let digest = Sha256::digest(b"Measured boot image").to_vec();
+        pcrs[7] = PcrBank::Sha256.extend(&pcrs[7], &digest).unwrap();
+        let quote = signed_quote(&ak, PcrBank::Sha256, [0xff; 3], pcrs);
+        let mut log = tcg2_log();
+        append_event(
+            &mut log,
+            7,
+            TcgEventType::EvIpl,
+            b"kernel_cmdline unauthenticated text",
+            &[(PcrBank::Sha256, digest.clone())],
+        );
+        let evidence = tpm_evidence(&ak, [(PcrBank::Sha256, quote)], Some(&log), None);
+        let claims = verify_tpm_quotes(evidence, &expected, true).unwrap();
+        assert_eq!(claims["boot_event_digests"]["7"][0], hex::encode(digest));
+        assert!(claims.get("measurement.kernel_cmdline.SHA-256").is_none());
+        assert!(claims.get("kernel_cmdline").is_none());
+    }
+
+    #[test]
+    fn sha256_only_checks_runtime_event_data_before_issuing_claims() {
+        fn aa_tag(data: &[u8]) -> Vec<u8> {
+            let mut tagged = 0x4141_454cu32.to_le_bytes().to_vec();
+            tagged.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            tagged.extend_from_slice(data);
+            tagged
+        }
+
+        let ak = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let expected = ReportData::Value(&CHALLENGE);
+        let mut pcrs = empty_pcrs(PcrBank::Sha256);
+        let tag = aa_tag(b"test.domain process stable-content");
+        let digest = Sha256::digest(&tag).to_vec();
+        pcrs[17] = PcrBank::Sha256.extend(&pcrs[17], &digest).unwrap();
+        let quote = signed_quote(&ak, PcrBank::Sha256, [0xff; 3], pcrs);
+        let event_digests = [
+            (PcrBank::Sha1, Sha1::digest(&tag).to_vec()),
+            (PcrBank::Sha256, digest),
+        ];
+        let mut log = tcg2_log();
+        append_event(&mut log, 17, TcgEventType::EvEventTag, &tag, &event_digests);
+        let evidence = tpm_evidence(&ak, [(PcrBank::Sha256, quote.clone())], None, Some(&log));
+        let claims = verify_tpm_quotes(evidence, &expected, true).unwrap();
+        let event = &claims["uefi_event_logs"][0];
+        assert_eq!(event["details"]["data"]["content"], "stable-content");
+        let digests = event["digests"].as_array().unwrap();
+        assert_eq!(digests.len(), 1);
+        assert_eq!(digests[0]["alg"], "SHA-256");
+
+        let mut log = tcg2_log();
+        let tampered = aa_tag(b"test.domain process modified-content");
+        append_event(
+            &mut log,
+            17,
+            TcgEventType::EvEventTag,
+            &tampered,
+            &event_digests,
+        );
+        let evidence = tpm_evidence(&ak, [(PcrBank::Sha256, quote)], None, Some(&log));
+        let error = verify_tpm_quotes(evidence, &expected, true).unwrap_err();
+        assert!(error.to_string().contains("event data does not match"));
+    }
 
     #[test]
     fn replayed_pcr_is_checked_against_quote() {
@@ -851,7 +1367,7 @@ mod tests {
         };
         let mut replayed = ReplayedPcrs::new();
 
-        replay_cc_eventlog(&eventlog, PcrBank::Sha256, &mut replayed, true).unwrap();
+        replay_cc_eventlog(&eventlog, PcrBank::Sha256, &mut replayed, true, false).unwrap();
 
         let mut expected = vec![0; 32];
         expected[31] = 3;

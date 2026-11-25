@@ -89,6 +89,34 @@ OpenAnolis提供了一个简单易用的工具[cryptpilot](https://github.com/op
 
 如果本地不存在可复用的 AK，`Hygon TPM attester` 会回退为临时生成新的 SM2 AK，仅完成主链路 quote 证明，不执行 registrar 绑定校验。
 
+### 通用 TPM 的 SHA-256 单 bank 证明
+
+通用 TPM verifier 默认沿用已有验证规则，支持旧版双 bank 证明和带
+SHA-1 启动日志的旧版 SHA-1 证明。启用单 bank 模式时，先将 Attestation
+Service 升级到支持该模式的版本，再在服务进程设置
+`TRUSTEE_TPM_ALLOW_SHA256_ONLY=true`，并为策略配置 SHA-256 参考值。
+如果 KBS 使用内嵌 Attestation Service，请在 KBS 进程设置该变量。配置
+应当在进程启动前设置。允许的显式值为 `true` 和 `false`，无效值会使
+通用 TPM 验证失败。
+
+启用后，证据必须携带 SHA-256 Quote，签名保护的 PCR 选择须覆盖
+SHA-256 bank 的 PCR 0 至 23。证据同时携带 SHA-1 Quote 时，仍校验其
+签名、PCR digest 和适用的日志回放。只有 SHA-256 Quote 时，每条会扩展
+PCR 的已提交日志记录都需要 SHA-256 digest，且回放结果要匹配 Quote。
+AA 运行时事件的原始数据也必须与已回放的 SHA-256 digest 一致。
+
+单 bank 证明会按 PCR 输出已经回放的 `boot_event_digests.<PCR>`，其中
+每个数组是该 PCR 的 SHA-256 事件摘要序列。启动日志中的描述和事件类型
+可能独立于已度量的镜像摘要。verifier 只从与已度量摘要一致的文本发布
+文本派生的测量 claims 和 `kernel_cmdline`，因此依赖现有 EFI 组件
+claims 的策略要先迁移到已验证的 `pcrs.SHA256.*` 或
+`boot_event_digests.<PCR>`。需要 SHA-1 claims 或使用 SHA-1 旧式 BIOS
+日志的平台继续采用默认模式。
+
+确认 verifier、参考值和策略就绪后，在支持该模式的 AA 上设置
+`AA_TPM_SHA256_ONLY=true`。回退时先恢复 AA 的默认设置，再关闭 verifier
+设置。证明消息沿用现有格式，此配置适用于通用 TPM。
+
 ### SEV-SNP + SVSM vTPM 动态度量
 
 当 SNP guest 使用 Coconut SVSM vTPM，且 guest 内核提供 `tpm_svsm` 与 TSM SVSM attestation ABI 时，Attestation Agent 会把 SNP 作为主证据、TPM Quote 作为附加设备证据，并把 AA 动态事件扩展到 vTPM PCR。
