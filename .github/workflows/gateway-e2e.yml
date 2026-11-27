@@ -8,6 +8,7 @@ on:
       - "attestation-service/**"
       - "rvps/**"
       - "deps/**"
+      - "test-files/start_test_mysql.sh"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/gateway-e2e.yml"
@@ -19,6 +20,7 @@ on:
       - "attestation-service/**"
       - "rvps/**"
       - "deps/**"
+      - "test-files/start_test_mysql.sh"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/gateway-e2e.yml"
@@ -45,25 +47,12 @@ jobs:
       CARGO_TERM_COLOR: always
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_DEV_OPT_LEVEL: "1"
-      MYSQL_TEST_URL: mysql://root@127.0.0.1:3306/
       TRUSTEE_E2E_REGOVM: ${{ matrix.regovm }}
       TRUSTEE_E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd "mysqladmin ping --silent"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
     steps:
       - uses: actions/checkout@v5
-      - name: Exercise restrictive MySQL defaults
-        run: docker exec ${{ job.services.mysql.id }} mysql -uroot -e "SET GLOBAL innodb_default_row_format=COMPACT"
+      - name: Start authenticated test MySQL
+        run: bash test-files/start_test_mysql.sh "$GITHUB_ENV"
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
       - name: Install Rust
@@ -80,6 +69,9 @@ jobs:
         run: go test ./cmd/server -run TestGatewayRoutesMatchDocumentedE2EContract -count=1
       - name: Run all Gateway APIs against real services
         run: bash trustee-gateway/test/e2e/run.sh
+      - name: Stop test MySQL
+        if: always() && env.TEST_MYSQL_CONTAINER != ''
+        run: docker stop "$TEST_MYSQL_CONTAINER"
       - name: Upload API coverage (no keys, tokens, configurations or service logs)
         if: always()
         uses: actions/upload-artifact@v6
