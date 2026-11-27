@@ -76,8 +76,14 @@ async fn reset_mysql_schema(dsn: &str) {
 /// The resource path grammar is ASCII-only, so keeping these columns in the
 /// one-byte `ascii` character set preserves their 255-character capacity and
 /// keeps the three-column primary key below InnoDB's legacy 767-byte limit.
-async fn assert_resource_key_schema(dsn: &str) {
+async fn assert_mysql_schema_ready(dsn: &str) {
     let pool = sqlx::MySqlPool::connect(dsn).await.expect("connect mysql");
+    let lock_free: Option<i64> =
+        sqlx::query_scalar("SELECT IS_FREE_LOCK('trustee_kbs_encrypted_db_migrate')")
+            .fetch_one(&pool)
+            .await
+            .expect("check whether the schema migration lock was released");
+    assert_eq!(lock_free, Some(1), "migration lock must be released");
     let columns: Vec<ResourceKeyColumn> = sqlx::query_as(
         "SELECT COLUMN_NAME, CHARACTER_SET_NAME, COLLATION_NAME,
                 CHARACTER_MAXIMUM_LENGTH
@@ -174,7 +180,7 @@ async fn end_to_end_two_replicas() {
     let replica_a = EncryptedDb::init_async(&cfg(&dsn, &secret_path))
         .await
         .expect("replica A init");
-    assert_resource_key_schema(&dsn).await;
+    assert_mysql_schema_ready(&dsn).await;
     // Replica B: same DSN, same passphrase, same shared state.
     let replica_b = EncryptedDb::init_async(&cfg(&dsn, &secret_path))
         .await

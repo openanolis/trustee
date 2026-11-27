@@ -49,24 +49,34 @@ pub mod meta {
 pub async fn migrate_schema(pool: &DbPool) -> Result<()> {
     match pool {
         DbPool::MySql(p) => {
-            let row: (Option<i64>,) = sqlx::query_as("SELECT GET_LOCK(?, ?)")
+            // MySQL locks belong to a physical session. Close this connection
+            // instead of returning it to the pool if migration is cancelled.
+            let mut connection = p.acquire().await.context("acquire migration connection")?;
+            connection.close_on_drop();
+            let acquired: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK(?, ?)")
                 .bind(MIGRATION_LOCK_NAME)
                 .bind(MIGRATION_LOCK_TIMEOUT_SECS)
-                .fetch_one(p)
+                .fetch_one(&mut *connection)
                 .await
                 .context("acquire migration lock")?;
-            if row.0 != Some(1) {
+            if acquired != Some(1) {
                 return Err(anyhow!(
                     "failed to acquire MySQL advisory lock `{MIGRATION_LOCK_NAME}` within {MIGRATION_LOCK_TIMEOUT_SECS}s"
                 ));
             }
-            let result = create_tables_mysql(p).await;
-            // Best-effort release.
-            let _ = sqlx::query("SELECT RELEASE_LOCK(?)")
+            let result = create_tables_mysql(&mut connection).await;
+            let released = sqlx::query_scalar::<_, Option<i64>>("SELECT RELEASE_LOCK(?)")
                 .bind(MIGRATION_LOCK_NAME)
-                .execute(p)
-                .await;
-            result
+                .fetch_one(&mut *connection)
+                .await
+                .context("release migration lock");
+            result?;
+            if released? != Some(1) {
+                return Err(anyhow!(
+                    "migration connection did not own the MySQL advisory lock"
+                ));
+            }
+            Ok(())
         }
         DbPool::Sqlite(p) => create_tables_sqlite(p).await,
     }
@@ -140,10 +150,10 @@ CREATE TABLE IF NOT EXISTS kbs_meta (
 )
 "#;
 
-async fn create_tables_mysql(pool: &sqlx::MySqlPool) -> Result<()> {
+async fn create_tables_mysql(connection: &mut sqlx::MySqlConnection) -> Result<()> {
     for stmt in [MYSQL_CREATE_KEYS, MYSQL_CREATE_RESOURCES, MYSQL_CREATE_META] {
         sqlx::query(stmt)
-            .execute(pool)
+            .execute(&mut *connection)
             .await
             .with_context(|| format!("execute mysql schema: {}", first_line(stmt)))?;
     }
