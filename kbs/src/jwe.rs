@@ -12,12 +12,11 @@ use aes_kw::{Kek, KekAes256};
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use kbs_types::{ProtectedHeader, Response, TeePubKey};
-use log::warn;
 use p256::{
     ecdh::EphemeralSecret, elliptic_curve::sec1::FromEncodedPoint, EncodedPoint, PublicKey,
 };
 use rand::{rngs::OsRng, Rng};
-use rsa::{sha2::Sha256, BigUint, Oaep, Pkcs1v15Encrypt, RsaPublicKey};
+use rsa::{sha2::Sha256, BigUint, Oaep, RsaPublicKey};
 use serde_json::{json, Map};
 use zeroize::Zeroizing;
 
@@ -41,55 +40,6 @@ const AES_GCM_256_ALGORITHM: &str = "A256GCM";
 
 /// AES 256 GCM Key length in bits
 const AES_GCM_256_KEY_BITS: u32 = 256;
-
-/// Use RSAv1.5 to encrypt the payload data.
-/// Warning: This algorithm is deprecated per
-/// <https://www.ietf.org/archive/id/draft-madden-jose-deprecate-none-rsa15-00.html#section-1.2>
-#[deprecated(note = "This algorithm is no longer recommended.")]
-fn rsa_1v15(k_mod: String, k_exp: String, mut payload_data: Vec<u8>) -> Result<Response> {
-    warn!("Get JWE request using deprecated kcs#1 v1.5 encryption, which has potential security issues.");
-    let mut rng = rand::thread_rng();
-
-    let aes_sym_key = Zeroizing::new(Aes256Gcm::generate_key(&mut OsRng));
-    let mut cipher = Aes256Gcm::new(&aes_sym_key);
-    let iv = rng.gen::<[u8; 12]>();
-    let nonce = Nonce::from_slice(&iv);
-    let protected = ProtectedHeader {
-        alg: RSA1_5_ALGORITHM.to_string(),
-        enc: AES_GCM_256_ALGORITHM.to_string(),
-        other_fields: Map::new(),
-    };
-
-    let aad = protected.generate_aad().context("Generate JWE AAD")?;
-
-    let tag = cipher
-        .encrypt_in_place_detached(nonce, &aad, &mut payload_data)
-        .map_err(|e| anyhow!("AES encrypt Resource payload failed: {e}"))?;
-
-    let k_mod = URL_SAFE_NO_PAD
-        .decode(k_mod)
-        .context("base64 decode k_mod failed")?;
-    let n = BigUint::from_bytes_be(&k_mod);
-    let k_exp = URL_SAFE_NO_PAD
-        .decode(k_exp)
-        .context("base64 decode k_exp failed")?;
-    let e = BigUint::from_bytes_be(&k_exp);
-
-    let rsa_pub_key =
-        RsaPublicKey::new(n, e).context("Building RSA key from modulus and exponent failed")?;
-    let encrypted_key = rsa_pub_key
-        .encrypt(&mut rng, Pkcs1v15Encrypt, aes_sym_key.as_slice())
-        .context("RSA encrypt sym key failed")?;
-
-    Ok(Response {
-        protected,
-        encrypted_key,
-        iv: iv.into(),
-        ciphertext: payload_data,
-        aad: None,
-        tag: tag.to_vec(),
-    })
-}
 
 /// Use RSA-OAEP SHA-256 to encrypt the payload data.
 fn rsa_oaep256(k_mod: String, k_exp: String, mut payload_data: Vec<u8>) -> Result<Response> {
@@ -238,8 +188,9 @@ fn ecdh_es_a256kw_p256(x: String, y: String, mut payload_data: Vec<u8>) -> Resul
 pub fn jwe(tee_pub_key: TeePubKey, payload_data: Vec<u8>) -> Result<Response> {
     match tee_pub_key {
         TeePubKey::RSA { alg, k_mod, k_exp } => match &alg[..] {
-            #[allow(deprecated)]
-            RSA1_5_ALGORITHM => rsa_1v15(k_mod, k_exp, payload_data),
+            RSA1_5_ALGORITHM => {
+                bail!("RSA1_5 is disabled for KBS responses. Use RSA-OAEP-256 or ECDH-ES+A256KW")
+            }
             RSA_OAEP256_ALGORITHM => rsa_oaep256(k_mod, k_exp, payload_data),
             others => bail!("algorithm {others} is not supported"),
         },
@@ -269,46 +220,15 @@ mod tests {
 
     use super::jwe;
 
-    #[allow(deprecated)]
     #[test]
-    fn jwe_rsav15_compatibility() {
-        let test_data = b"this is a test data";
-
-        // Generate a 4096-bit RSA key pair
-        let rsa_key = Rsa::generate(4096).unwrap();
-        let k_mod = URL_SAFE_NO_PAD.encode(rsa_key.n().to_vec());
-        let k_exp = URL_SAFE_NO_PAD.encode(rsa_key.e().to_vec());
+    fn jwe_rejects_rsa1_5_requests() {
         let tee_key = TeePubKey::RSA {
             alg: RSA1_5_ALGORITHM.into(),
-            k_mod,
-            k_exp,
+            k_mod: String::new(),
+            k_exp: String::new(),
         };
-
-        // Generate a JWE response
-        let response = jwe(tee_key, test_data.to_vec()).unwrap();
-        let response_string = serde_json::to_string(&response).unwrap();
-
-        // Decrypt with josekit crate
-        let decrypter = josekit::jwe::alg::rsaes::RsaesJweAlgorithm::Rsa1_5
-            .decrypter_from_pem(rsa_key.private_key_to_pem().unwrap())
-            .unwrap();
-        let mut header = JweHeader::new();
-        header.set_token_type("JWT");
-        header.set_content_encryption(AES_GCM_256_ALGORITHM);
-        let context = JweContext::new();
-        let (decrypted_data, header) = context
-            .deserialize_json(&response_string, &decrypter)
-            .unwrap();
-        assert_eq!(decrypted_data, test_data);
-
-        let mut jwe_header = JweHeader::new();
-        jwe_header
-            .set_claim("alg", Some(RSA1_5_ALGORITHM.into()))
-            .unwrap();
-        jwe_header
-            .set_claim("enc", Some(AES_GCM_256_ALGORITHM.into()))
-            .unwrap();
-        assert_eq!(header, jwe_header);
+        let error = jwe(tee_key, vec![]).err().unwrap();
+        assert!(error.to_string().contains("RSA1_5 is disabled"));
     }
 
     #[test]
