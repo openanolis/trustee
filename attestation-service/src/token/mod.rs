@@ -20,6 +20,9 @@ pub mod signer;
 pub mod signer_transparency;
 pub mod simple;
 
+#[cfg(all(test, feature = "fs"))]
+mod test_keys;
+
 pub const DEFAULT_TOKEN_DURATION: i64 = 5;
 pub const COCO_AS_ISSUER_NAME: &str = "CoCo-Attestation-Service";
 

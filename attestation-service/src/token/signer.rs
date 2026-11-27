@@ -316,16 +316,12 @@ impl Default for EphemeralSigner<SecretKey> {
 #[cfg(all(test, feature = "fs"))]
 mod tests {
     use super::*;
+    use p256::pkcs8::{EncodePrivateKey, LineEnding};
 
-    /// Write `pem` to a fresh temp file and return its path.
-    fn write_key(pem: &str) -> std::path::PathBuf {
+    fn write_key(pem: &str) -> tempfile::NamedTempFile {
         let file = tempfile::NamedTempFile::new().unwrap();
-        let path = file.path().to_path_buf();
-        std::fs::write(&path, pem).unwrap();
-        // Detach so the file persists for `from_config` to read; the test is
-        // short-lived and the temp dir is cleaned up by the OS.
-        std::mem::forget(file);
-        path
+        std::fs::write(file.path(), pem).unwrap();
+        file
     }
 
     fn signer_config(key_path: impl Into<String>) -> SignerConfig {
@@ -336,65 +332,50 @@ mod tests {
         }
     }
 
-    // Two-block EC key produced by `openssl ecparam -genkey -name prime256v1`
-    // (without `-noout`): an `EC PARAMETERS` block precedes the
-    // `EC PRIVATE KEY` block. The strict single-block rust-crypto `_pem`
-    // decoders reject this with `Pem(PostEncapsulationBoundary)`.
-    const TWO_BLOCK_EC_PEM: &str = "-----BEGIN EC PARAMETERS-----
+    // SEC1 curve OID for prime256v1, as emitted by openssl ecparam.
+    const P256_PARAMETERS_PEM: &str = "-----BEGIN EC PARAMETERS-----
 BggqhkjOPQMBBw==
 -----END EC PARAMETERS-----
------BEGIN EC PRIVATE KEY-----
-MHcCAQEEIGfmZRNbfcyHw4bVXRlnol/VJegydBf67x2AAuw61DAuoAoGCCqGSM49
-AwEHoUQDQgAE8AgdguGDlcmxcaYQj6n2f7b0x6ifhHX/WN/SuYllSHdj6QCB7mDA
-KUtKTsWMoHmmSNcm3gS0XZw6Qc/P2dnd4Q==
------END EC PRIVATE KEY-----
-";
-
-    // Clean single-block SEC1 EC private key.
-    const SEC1_EC_PEM: &str = "-----BEGIN EC PRIVATE KEY-----
-MHcCAQEEIGfmZRNbfcyHw4bVXRlnol/VJegydBf67x2AAuw61DAuoAoGCCqGSM49
-AwEHoUQDQgAE8AgdguGDlcmxcaYQj6n2f7b0x6ifhHX/WN/SuYllSHdj6QCB7mDA
-KUtKTsWMoHmmSNcm3gS0XZw6Qc/P2dnd4Q==
------END EC PRIVATE KEY-----
-";
-
-    // The same P-256 key as PKCS#8 (`PRIVATE KEY`).
-    const PKCS8_EC_PEM: &str = "-----BEGIN PRIVATE KEY-----
-MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgZ+ZlE1t9zIfDhtVd
-GWeiX9Ul6DJ0F/rvHYAC7DrUMC6hRANCAATwCB2C4YOVybFxphCPqfZ/tvTHqJ+E
-df9Y39K5iWVId2PpAIHuYMApS0pOxYygeaZI1ybeBLRdnDpBz8/Z2d3h
------END PRIVATE KEY-----
 ";
 
     #[test]
     fn ec_loads_two_block_key_with_ec_parameters() {
         // Regression: `openssl ecparam -genkey` (no -noout) — must still load.
-        let path = write_key(TWO_BLOCK_EC_PEM);
-        let signer = FsSigner::<SecretKey>::from_config(signer_config(path.to_str().unwrap()))
-            .expect("two-block EC key must parse");
-        assert!(!signer.private_key().to_bytes().is_empty());
+        let key = SecretKey::random(&mut rand::rngs::OsRng);
+        let sec1 = key.to_sec1_pem(LineEnding::LF).unwrap();
+        let path = write_key(&format!("{P256_PARAMETERS_PEM}{}", sec1.as_str()));
+        let signer =
+            FsSigner::<SecretKey>::from_config(signer_config(path.path().to_str().unwrap()))
+                .expect("two-block EC key must parse");
+        assert_eq!(signer.private_key().to_bytes(), key.to_bytes());
     }
 
     #[test]
     fn ec_loads_clean_sec1_key() {
-        let path = write_key(SEC1_EC_PEM);
-        let signer = FsSigner::<SecretKey>::from_config(signer_config(path.to_str().unwrap()))
-            .expect("clean SEC1 EC key must parse");
-        assert!(!signer.private_key().to_bytes().is_empty());
+        let key = SecretKey::random(&mut rand::rngs::OsRng);
+        let pem = key.to_sec1_pem(LineEnding::LF).unwrap();
+        let path = write_key(&pem);
+        let signer =
+            FsSigner::<SecretKey>::from_config(signer_config(path.path().to_str().unwrap()))
+                .expect("clean SEC1 EC key must parse");
+        assert_eq!(signer.private_key().to_bytes(), key.to_bytes());
     }
 
     #[test]
     fn ec_loads_pkcs8_key() {
-        let path = write_key(PKCS8_EC_PEM);
-        let signer = FsSigner::<SecretKey>::from_config(signer_config(path.to_str().unwrap()))
-            .expect("PKCS#8 EC key must parse");
-        assert!(!signer.private_key().to_bytes().is_empty());
+        let key = SecretKey::random(&mut rand::rngs::OsRng);
+        let pem = key.to_pkcs8_pem(LineEnding::LF).unwrap();
+        let path = write_key(&pem);
+        let signer =
+            FsSigner::<SecretKey>::from_config(signer_config(path.path().to_str().unwrap()))
+                .expect("PKCS#8 EC key must parse");
+        assert_eq!(signer.private_key().to_bytes(), key.to_bytes());
     }
 
     #[test]
     fn ec_rejects_non_key_file() {
         let path = write_key("not a PEM file at all");
-        let err = FsSigner::<SecretKey>::from_config(signer_config(path.to_str().unwrap()))
+        let err = FsSigner::<SecretKey>::from_config(signer_config(path.path().to_str().unwrap()))
             .err()
             .expect("non-PEM content must error");
         assert!(err.to_string().contains("No private key"));
