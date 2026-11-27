@@ -11,6 +11,9 @@ pub mod encrypted_local_fs;
 #[cfg(feature = "encrypted-db")]
 pub mod encrypted_db;
 
+#[cfg(any(feature = "encrypted-db", feature = "encrypted-local-fs"))]
+mod envelope;
+
 #[cfg(feature = "aliyun")]
 pub mod aliyun_kms;
 

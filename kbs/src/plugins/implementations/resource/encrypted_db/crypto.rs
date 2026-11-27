@@ -2,12 +2,9 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Envelope (de)crypt helpers, mirroring the wire format used by
-//! `EncryptedLocalFs` so the two backends are interchangeable on the wire.
-//! When time allows, the helpers in `encrypted_local_fs.rs` should be
-//! refactored to call into this module instead — for now we keep the two in
-//! lock-step by accident.
+//! EncryptedDb operations for the format shared with EncryptedLocalFs.
 
+use super::super::envelope::{Envelope, ALG_RSA_OAEP_256};
 use aes_gcm::{
     aead::{AeadInPlace, KeyInit},
     Aes256Gcm, Nonce,
@@ -15,25 +12,11 @@ use aes_gcm::{
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use rsa::sha2::Sha256;
-use rsa::{Oaep, Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
-use serde::{Deserialize, Serialize};
+use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
 
-pub const ALG_RSA1_5: &str = "RSA1_5";
-pub const ALG_RSA_OAEP_256: &str = "RSA-OAEP-256";
 pub const AES_GCM_KEY_LEN: usize = 32;
 pub const AES_GCM_TAG_LEN: usize = 16;
 pub const AES_GCM_NONCE_LEN: usize = 12;
-
-/// Wire format of an encrypted resource. Compatible byte-for-byte with the
-/// envelope written by `EncryptedLocalFs`.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
-pub struct Envelope {
-    pub alg: String,
-    pub enc_key: String,
-    pub iv: String,
-    pub ciphertext: String,
-    pub tag: String,
-}
 
 fn decode_b64(name: &str, v: &str) -> Result<Vec<u8>> {
     STANDARD
@@ -45,14 +28,12 @@ fn decode_b64(name: &str, v: &str) -> Result<Vec<u8>> {
 /// successfully decrypts both the CEK and the AES-GCM body. Errors when none
 /// of the supplied keys works.
 pub fn decrypt_envelope_with_ring(env: &Envelope, keys: &[RsaPrivateKey]) -> Result<Vec<u8>> {
+    env.validate_algorithm()?;
     let enc_key = decode_b64("enc_key", &env.enc_key)?;
     let iv = decode_b64("iv", &env.iv)?;
     let ciphertext = decode_b64("ciphertext", &env.ciphertext)?;
     let tag = decode_b64("tag", &env.tag)?;
 
-    if !matches!(env.alg.as_str(), ALG_RSA1_5 | ALG_RSA_OAEP_256) {
-        bail!("unsupported envelope alg `{}`", env.alg);
-    }
     if iv.len() != AES_GCM_NONCE_LEN {
         bail!(
             "unexpected GCM nonce length {}, expect {AES_GCM_NONCE_LEN} bytes",
@@ -71,9 +52,7 @@ pub fn decrypt_envelope_with_ring(env: &Envelope, keys: &[RsaPrivateKey]) -> Res
 
     let mut last_err = None;
     for key in keys {
-        match recover_cek(key, &env.alg, &enc_key)
-            .and_then(|cek| aes_decrypt(&cek, &iv, &ciphertext, &tag))
-        {
+        match recover_cek(key, &enc_key).and_then(|cek| aes_decrypt(&cek, &iv, &ciphertext, &tag)) {
             Ok(plain) => return Ok(plain),
             Err(e) => last_err = Some(e),
         }
@@ -102,6 +81,7 @@ pub fn rewrap_envelope(
         Ok(e) => e,
         Err(_) => return Ok(None), // not an envelope; leave as plaintext
     };
+    env.validate_algorithm()?;
 
     let enc_key = decode_b64("enc_key", &env.enc_key)?;
     let iv = decode_b64("iv", &env.iv)?;
@@ -110,8 +90,8 @@ pub fn rewrap_envelope(
 
     // Fast-path: if the first key already decrypts under OAEP, we're already
     // current and skip the rewrap. This mirrors EncryptedLocalFs::rewrap_one.
-    if env.alg == ALG_RSA_OAEP_256 && !decrypt_keys.is_empty() {
-        if let Ok(cek) = recover_cek(&decrypt_keys[0], &env.alg, &enc_key) {
+    if let Some(primary) = decrypt_keys.first() {
+        if let Ok(cek) = recover_cek(primary, &enc_key) {
             if aes_decrypt(&cek, &iv, &ciphertext, &tag).is_ok() {
                 return Ok(None);
             }
@@ -123,7 +103,7 @@ pub fn rewrap_envelope(
     let cek = decrypt_keys
         .iter()
         .find_map(|key| {
-            let cek = recover_cek(key, &env.alg, &enc_key).ok()?;
+            let cek = recover_cek(key, &enc_key).ok()?;
             aes_decrypt(&cek, &iv, &ciphertext, &tag).ok()?;
             Some(cek)
         })
@@ -147,19 +127,10 @@ pub fn rewrap_envelope(
     Ok(Some(bytes))
 }
 
-fn recover_cek(private_key: &RsaPrivateKey, alg: &str, enc_key: &[u8]) -> Result<Vec<u8>> {
-    let cek = match alg {
-        ALG_RSA1_5 => private_key
-            .decrypt(Pkcs1v15Encrypt, enc_key)
-            .context("RSA1_5 decrypt CEK")?,
-        ALG_RSA_OAEP_256 => {
-            let padding = Oaep::new::<Sha256>();
-            private_key
-                .decrypt(padding, enc_key)
-                .context("RSA-OAEP-256 decrypt CEK")?
-        }
-        _ => bail!("unsupported envelope alg `{alg}`"),
-    };
+fn recover_cek(private_key: &RsaPrivateKey, enc_key: &[u8]) -> Result<Vec<u8>> {
+    let cek = private_key
+        .decrypt(Oaep::new::<Sha256>(), enc_key)
+        .context("RSA-OAEP-256 decrypt CEK")?;
     if cek.len() != AES_GCM_KEY_LEN {
         bail!(
             "unexpected CEK length {}, expect {AES_GCM_KEY_LEN} bytes",

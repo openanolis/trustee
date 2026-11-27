@@ -12,6 +12,7 @@ API are unchanged from
 [EncryptedLocalFs](./resource_storage_backend.md#encrypted-local-file-system-backend),
 so client tooling such as `kbs/sdk/python/encrypt_resource.py` works
 without modification.
+Both backends require `RSA-OAEP-256` for encrypted resource envelopes.
 
 ## Why this backend exists
 

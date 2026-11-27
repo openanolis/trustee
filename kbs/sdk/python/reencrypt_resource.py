@@ -78,17 +78,14 @@ def decrypt_envelope(priv, envelope):
     ciphertext = _b64decode("ciphertext", envelope["ciphertext"])
     tag = _b64decode("tag", envelope["tag"])
 
-    if alg == "RSA1_5":
-        cek = priv.decrypt(enc_key, padding.PKCS1v15())
-    else:
-        cek = priv.decrypt(
-            enc_key,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None,
-            ),
-        )
+    cek = priv.decrypt(
+        enc_key,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
+    )
 
     if len(cek) != 32:
         raise ValueError("unexpected CEK length {}, expect 32".format(len(cek)))
