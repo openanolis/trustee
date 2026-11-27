@@ -123,10 +123,21 @@ attestation_test(){
 
 image="trustee-registry.cn-hangzhou.cr.aliyuncs.com/daily/ci:latest"
 
-docker pull $image
-kubeconfig_path="/root/.kube/config"
+kubeconfig_path="${TRUSTEE_TEST_KUBECONFIG:-${KUBECONFIG:-$HOME/.kube/config}}"
+if [[ ! -f "$kubeconfig_path" || ! -r "$kubeconfig_path" ]]; then
+    printf '%s\n' 'Set TRUSTEE_TEST_KUBECONFIG to a readable kubeconfig file for the test cluster.' >&2
+    exit 1
+fi
+kubeconfig_path="$(realpath -- "$kubeconfig_path")" || exit 1
+container_kubeconfig="/run/trustee-test-kubeconfig"
+
+docker pull "$image" || exit 1
 trustee_guest_path="/root/trustee"
-c_id=$(docker run -d -v $(pwd)/trustee:$trustee_guest_path -v $kubeconfig_path:$kubeconfig_path -v /sys:/sys -v /proc:/proc -v /boot:/boot -v /tmp:/tmp -v /etc/os-release:/etc/os-release --net host $image sleep infinity)
+c_id=$(docker run -d -v "$(pwd)/trustee:$trustee_guest_path" \
+    --mount "type=bind,source=$kubeconfig_path,destination=$container_kubeconfig,readonly" \
+    --env "KUBECONFIG=$container_kubeconfig" \
+    -v /sys:/sys -v /proc:/proc -v /boot:/boot -v /tmp:/tmp \
+    -v /etc/os-release:/etc/os-release --net host "$image" sleep infinity) || exit 1
 echo c_id:$c_id
 INSTANCE_NAME=trustee-function-test
 docker exec $c_id sh -c "kubectl create namespace $INSTANCE_NAME; \
