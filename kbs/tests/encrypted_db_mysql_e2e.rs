@@ -7,13 +7,14 @@
 //! Skipped unless `MYSQL_TEST_URL` is set (typical local invocation:
 //!
 //! ```bash
-//! docker run -d --name kbs-mysql-test \
-//!   -e MYSQL_ROOT_PASSWORD=test-root \
-//!   -e MYSQL_DATABASE=trustee_kbs_test \
-//!   -p 33307:3306 mysql:8.0
-//!
-//! MYSQL_TEST_URL=mysql://root:test-root@127.0.0.1:33307/trustee_kbs_test \
-//!   cargo test -p kbs --features encrypted-db --test encrypted_db_mysql_e2e -- --nocapture
+//! test_mysql_env=$(mktemp)
+//! bash test-files/start_test_mysql.sh "$test_mysql_env"
+//! set -a
+//! . "$test_mysql_env"
+//! set +a
+//! cargo test -p kbs --features encrypted-db --test encrypted_db_mysql_e2e -- --nocapture
+//! docker stop "$TEST_MYSQL_CONTAINER"
+//! unlink "$test_mysql_env"
 //! ```
 //!
 //! The test mirrors the multi-replica deployment scenario from the plan

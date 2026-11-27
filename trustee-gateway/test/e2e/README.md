@@ -69,21 +69,15 @@ Prerequisites: Rust 1.88.0, Go compatible with `go.mod`, a C compiler, OpenSSL
 development headers, `pkg-config`, `protoc`, and a disposable loopback MySQL 8.0
 instance. No TDX/SNP hardware, DCAP library or external cloud credential is needed.
 
-For example, start a dedicated **local-only** test database:
+Start a dedicated loopback database and run the suite from the repository root.
 
 ```shell
-sudo docker run -d --name trustee-gateway-e2e-mysql \
-  -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
-  -p 127.0.0.1:33316:3306 mysql:8.0
-```
-
-Run from the repository root:
-
-```shell
-RUSTUP_TOOLCHAIN=1.88.0 \
-MYSQL_TEST_URL=mysql://root@127.0.0.1:33316/ \
-TRUSTEE_E2E_REGOVM=0 \
-bash trustee-gateway/test/e2e/run.sh
+test_mysql_env=$(mktemp)
+bash test-files/start_test_mysql.sh "$test_mysql_env"
+set -a
+. "$test_mysql_env"
+set +a
+RUSTUP_TOOLCHAIN=1.88.0 TRUSTEE_E2E_REGOVM=0 bash trustee-gateway/test/e2e/run.sh
 ```
 
 Repeat with `TRUSTEE_E2E_REGOVM=1` for the VM engine. Both CI jobs do this without
@@ -92,6 +86,8 @@ suite. The test account must be allowed to create/drop databases: each shared
 case creates a new random `trustee_e2e_*` database and drops **only that database**
 after its owned processes have stopped. Existing tables/databases are never reset.
 Non-loopback MySQL hosts are rejected to prevent accidental production access.
+After the last run, stop the container with `docker stop "$TEST_MYSQL_CONTAINER"`
+and delete the temporary environment file with `unlink "$test_mysql_env"`.
 
 `CARGO_TARGET_DIR` is respected. For already built binaries,
 `TRUSTEE_E2E_SKIP_BUILD=1` and `TRUSTEE_E2E_BIN_DIR=/absolute/path/to/debug` avoid
