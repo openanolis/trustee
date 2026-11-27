@@ -483,6 +483,8 @@ export ALIYUN_KMS_REGION_ID="cn-test"
 
 Private cloud AAP client key example:
 
+Fill in the placeholders from your deployment-specific ClientKey, its password, and the instance CA certificate.
+
 ```toml
 [[plugins]]
 name = "resource"
