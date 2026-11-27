@@ -29,9 +29,9 @@ use rsa::pkcs8::{EncodePublicKey, LineEnding};
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::Deserialize;
 
-use super::{ResourceDesc, RewrapReport, RotateReport, StorageBackend};
+use super::{envelope::Envelope, ResourceDesc, RewrapReport, RotateReport, StorageBackend};
 
-use crypto::{decrypt_envelope_with_ring, rewrap_envelope, Envelope};
+use crypto::{decrypt_envelope_with_ring, rewrap_envelope};
 use db::{parse_simple_duration, DbPool};
 use key_store::{
     advance_primary_generation, delete_key_row, generate_rsa_key_pair, insert_new_generation,
@@ -356,6 +356,7 @@ impl StorageBackend for EncryptedDb {
     }
 
     async fn write_secret_resource(&self, resource_desc: ResourceDesc, data: &[u8]) -> Result<()> {
+        Envelope::validate_new_write(data)?;
         self.maybe_reload_on_bump().await?;
         let ring = self.ring_snapshot();
         let generation = ring
@@ -629,7 +630,7 @@ impl EncryptedDb {
                 .filter(|k| Some(k.generation) == ring.primary_generation && !k.retired)
                 .map(|k| k.private_key.clone())
                 .collect();
-            if let Ok(env) = serde_json::from_slice::<crypto::Envelope>(env_bytes) {
+            if let Ok(env) = serde_json::from_slice::<Envelope>(env_bytes) {
                 if !primary_only_keys.is_empty()
                     && decrypt_envelope_with_ring(&env, &primary_only_keys).is_ok()
                 {
@@ -661,7 +662,7 @@ impl EncryptedDb {
         let mut still_needed: std::collections::HashSet<Generation> =
             std::collections::HashSet::new();
         for row in &final_pass {
-            let env: crypto::Envelope = match serde_json::from_slice(row.envelope.as_bytes()) {
+            let env: Envelope = match serde_json::from_slice(row.envelope.as_bytes()) {
                 Ok(e) => e,
                 Err(_) => continue, // plaintext or non-envelope row, no key needed
             };
@@ -755,8 +756,7 @@ mod tests {
         use base64::Engine;
         use rand::RngCore;
         use rsa::pkcs8::DecodePublicKey;
-        use rsa::sha2::Sha256;
-        use rsa::Oaep;
+        use rsa::{sha2::Sha256, Oaep};
 
         let pub_key = RsaPublicKey::from_public_key_pem(public_pem).unwrap();
         let mut cek = [0u8; 32];
@@ -799,6 +799,47 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(plain, b"hello world");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rejects_rsa1_5_on_write_read_and_rewrap() {
+        let (_keepalive, cfg) = fast_config();
+        let backend = EncryptedDb::init_async(&cfg).await.unwrap();
+        let public_pem = backend.current_public_key_pem().await.unwrap();
+        let mut legacy: Envelope =
+            serde_json::from_slice(&encrypt_resource_for_test(&public_pem, b"test data")).unwrap();
+        legacy.alg = "RSA1_5".into();
+        let raw = serde_json::to_vec(&legacy).unwrap();
+        let resource = desc("repo", "secret", "legacy");
+
+        let error = backend
+            .write_secret_resource(resource.clone(), &raw)
+            .await
+            .expect_err("reject a new RSA1_5 envelope");
+        assert!(error
+            .to_string()
+            .contains("unsupported resource envelope alg"));
+        assert!(backend.list_secret_resources().await.unwrap().is_empty());
+
+        // Rewrap only scans rows preceding the current primary generation.
+        let generation = backend.ring_snapshot().primary_generation.unwrap() - 1;
+        upsert_envelope(&backend.pool, &resource, &raw, generation)
+            .await
+            .unwrap();
+        assert!(backend
+            .read_secret_resource(resource.clone())
+            .await
+            .is_err());
+        let report = backend.rewrap_resources().await.unwrap();
+        assert_eq!(report.failed, 1);
+        assert_eq!(report.rewrapped, 0);
+        assert_eq!(
+            read_envelope(&backend.pool, &resource)
+                .await
+                .unwrap()
+                .unwrap(),
+            raw
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

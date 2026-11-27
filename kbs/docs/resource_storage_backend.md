@@ -64,7 +64,7 @@ returned as plaintext).
 **Payload format (JSON, Base64 fields)**
 ```
 {
-  "alg": "RSA-OAEP-256",        # or "RSA1_5" (deprecated)
+  "alg": "RSA-OAEP-256",
   "enc_key": "<base64 RSA-encrypted CEK>",
   "iv": "<base64 12-byte GCM nonce>",
   "ciphertext": "<base64 ciphertext>",
@@ -75,13 +75,14 @@ returned as plaintext).
 **Encryption steps (client side)**
 1) Generate a 32-byte CEK (AES-256-GCM) and a 12-byte IV (nonce).
 2) Encrypt plaintext with AES-GCM (no AAD) to get ciphertext and a 16-byte tag.
-3) Encrypt the CEK with the RSA public key using RSA-OAEP-256 (or RSA1_5, not recommended) to get `enc_key`.
+3) Encrypt the CEK with the RSA public key using RSA-OAEP-256 to get `enc_key`.
 4) Base64-encode `enc_key` / `iv` / `ciphertext` / `tag`, then store them in the JSON above as the resource file.
 5) A ready-to-use helper script is available at `kbs/sdk/python/encrypt_resource.py`.
 
 **Runtime behavior**
 - Read: If the payload parses as the JSON above, it will be decrypted; otherwise it is returned verbatim (plaintext).
-- Write: Same as `LocalFs`; no encryption is performed on write.
+- Write: Stores opaque bytes without performing encryption. Envelopes must use `RSA-OAEP-256`.
+- Rotation: The `/rewrap` admin operation rewraps `RSA-OAEP-256` envelopes under the current wrapping key.
 
 This backend is guarded by the Cargo feature `encrypted-local-fs`. Enable it
 when building KBS to use this backend.

@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-ALGS = ("RSA-OAEP-256", "RSA1_5")
+ALGS = ("RSA-OAEP-256",)
 
 
 def _b64(data):
@@ -57,17 +57,14 @@ def encrypt_resource(pub, plaintext, alg):
     ct_tag = aesgcm.encrypt(iv, plaintext, None)
     ciphertext, tag = ct_tag[:-16], ct_tag[-16:]
 
-    if alg == "RSA1_5":
-        enc_key = pub.encrypt(cek, padding.PKCS1v15())
-    else:
-        enc_key = pub.encrypt(
-            cek,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None,
-            ),
-        )
+    enc_key = pub.encrypt(
+        cek,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
+    )
 
     return {
         "alg": alg,

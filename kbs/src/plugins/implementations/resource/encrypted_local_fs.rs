@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
+    envelope::{Envelope, ALG_RSA_OAEP_256},
     local_fs::{LocalFs, LocalFsRepoDesc},
     ResourceDesc, RewrapReport, RotateReport, StorageBackend,
 };
@@ -14,11 +15,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use rsa::pkcs8::{EncodePublicKey, LineEnding};
 use rsa::sha2::Sha256;
-use rsa::{
-    pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey, Oaep, Pkcs1v15Encrypt, RsaPrivateKey,
-    RsaPublicKey,
-};
-use serde::{Deserialize, Serialize};
+use rsa::{pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey, Oaep, RsaPrivateKey, RsaPublicKey};
+use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -26,8 +24,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const ALG_RSA1_5: &str = "RSA1_5";
-const ALG_RSA_OAEP_256: &str = "RSA-OAEP-256";
 const AES_GCM_KEY_LEN: usize = 32;
 const AES_GCM_TAG_LEN: usize = 16;
 const AES_GCM_NONCE_LEN: usize = 12;
@@ -41,20 +37,6 @@ const DEFAULT_MANAGED_KEY_DIR: &str = "/opt/confidential-containers/kbs/resource
 /// suffix orders generations, so the newest file is the current primary key.
 const MANAGED_KEY_PREFIX: &str = "mkey-";
 const MANAGED_KEY_EXT: &str = "pem";
-
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
-struct Envelope {
-    /// Algorithm: support RSA1_5 or RSA-OAEP-256
-    pub alg: String,
-    /// Encrypted CEK with public key (base64)
-    pub enc_key: String,
-    /// AES-GCM nonce (base64)
-    pub iv: String,
-    /// AES-GCM ciphertext (base64)
-    pub ciphertext: String,
-    /// AES-GCM tag (base64)
-    pub tag: String,
-}
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Default)]
 pub struct EncryptedLocalFsRepoDesc {
@@ -134,6 +116,7 @@ impl StorageBackend for EncryptedLocalFs {
     }
 
     async fn write_secret_resource(&self, resource_desc: ResourceDesc, data: &[u8]) -> Result<()> {
+        Envelope::validate_new_write(data)?;
         self.inner.write_secret_resource(resource_desc, data).await
     }
 
@@ -450,6 +433,7 @@ impl EncryptedLocalFs {
         let Ok(env) = serde_json::from_slice::<Envelope>(&raw) else {
             return Ok(false); // not an envelope -> plaintext, leave as-is
         };
+        env.validate_algorithm()?;
 
         let enc_key = Self::decode_b64("enc_key", &env.enc_key)?;
         let iv = Self::decode_b64("iv", &env.iv)?;
@@ -459,11 +443,9 @@ impl EncryptedLocalFs {
         // `keys[0]` is the primary key here (rewrap_resources verified one
         // exists). If it already decrypts an OAEP envelope, the resource is
         // current; skip rewriting.
-        if env.alg == ALG_RSA_OAEP_256 {
-            if let Ok(cek) = Self::recover_cek(&ring.keys[0], &env.alg, &enc_key) {
-                if Self::aes_decrypt(&cek, &iv, &ciphertext, &tag).is_ok() {
-                    return Ok(false);
-                }
+        if let Ok(cek) = Self::recover_cek(&ring.keys[0], &enc_key) {
+            if Self::aes_decrypt(&cek, &iv, &ciphertext, &tag).is_ok() {
+                return Ok(false);
             }
         }
 
@@ -472,7 +454,7 @@ impl EncryptedLocalFs {
             .keys
             .iter()
             .find_map(|key| {
-                let cek = Self::recover_cek(key, &env.alg, &enc_key).ok()?;
+                let cek = Self::recover_cek(key, &enc_key).ok()?;
                 Self::aes_decrypt(&cek, &iv, &ciphertext, &tag).ok()?;
                 Some(cek)
             })
@@ -518,16 +500,13 @@ impl EncryptedLocalFs {
     }
 
     fn decrypt_envelope(&self, env: &Envelope) -> Result<Vec<u8>> {
+        env.validate_algorithm()?;
         // Key-independent decoding and validation. A failure here means the
         // envelope itself is malformed, so no key could ever decrypt it.
         let enc_key = Self::decode_b64("enc_key", &env.enc_key)?;
         let iv = Self::decode_b64("iv", &env.iv)?;
         let ciphertext = Self::decode_b64("ciphertext", &env.ciphertext)?;
         let tag = Self::decode_b64("tag", &env.tag)?;
-
-        if !matches!(env.alg.as_str(), ALG_RSA1_5 | ALG_RSA_OAEP_256) {
-            bail!("unsupported simple envelope alg `{}`", env.alg);
-        }
 
         if tag.len() != AES_GCM_TAG_LEN {
             bail!(
@@ -552,7 +531,7 @@ impl EncryptedLocalFs {
         let ring = self.ring_snapshot();
         let mut last_err = None;
         for key in &ring.keys {
-            match Self::recover_cek(key, &env.alg, &enc_key)
+            match Self::recover_cek(key, &enc_key)
                 .and_then(|cek| Self::aes_decrypt(&cek, &iv, &ciphertext, &tag))
             {
                 Ok(plaintext) => return Ok(plaintext),
@@ -569,19 +548,10 @@ impl EncryptedLocalFs {
 
     /// Unwrap the content encryption key with one RSA private key. Does not
     /// verify the CEK is correct; the caller must confirm via the AES-GCM tag.
-    fn recover_cek(private_key: &RsaPrivateKey, alg: &str, enc_key: &[u8]) -> Result<Vec<u8>> {
-        let cek = match alg {
-            ALG_RSA1_5 => private_key
-                .decrypt(Pkcs1v15Encrypt, enc_key)
-                .context("RSA1_5 decrypt content encryption key (simple envelope)")?,
-            ALG_RSA_OAEP_256 => {
-                let padding = Oaep::new::<Sha256>();
-                private_key
-                    .decrypt(padding, enc_key)
-                    .context("RSA-OAEP-256 decrypt content encryption key (simple envelope)")?
-            }
-            _ => bail!("unsupported simple envelope alg `{alg}`"),
-        };
+    fn recover_cek(private_key: &RsaPrivateKey, enc_key: &[u8]) -> Result<Vec<u8>> {
+        let cek = private_key
+            .decrypt(Oaep::new::<Sha256>(), enc_key)
+            .context("RSA-OAEP-256 decrypt content encryption key (simple envelope)")?;
 
         if cek.len() != AES_GCM_KEY_LEN {
             bail!(
@@ -615,9 +585,7 @@ impl EncryptedLocalFs {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        EncryptedLocalFs, EncryptedLocalFsRepoDesc, Envelope, ALG_RSA1_5, ALG_RSA_OAEP_256,
-    };
+    use super::{EncryptedLocalFs, EncryptedLocalFsRepoDesc, Envelope, ALG_RSA_OAEP_256};
     use aes_gcm::{aead::AeadInPlace, Aes256Gcm, KeyInit, Nonce};
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;
@@ -625,7 +593,7 @@ mod tests {
     use rand::Rng;
     use rsa::pkcs8::DecodePublicKey;
     use rsa::sha2::Sha256;
-    use rsa::{BigUint, Oaep, Pkcs1v15Encrypt, RsaPublicKey};
+    use rsa::{BigUint, Oaep, RsaPublicKey};
     use tempfile::tempdir;
 
     use super::ResourceDesc;
@@ -670,15 +638,9 @@ mod tests {
             .encrypt_in_place_detached(nonce, b"", &mut payload)
             .expect("encrypt");
 
-        let encrypted_key = match alg {
-            ALG_RSA1_5 => rsa_pub
-                .encrypt(&mut rng, Pkcs1v15Encrypt, cek.as_slice())
-                .expect("rsa1_5 encrypt cek"),
-            ALG_RSA_OAEP_256 => rsa_pub
-                .encrypt(&mut rng, Oaep::new::<Sha256>(), cek.as_slice())
-                .expect("rsa-oaep encrypt cek"),
-            _ => unreachable!(),
-        };
+        let encrypted_key = rsa_pub
+            .encrypt(&mut rng, Oaep::new::<Sha256>(), cek.as_slice())
+            .expect("rsa-oaep encrypt cek");
 
         Envelope {
             alg: alg.into(),
@@ -849,31 +811,36 @@ mod tests {
         assert!(err.to_string().contains("any of the"));
     }
 
-    // RSA1_5 envelopes also work through the key ring, exercising the path where
-    // a wrong key may yield a wrong-length CEK rather than a clean padding error.
     #[tokio::test]
-    async fn decrypts_rsa1_5_through_ring() {
+    async fn rejects_rsa1_5_on_write_read_and_rewrap() {
         let tmp_dir = tempdir().unwrap();
-        let old_rsa = Rsa::generate(2048).unwrap();
-        let new_rsa = Rsa::generate(2048).unwrap();
-
-        let backend = EncryptedLocalFs::new(&EncryptedLocalFsRepoDesc {
-            dir_path: tmp_dir.path().to_string_lossy().into(),
-            private_key_path: write_key(&tmp_dir, "new.pem", &new_rsa),
-            private_key_paths: vec![write_key(&tmp_dir, "old.pem", &old_rsa)],
-            ..Default::default()
-        })
-        .expect("create backend");
+        let rsa = Rsa::generate(2048).unwrap();
+        let backend = build_backend(&tmp_dir, &rsa);
 
         let desc = resource_desc("rsa15");
-        let encrypted = encrypt_envelope(&old_rsa, ALG_RSA1_5, TEST_DATA);
+        let encrypted = encrypt_envelope(&rsa, "RSA1_5", TEST_DATA);
+        let raw = serde_json::to_vec(&encrypted).unwrap();
+        let error = backend
+            .write_secret_resource(desc.clone(), &raw)
+            .await
+            .expect_err("reject a new RSA1_5 envelope");
+        assert!(error
+            .to_string()
+            .contains("unsupported resource envelope alg"));
+        assert!(backend.list_secret_resources().await.unwrap().is_empty());
+
+        // Simulate a resource provisioned before RSA1_5 writes were disabled.
         backend
-            .write_secret_resource(desc.clone(), &serde_json::to_vec(&encrypted).unwrap())
+            .inner
+            .write_secret_resource(desc.clone(), &raw)
             .await
             .unwrap();
 
-        let data = backend.read_secret_resource(desc).await.expect("decrypt");
-        assert_eq!(data, TEST_DATA);
+        assert!(backend.read_secret_resource(desc.clone()).await.is_err());
+        let report = backend.rewrap_resources().await.expect("rewrap");
+        assert_eq!(report.failed, 1);
+        assert_eq!(report.rewrapped, 0);
+        assert_eq!(backend.inner.read_secret_resource(desc).await.unwrap(), raw);
     }
 
     fn build_managed_backend(tmp_dir: &tempfile::TempDir) -> EncryptedLocalFs {
