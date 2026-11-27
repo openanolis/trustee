@@ -201,13 +201,7 @@ docker compose restart
 cat deploy/kbs-private.key
 ```
 
-预期输出：
-
-```shell
------BEGIN PRIVATE KEY-----
-MC4CAQAwBQYDK2**********************7QaInHD49zHYNQTaX
------END PRIVATE KEY-----
-```
+输出是 PEM 格式的管理员密钥。
 
 浏览器打开地址`http://<ip>:8082`, 在登陆界面粘贴上述密钥，点击登录按钮：
 
