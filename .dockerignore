@@ -1,5 +1,6 @@
 .github
 .git
+test-files/kube-config
 target
 **/node_modules
 frontend/dist
