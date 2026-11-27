@@ -4023,6 +4023,7 @@ dependencies = [
  "const_format",
  "hex",
  "log",
+ "openssl",
  "p12",
  "prost",
  "rand 0.8.7",
