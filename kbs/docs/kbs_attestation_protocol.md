@@ -230,6 +230,8 @@ tag = base64_url::encode(authentication_tag);
 Algorithm used to encrypt the encryption key at `encrypted_key`.
 Since the key is encrypted using the HW-TEE public key, `alg` must be the same
 value as described in the [`Attestation`](#attestation)'s `tee-pubkey` field.
+KBS supports `RSA-OAEP-256` for RSA keys and `ECDH-ES+A256KW` for P-256 keys.
+Clients advertising `RSA1_5` must use one of these algorithms before upgrading KBS.
 
 - `protected.enc`
 
